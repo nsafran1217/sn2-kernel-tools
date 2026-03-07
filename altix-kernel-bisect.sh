@@ -2,7 +2,6 @@
 # this script is used to compile a linux kernel
 # It will copy a known config and apply two patches to fix known altix boot issues
 
-set -e # end on any error
 
 #_BASE_DIR=$(pwd)
 
@@ -16,10 +15,22 @@ echo $_BASE_DIR
 cd $_BASE_DIR/src/mainline/linux
 
 # fix known compile bug
-#git apply $_BASE_DIR/sn2-kernel-tools/diff/sn_dma_flush.patch
+git apply $_BASE_DIR/sn2-kernel-tools/diff/sn_dma_flush.patch
 
-echo "SED to fix combile bug"
-sed -i 's/void sn_dma_flush(u64 addr)/void sn_dma_flush(unsigned long addr)/' ./arch/ia64/sn/pci/pcibr/pcibr_dma.c
+#echo "SED to fix combile bug"
+#sed -i 's/void sn_dma_flush(u64 addr)/void sn_dma_flush(unsigned long addr)/' ./arch/ia64/sn/pci/pcibr/pcibr_dma.c
+
+# Fix IO_RESOURCE 
+echo "fix io resource"
+git apply $_BASE_DIR/sn2-kernel-tools/diff/io_resource.patch
+
+# Fix sn_mmiowb.patch
+echo "fix sn_mmiowb.patch"
+#git apply $_BASE_DIR/sn2-kernel-tools/diff/sn_mmiowb.patch
+
+
+
+set -e # end on any error
 
 
 ver=$(git log --oneline | head -n1 | grep -o "Linux\ .*" | cut -d' ' -f2-)
@@ -56,12 +67,12 @@ make -j$(nproc) LOCALVERSION="${_localversion}" ARCH=ia64 CROSS_COMPILE=ia64-lin
 pwd
 
 tarname=$(ls linux-*-ia64.tar)
-mkdir $_BASE_DIR/release/linux-${_localversion}-ia64
+mkdir -p $_BASE_DIR/release/linux-${_localversion}-ia64
 #move tar
 mv "$tarname" "$_BASE_DIR/release/linux-${_localversion}-ia64/"
 
 #cp vmlinuz
-mkdir "$_BASE_DIR/release/linux-${_localversion}-ia64/boot"
+mkdir -p "$_BASE_DIR/release/linux-${_localversion}-ia64/boot"
 cp vmlinux.gz "$_BASE_DIR/release/linux-${_localversion}-ia64/boot/vmlinuz-$ver"
 #cd
 cd "$_BASE_DIR/release/linux-${_localversion}-ia64/"
@@ -74,9 +85,10 @@ echo "Kernel package for $_localversion created at $_BASE_DIR/release/$tarname.t
 
 # Copy to NFS server
 scp boot/vmlinuz-$ver nfs:/t2/tftproot/t2/kernel/vmlinuz-test
+scp boot/vmlinuz-$ver nfs:/t2/altixroot/boot/vmlinuz-test
 rsync -rl --progress lib/modules/ nfs:/t2/altixroot/lib/modules/
 
 cd ..
 rm -rf linux-${_localversion}-ia64/
 
-echo "Copy complete, reboot to test"
+echo "Copy complete, reboot to test $ver $_localversion"

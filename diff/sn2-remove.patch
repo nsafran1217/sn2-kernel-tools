@@ -1,0 +1,33 @@
+commit 76f0f227cffb570bc5ce343b1750f14907371d80
+Merge: 58d4fafd0b4c 0d3d343560ba
+Author: Linus Torvalds <torvalds@linux-foundation.org>
+Date:   Mon Sep 16 15:32:01 2019 -0700
+
+    Merge tag 'please-pull-ia64_for_5.4' of git://git.kernel.org/pub/scm/linux/kernel/git/aegl/linux
+    
+    Pull ia64 updates from Tony Luck:
+     "The big change here is removal of support for SGI Altix"
+    
+    * tag 'please-pull-ia64_for_5.4' of git://git.kernel.org/pub/scm/linux/kernel/git/aegl/linux: (33 commits)
+      genirq: remove the is_affinity_mask_valid hook
+      ia64: remove CONFIG_SWIOTLB ifdefs
+      ia64: remove support for machvecs
+      ia64: move the screen_info setup to common code
+      ia64: move the ROOT_DEV setup to common code
+      ia64: rework iommu probing
+      ia64: remove the unused sn_coherency_id symbol
+      ia64: remove the SGI UV simulator support
+      ia64: remove the zx1 swiotlb machvec
+      ia64: remove CONFIG_ACPI ifdefs
+      ia64: remove CONFIG_PCI ifdefs
+      ia64: remove the hpsim platform
+      ia64: remove now unused machvec indirections
+      ia64: remove support for the SGI SN2 platform
+      drivers: remove the SGI SN2 IOC4 base support
+      drivers: remove the SGI SN2 IOC3 base support
+      qla2xxx: remove SGI SN2 support
+      qla1280: remove SGI SN2 support
+      misc/sgi-xp: remove SGI SN2 support
+      char/mspec: remove SGI SN2 support
+      ...
+

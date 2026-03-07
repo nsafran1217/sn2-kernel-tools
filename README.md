@@ -53,12 +53,3 @@ altix-kernel-bisect.sh
 then do you bisecting or whatevers
 
 
-
-
-
-# sidebar:
-I think i dont even need the second patch for kernel 4.19.325... that might have just been in mainline but was fixed eventually......
-Idiot.
-
-Ready to test, just boot vmlinuz
-after that, change the symlink to the test kernel
