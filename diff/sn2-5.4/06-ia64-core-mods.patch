@@ -1,4 +1,4 @@
-# ia64 core source modifications - machvec integration into existing code
+# ia64 core source modifications - machvec integration
 # 46 files: 0 new, 46 modified (+877/-259)
 #
 # MOD arch/ia64/hp/common/sba_iommu.c

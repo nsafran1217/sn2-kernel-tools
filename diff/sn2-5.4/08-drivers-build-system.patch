@@ -1,5 +1,5 @@
-# Driver Kconfig/Makefile changes - hooks SN2 drivers into build
-# 17 files: 0 new, 17 modified (+115/-9)
+# Driver Kconfig/Makefile changes
+# 16 files: 0 new, 16 modified (+105/-6)
 #
 # MOD drivers/Kconfig
 # MOD drivers/Makefile
@@ -13,7 +13,6 @@
 # MOD drivers/iommu/Kconfig
 # MOD drivers/misc/Kconfig
 # MOD drivers/misc/Makefile
-# MOD drivers/misc/sgi-xp/Makefile
 # MOD drivers/pci/hotplug/Kconfig
 # MOD drivers/pci/hotplug/Makefile
 # MOD drivers/tty/serial/Kconfig
@@ -245,31 +244,6 @@ index c1860d35dc7e..9e1eaf523d6e 100644
  obj-$(CONFIG_ENCLOSURE_SERVICES) += enclosure.o
  obj-$(CONFIG_KGDB_TESTS)	+= kgdbts.o
  obj-$(CONFIG_SGI_XP)		+= sgi-xp/
-diff --git a/drivers/misc/sgi-xp/Makefile b/drivers/misc/sgi-xp/Makefile
-index 34c55a4045af..bbb622c19c06 100644
---- a/drivers/misc/sgi-xp/Makefile
-+++ b/drivers/misc/sgi-xp/Makefile
-@@ -4,10 +4,17 @@
- #
- 
- obj-$(CONFIG_SGI_XP)		+= xp.o
--xp-y				:= xp_main.o xp_uv.o
-+xp-y				:= xp_main.o
-+xp-$(CONFIG_IA64_SGI_SN2)	+= xp_sn2.o xp_nofault.o
-+xp-$(CONFIG_IA64_GENERIC)	+= xp_sn2.o xp_nofault.o
-+xp-$(CONFIG_IA64_SGI_UV)	+= xp_uv.o
-+xp-$(CONFIG_X86_64)		+= xp_uv.o
- 
- obj-$(CONFIG_SGI_XP)		+= xpc.o
--xpc-y				:= xpc_main.o xpc_channel.o xpc_partition.o \
--				   xpc_uv.o
-+xpc-y				:= xpc_main.o xpc_channel.o xpc_partition.o
-+xpc-$(CONFIG_IA64_SGI_SN2)	+= xpc_sn2.o
-+xpc-$(CONFIG_IA64_GENERIC)	+= xpc_sn2.o
-+xpc-$(CONFIG_IA64_SGI_UV) 	+= xpc_uv.o
-+xpc-$(CONFIG_X86_64)		+= xpc_uv.o
- 
- obj-$(CONFIG_SGI_XP)		+= xpnet.o
 diff --git a/drivers/pci/hotplug/Kconfig b/drivers/pci/hotplug/Kconfig
 index e7b493c22bf3..e9f78eb390d2 100644
 --- a/drivers/pci/hotplug/Kconfig

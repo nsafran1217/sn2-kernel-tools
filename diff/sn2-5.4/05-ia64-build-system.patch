@@ -1,4 +1,4 @@
-# ia64 Kconfig/Makefile changes - adds system type menu, SN2 build rules
+# ia64 Kconfig/Makefile changes
 # 11 files: 0 new, 11 modified (+166/-48)
 #
 # MOD arch/ia64/Kconfig

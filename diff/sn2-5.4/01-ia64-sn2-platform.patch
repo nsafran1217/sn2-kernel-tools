@@ -155,7 +155,7 @@ index 000000000000..6b2e7b75eb19
 --- /dev/null
 +++ b/arch/ia64/sn/include/tio.h
 @@ -0,0 +1,41 @@
-+/*
++/* 
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
 + * for more details.
@@ -1541,7 +1541,7 @@ index 000000000000..97fa56dddf50
 +/*
 + * hubiio_crb_error_handler
 + *
-+ *	This routine gets invoked when a hub gets an error
++ *	This routine gets invoked when a hub gets an error 
 + *	interrupt. So, the routine is running in interrupt context
 + *	at error interrupt level.
 + * Action:

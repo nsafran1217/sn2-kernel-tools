@@ -1,4 +1,4 @@
-# Machine vector infrastructure - restores platform dispatch system
+# Machine vector infrastructure - restores platform dispatch
 # 21 files: 21 new, 0 modified (+891/-0)
 #
 # NEW arch/ia64/dig/Makefile

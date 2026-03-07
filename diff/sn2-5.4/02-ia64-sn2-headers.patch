@@ -1,4 +1,4 @@
-# SN2 headers (arch/ia64/include/asm/sn/) - new + mods to stubs
+# SN2 headers (arch/ia64/include/asm/sn/)
 # 35 files: 33 new, 2 modified (+10031/-1)
 #
 # NEW arch/ia64/include/asm/sn/acpi.h
