@@ -1,16 +1,14 @@
-# Driver Kconfig/Makefile changes
-# 16 files: 0 new, 16 modified (+105/-6)
+# Driver Kconfig/Makefile changes - SN2 additions only
+# 14 files: 0 new, 14 modified (+98/-0)
 #
 # MOD drivers/Kconfig
 # MOD drivers/Makefile
-# MOD drivers/acpi/Kconfig
 # MOD drivers/char/Kconfig
 # MOD drivers/char/Makefile
 # MOD drivers/char/agp/Kconfig
 # MOD drivers/char/agp/Makefile
 # MOD drivers/ide/Kconfig
 # MOD drivers/ide/Makefile
-# MOD drivers/iommu/Kconfig
 # MOD drivers/misc/Kconfig
 # MOD drivers/misc/Makefile
 # MOD drivers/pci/hotplug/Kconfig
@@ -43,19 +41,6 @@ index aaef17cc6512..54d2585daf02 100644
  obj-y				+= firmware/
  obj-$(CONFIG_CRYPTO)		+= crypto/
  obj-$(CONFIG_SUPERH)		+= sh/
-diff --git a/drivers/acpi/Kconfig b/drivers/acpi/Kconfig
-index ebe1e9e5fd81..5f6158973289 100644
---- a/drivers/acpi/Kconfig
-+++ b/drivers/acpi/Kconfig
-@@ -323,7 +323,7 @@ config ACPI_NUMA
- 	bool "NUMA support"
- 	depends on NUMA
- 	depends on (X86 || IA64 || ARM64)
--	default y if IA64 || ARM64
-+	default y if IA64_GENERIC || IA64_SGI_SN2 || ARM64
- 
- config ACPI_CUSTOM_DSDT_FILE
- 	string "Custom DSDT Table file to include"
 diff --git a/drivers/char/Kconfig b/drivers/char/Kconfig
 index df0fc997dc3e..2794f4b3f62d 100644
 --- a/drivers/char/Kconfig
@@ -106,26 +91,8 @@ index 7c5ea6f9df14..fbea7dd12932 100644
  obj-$(CONFIG_PRINTER)		+= lp.o
  
 diff --git a/drivers/char/agp/Kconfig b/drivers/char/agp/Kconfig
-index 812d6aa6e013..6231714ef3c8 100644
 --- a/drivers/char/agp/Kconfig
 +++ b/drivers/char/agp/Kconfig
-@@ -111,14 +111,14 @@ config AGP_VIA
- 
- config AGP_I460
- 	tristate "Intel 460GX chipset support"
--	depends on AGP && IA64
-+	depends on AGP && (IA64_DIG || IA64_GENERIC)
- 	help
- 	  This option gives you AGP GART support for the Intel 460GX chipset
- 	  for IA64 processors.
- 
- config AGP_HP_ZX1
- 	tristate "HP ZX1 chipset AGP support"
--	depends on AGP && IA64
-+	depends on AGP && (IA64_HP_ZX1 || IA64_HP_ZX1_SWIOTLB || IA64_GENERIC)
- 	help
- 	  This option gives you AGP GART support for the HP ZX1 chipset
- 	  for IA64 processors.
 @@ -150,6 +150,13 @@ config AGP_EFFICEON
  	  This option gives you AGP support for the Transmeta Efficeon
  	  series processors with integrated northbridges.
@@ -184,21 +151,7 @@ index cac02db4098d..9f617a77970f 100644
  obj-$(CONFIG_BLK_DEV_SIIMAGE)		+= siimage.o
  obj-$(CONFIG_BLK_DEV_SIS5513)		+= sis5513.o
  obj-$(CONFIG_BLK_DEV_SL82C105)		+= sl82c105.o
-diff --git a/drivers/iommu/Kconfig b/drivers/iommu/Kconfig
-index e3842eabcfdd..a4ddeade8ac4 100644
---- a/drivers/iommu/Kconfig
-+++ b/drivers/iommu/Kconfig
-@@ -177,7 +177,7 @@ config DMAR_TABLE
- 
- config INTEL_IOMMU
- 	bool "Support for Intel IOMMU using DMA Remapping Devices"
--	depends on PCI_MSI && ACPI && (X86 || IA64)
-+	depends on PCI_MSI && ACPI && (X86 || IA64_GENERIC)
- 	select IOMMU_API
- 	select IOMMU_IOVA
- 	select NEED_DMA_MAP_STATE
 diff --git a/drivers/misc/Kconfig b/drivers/misc/Kconfig
-index c55b63750757..9042ba7baed6 100644
 --- a/drivers/misc/Kconfig
 +++ b/drivers/misc/Kconfig
 @@ -126,6 +126,18 @@ config INTEL_MID_PTI
@@ -220,18 +173,6 @@ index c55b63750757..9042ba7baed6 100644
  config TIFM_CORE
  	tristate "TI Flash Media interface support"
  	depends on PCI
-@@ -188,8 +200,9 @@ config ENCLOSURE_SERVICES
- config SGI_XP
- 	tristate "Support communication between SGI SSIs"
- 	depends on NET
--	depends on (IA64_SGI_UV || X86_UV) && SMP
--	depends on X86_64 || BROKEN
-+	depends on (IA64_GENERIC || IA64_SGI_SN2 || IA64_SGI_UV || X86_UV) && SMP
-+	select IA64_UNCACHED_ALLOCATOR if IA64_GENERIC || IA64_SGI_SN2
-+	select GENERIC_ALLOCATOR if IA64_GENERIC || IA64_SGI_SN2
- 	select SGI_GRU if X86_64 && SMP
- 	---help---
- 	  An SGI machine can be divided into multiple Single System
 diff --git a/drivers/misc/Makefile b/drivers/misc/Makefile
 index c1860d35dc7e..9e1eaf523d6e 100644
 --- a/drivers/misc/Makefile

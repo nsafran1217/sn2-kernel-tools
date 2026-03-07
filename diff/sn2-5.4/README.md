@@ -52,3 +52,10 @@ Apply with: `git apply NN-*.patch`
 - The sn_sal.h fix (efi.sal_systab -> sal_systab_phys) is included.
 - All driver modifications are guarded by CONFIG_IA64_SGI_SN2/GENERIC
   and ia64_platform_is("sn2") runtime checks.
+
+
+
+for p in ~/altix_cross/sn2-kernel-tools/diff/sn2-5.4/*.patch; do
+    echo "Applying $(basename $p)..."
+    git apply "$p" || echo "FAILED: $p"
+done
