@@ -1,0 +1,553 @@
+# ia64 Kconfig/Makefile changes
+# 11 files: 0 new, 11 modified (+166/-48)
+#
+# MOD arch/ia64/Kconfig
+# MOD arch/ia64/Kconfig.debug
+# MOD arch/ia64/Makefile
+# MOD arch/ia64/configs/bigsur_defconfig
+# MOD arch/ia64/configs/generic_defconfig
+# MOD arch/ia64/configs/gensparse_defconfig
+# MOD arch/ia64/configs/tiger_defconfig
+# MOD arch/ia64/configs/zx1_defconfig
+# MOD arch/ia64/hp/common/Makefile
+# MOD arch/ia64/kernel/Makefile
+# MOD arch/ia64/uv/kernel/Makefile
+#
+diff --git a/arch/ia64/Kconfig b/arch/ia64/Kconfig
+index 16714477eef4..070eb45cfd7c 100644
+--- a/arch/ia64/Kconfig
++++ b/arch/ia64/Kconfig
+@@ -10,14 +10,12 @@ config IA64
+ 	bool
+ 	select ARCH_MIGHT_HAVE_PC_PARPORT
+ 	select ARCH_MIGHT_HAVE_PC_SERIO
+-	select ACPI
+-	select ACPI_NUMA if NUMA
+-	select ARCH_SUPPORTS_ACPI
++	select ACPI if (!IA64_HP_SIM)
++	select ARCH_SUPPORTS_ACPI if (!IA64_HP_SIM)
+ 	select ACPI_SYSTEM_POWER_STATES_SUPPORT if ACPI
+ 	select ARCH_MIGHT_HAVE_ACPI_PDC if ACPI
+-	select FORCE_PCI
++	select FORCE_PCI if (!IA64_HP_SIM)
+ 	select PCI_DOMAINS if PCI
+-	select PCI_MSI
+ 	select PCI_SYSCALL if PCI
+ 	select HAVE_ASM_MODVERSIONS
+ 	select HAVE_UNSTABLE_SCHED_CLOCK
+@@ -33,8 +31,8 @@ config IA64
+ 	select HAVE_ARCH_TRACEHOOK
+ 	select HAVE_MEMBLOCK_NODE_MAP
+ 	select HAVE_VIRT_CPU_ACCOUNTING
+-	select ARCH_HAS_DMA_COHERENT_TO_PFN
+-	select ARCH_HAS_SYNC_DMA_FOR_CPU
++	select ARCH_HAS_DMA_COHERENT_TO_PFN if SWIOTLB
++	select ARCH_HAS_SYNC_DMA_FOR_CPU if SWIOTLB
+ 	select VIRT_TO_BUS
+ 	select GENERIC_IRQ_PROBE
+ 	select GENERIC_PENDING_IRQ if SMP
+@@ -48,7 +46,6 @@ config IA64
+ 	select ARCH_THREAD_STACK_ALLOCATOR
+ 	select ARCH_CLOCKSOURCE_DATA
+ 	select GENERIC_TIME_VSYSCALL
+-	select SWIOTLB
+ 	select SYSCTL_ARCH_UNALIGN_NO_WARN
+ 	select HAVE_MOD_ARCH_SPECIFIC
+ 	select MODULES_USE_ELF_RELA
+@@ -56,7 +53,6 @@ config IA64
+ 	select HAVE_ARCH_AUDITSYSCALL
+ 	select NEED_DMA_MAP_STATE
+ 	select NEED_SG_DMA_LENGTH
+-	select NUMA if !FLATMEM
+ 	default y
+ 	help
+ 	  The Itanium Processor Family is Intel's 64-bit successor to
+@@ -71,6 +67,7 @@ config 64BIT
+ 
+ config ZONE_DMA32
+ 	def_bool y
++	depends on !IA64_SGI_SN2
+ 
+ config MMU
+ 	bool
+@@ -120,6 +117,87 @@ config AUDIT_ARCH
+ 	bool
+ 	default y
+ 
++choice
++	prompt "System type"
++	default IA64_GENERIC
++
++config IA64_GENERIC
++	bool "generic"
++	select NUMA
++	select ACPI_NUMA
++	select SWIOTLB
++	select PCI_MSI
++	help
++	  This selects the system type of your hardware.  A "generic" kernel
++	  will run on any supported IA-64 system.  However, if you configure
++	  a kernel for your specific system, it will be faster and smaller.
++
++	  generic		For any supported IA-64 system
++	  DIG-compliant		For DIG ("Developer's Interface Guide") compliant systems
++	  DIG+Intel+IOMMU	For DIG systems with Intel IOMMU
++	  HP-zx1/sx1000		For HP systems
++	  HP-zx1/sx1000+swiotlb	For HP systems with (broken) DMA-constrained devices.
++	  SGI-SN2		For SGI Altix systems
++	  SGI-UV		For SGI UV systems
++	  Ski-simulator		For the HP simulator <http://www.hpl.hp.com/research/linux/ski/>
++
++	  If you don't know what to do, choose "generic".
++
++config IA64_DIG
++	bool "DIG-compliant"
++	select SWIOTLB
++
++config IA64_DIG_VTD
++	bool "DIG+Intel+IOMMU"
++	select INTEL_IOMMU
++	select PCI_MSI
++
++config IA64_HP_ZX1
++	bool "HP-zx1/sx1000"
++	help
++	  Build a kernel that runs on HP zx1 and sx1000 systems.  This adds
++	  support for the HP I/O MMU.
++
++config IA64_HP_ZX1_SWIOTLB
++	bool "HP-zx1/sx1000 with software I/O TLB"
++	select SWIOTLB
++	help
++	  Build a kernel that runs on HP zx1 and sx1000 systems even when they
++	  have broken PCI devices which cannot DMA to full 32 bits.  Apart
++	  from support for the HP I/O MMU, this includes support for the software
++	  I/O TLB, which allows supporting the broken devices at the expense of
++	  wasting some kernel memory (about 2MB by default).
++
++config IA64_SGI_SN2
++	bool "SGI-SN2"
++	select NUMA
++	select ACPI_NUMA
++	help
++	  Selecting this option will optimize the kernel for use on sn2 based
++	  systems, but the resulting kernel binary will not run on other
++	  types of ia64 systems.  If you have an SGI Altix system, it's safe
++	  to select this option.  If in doubt, select ia64 generic support
++	  instead.
++
++config IA64_SGI_UV
++	bool "SGI-UV"
++	select NUMA
++	select ACPI_NUMA
++	select SWIOTLB
++	help
++	  Selecting this option will optimize the kernel for use on UV based
++	  systems, but the resulting kernel binary will not run on other
++	  types of ia64 systems.  If you have an SGI UV system, it's safe
++	  to select this option.  If in doubt, select ia64 generic support
++	  instead.
++
++config IA64_HP_SIM
++	bool "Ski-simulator"
++	select SWIOTLB
++	depends on !PM
++
++endchoice
++
+ choice
+ 	prompt "Processor type"
+ 	default ITANIUM
+@@ -171,7 +249,14 @@ config IA64_PAGE_SIZE_64KB
+ 
+ endchoice
+ 
++if IA64_HP_SIM
++config HZ
++	default 32
++endif
++
++if !IA64_HP_SIM
+ source "kernel/Kconfig.hz"
++endif
+ 
+ config IA64_BRL_EMU
+ 	bool
+@@ -184,26 +269,17 @@ config IA64_L1_CACHE_SHIFT
+ 	default "7" if MCKINLEY
+ 	default "6" if ITANIUM
+ 
+-config IA64_SGI_UV
+-	bool "SGI-UV support"
+-	help
+-	  Selecting this option will add specific support for running on SGI
+-	  UV based systems.  If you have an SGI UV system or are building a
+-	  distro kernel, select this option.
+-
+-config IA64_HP_SBA_IOMMU
+-	bool "HP SBA IOMMU support"
+-	default y
+-	help
+-	  Say Y here to add support for the SBA IOMMU found on HP zx1 and
+-	  sx1000 systems.  If you're unsure, answer Y.
+-
+ config IA64_CYCLONE
+ 	bool "Cyclone (EXA) Time Source support"
+ 	help
+ 	  Say Y here to enable support for IBM EXA Cyclone time source.
+ 	  If you're unsure, answer N.
+ 
++config IOSAPIC
++	bool
++	depends on !IA64_HP_SIM
++	default y
++
+ config FORCE_MAX_ZONEORDER
+ 	int "MAX_ORDER (11 - 17)"  if !HUGETLB_PAGE
+ 	range 11 17  if !HUGETLB_PAGE
+@@ -302,12 +378,14 @@ config ARCH_SPARSEMEM_ENABLE
+ 	select SPARSEMEM_VMEMMAP_ENABLE
+ 
+ config ARCH_DISCONTIGMEM_DEFAULT
+-	def_bool y
++	def_bool y if (IA64_SGI_SN2 || IA64_GENERIC || IA64_HP_ZX1 || IA64_HP_ZX1_SWIOTLB)
+ 	depends on ARCH_DISCONTIGMEM_ENABLE
+ 
+ config NUMA
+ 	bool "NUMA support"
+-	depends on !FLATMEM
++	depends on !IA64_HP_SIM && !FLATMEM
++	default y if IA64_SGI_SN2
++	select ACPI_NUMA if ACPI
+ 	select SMP
+ 	help
+ 	  Say Y to compile the kernel to support NUMA (Non-Uniform Memory
+@@ -329,7 +407,7 @@ config NODES_SHIFT
+ config VIRTUAL_MEM_MAP
+ 	bool "Virtual mem map"
+ 	depends on !SPARSEMEM
+-	default y
++	default y if !IA64_HP_SIM
+ 	help
+ 	  Say Y to compile the kernel with support for a virtual mem map.
+ 	  This code also only takes effect if a memory hole of greater than
+@@ -392,6 +470,9 @@ config IA64_MC_ERR_INJECT
+ 
+ 	  If you're unsure, do not select this option.
+ 
++config SGI_SN
++	def_bool y if (IA64_SGI_SN2 || IA64_GENERIC)
++
+ config IA64_ESI
+ 	bool "ESI (Extensible SAL Interface) support"
+ 	help
+@@ -410,9 +491,11 @@ config IA64_HP_AML_NFW
+ 	  the "force" module parameter, e.g., with the "aml_nfw.force"
+ 	  kernel command line option.
+ 
++source "drivers/sn/Kconfig"
++
+ config KEXEC
+ 	bool "kexec system call"
+-	depends on !SMP || HOTPLUG_CPU
++	depends on !IA64_HP_SIM && (!SMP || HOTPLUG_CPU)
+ 	select KEXEC_CORE
+ 	help
+ 	  kexec is a system call that implements the ability to shutdown your
+@@ -430,7 +513,7 @@ config KEXEC
+ 
+ config CRASH_DUMP
+ 	  bool "kernel crash dumps"
+-	  depends on IA64_MCA_RECOVERY && (!SMP || HOTPLUG_CPU)
++	  depends on IA64_MCA_RECOVERY && !IA64_HP_SIM && (!SMP || HOTPLUG_CPU)
+ 	  help
+ 	    Generate crash dump after being started by kexec.
+ 
+@@ -452,6 +535,8 @@ endif
+ 
+ endmenu
+ 
++source "arch/ia64/hp/sim/Kconfig"
++
+ config MSPEC
+ 	tristate "Memory special operations driver"
+ 	depends on IA64
+diff --git a/arch/ia64/Kconfig.debug b/arch/ia64/Kconfig.debug
+index 40ca23bd228d..1371efc9b005 100644
+--- a/arch/ia64/Kconfig.debug
++++ b/arch/ia64/Kconfig.debug
+@@ -14,7 +14,7 @@ config IA64_GRANULE_16MB
+ 
+ config IA64_GRANULE_64MB
+ 	bool "64MB"
+-	depends on BROKEN
++	depends on !(IA64_GENERIC || IA64_HP_ZX1 || IA64_HP_ZX1_SWIOTLB || IA64_SGI_SN2)
+ 
+ endchoice
+ 
+diff --git a/arch/ia64/Makefile b/arch/ia64/Makefile
+index 32240000dc0c..5c3bcaee5980 100644
+--- a/arch/ia64/Makefile
++++ b/arch/ia64/Makefile
+@@ -39,23 +39,29 @@ $(error Sorry, you need a newer version of the assember, one that is built from
+ 		ftp://ftp.hpl.hp.com/pub/linux-ia64/gas-030124.tar.gz)
+ endif
+ 
+-quiet_cmd_gzip = GZIP    $@
+-cmd_gzip = cat $(real-prereqs) | gzip -n -f -9 > $@
+-
+-quiet_cmd_objcopy = OBJCOPY $@
+-cmd_objcopy = $(OBJCOPY) $(OBJCOPYFLAGS) $(OBJCOPYFLAGS_$(@F)) $< $@
+-
+ KBUILD_CFLAGS += $(cflags-y)
+ head-y := arch/ia64/kernel/head.o
+ 
+ libs-y				+= arch/ia64/lib/
+ core-y				+= arch/ia64/kernel/ arch/ia64/mm/
++core-$(CONFIG_IA64_DIG) 	+= arch/ia64/dig/
++core-$(CONFIG_IA64_DIG_VTD) 	+= arch/ia64/dig/
++core-$(CONFIG_IA64_GENERIC) 	+= arch/ia64/dig/
++core-$(CONFIG_IA64_HP_ZX1)	+= arch/ia64/dig/
++core-$(CONFIG_IA64_HP_ZX1_SWIOTLB) += arch/ia64/dig/
++core-$(CONFIG_IA64_SGI_SN2)	+= arch/ia64/sn/
+ core-$(CONFIG_IA64_SGI_UV)	+= arch/ia64/uv/
+ 
+-drivers-y			+= arch/ia64/pci/ arch/ia64/hp/common/
++drivers-$(CONFIG_PCI)		+= arch/ia64/pci/
++drivers-$(CONFIG_IA64_HP_SIM)	+= arch/ia64/hp/sim/
++drivers-$(CONFIG_IA64_HP_ZX1)	+= arch/ia64/hp/common/ arch/ia64/hp/zx1/
++drivers-$(CONFIG_IA64_HP_ZX1_SWIOTLB) += arch/ia64/hp/common/ arch/ia64/hp/zx1/
++drivers-$(CONFIG_IA64_GENERIC)	+= arch/ia64/hp/common/ arch/ia64/hp/zx1/ arch/ia64/hp/sim/ arch/ia64/sn/ arch/ia64/uv/
+ drivers-$(CONFIG_OPROFILE)	+= arch/ia64/oprofile/
+ 
+-PHONY += compressed check
++boot := arch/ia64/hp/sim/boot
++
++PHONY += boot compressed check
+ 
+ all: compressed unwcheck
+ 
+@@ -63,21 +69,22 @@ compressed: vmlinux.gz
+ 
+ vmlinuz: vmlinux.gz
+ 
+-vmlinux.gz: vmlinux.bin FORCE
+-	$(call if_changed,gzip)
+-
+-vmlinux.bin: vmlinux FORCE
+-	$(call if_changed,objcopy)
++vmlinux.gz: vmlinux
++	$(Q)$(MAKE) $(build)=$(boot) $@
+ 
+ unwcheck: vmlinux
+ 	-$(Q)READELF=$(READELF) $(PYTHON) $(srctree)/arch/ia64/scripts/unwcheck.py $<
+ 
+ archclean:
++	$(Q)$(MAKE) $(clean)=$(boot)
+ 
+ archheaders:
+ 	$(Q)$(MAKE) $(build)=arch/ia64/kernel/syscalls all
+ 
+-CLEAN_FILES += vmlinux.gz
++CLEAN_FILES += vmlinux.gz bootloader
++
++boot:	lib/lib.a vmlinux
++	$(Q)$(MAKE) $(build)=$(boot) $@
+ 
+ install: vmlinux.gz
+ 	sh $(srctree)/arch/ia64/install.sh $(KERNELRELEASE) $< System.map "$(INSTALL_PATH)"
+@@ -85,6 +92,7 @@ install: vmlinux.gz
+ define archhelp
+   echo '* compressed	- Build compressed kernel image'
+   echo '  install	- Install compressed kernel image'
++  echo '  boot		- Build vmlinux and bootloader for Ski simulator'
+   echo '* unwcheck	- Check vmlinux for invalid unwind info'
+ endef
+ 
+diff --git a/arch/ia64/configs/bigsur_defconfig b/arch/ia64/configs/bigsur_defconfig
+index b630bd7351c4..b6bda1838629 100644
+--- a/arch/ia64/configs/bigsur_defconfig
++++ b/arch/ia64/configs/bigsur_defconfig
+@@ -7,6 +7,7 @@ CONFIG_MODULES=y
+ CONFIG_MODULE_UNLOAD=y
+ CONFIG_PARTITION_ADVANCED=y
+ CONFIG_SGI_PARTITION=y
++CONFIG_IA64_DIG=y
+ CONFIG_SMP=y
+ CONFIG_NR_CPUS=2
+ CONFIG_PREEMPT=y
+diff --git a/arch/ia64/configs/generic_defconfig b/arch/ia64/configs/generic_defconfig
+index 661d90b3e148..81f686dee53c 100644
+--- a/arch/ia64/configs/generic_defconfig
++++ b/arch/ia64/configs/generic_defconfig
+@@ -44,12 +44,14 @@ CONFIG_BLK_DEV_LOOP=m
+ CONFIG_BLK_DEV_CRYPTOLOOP=m
+ CONFIG_BLK_DEV_NBD=m
+ CONFIG_BLK_DEV_RAM=y
++CONFIG_SGI_IOC4=y
+ CONFIG_SGI_XP=m
+ CONFIG_IDE=y
+ CONFIG_BLK_DEV_IDECD=y
+ CONFIG_BLK_DEV_GENERIC=y
+ CONFIG_BLK_DEV_CMD64X=y
+ CONFIG_BLK_DEV_PIIX=y
++CONFIG_BLK_DEV_SGIIOC4=y
+ CONFIG_BLK_DEV_SD=y
+ CONFIG_CHR_DEV_ST=m
+ CONFIG_BLK_DEV_SR=m
+@@ -88,11 +90,16 @@ CONFIG_IGB=y
+ # CONFIG_SERIO_SERPORT is not set
+ CONFIG_GAMEPORT=m
+ CONFIG_SERIAL_NONSTANDARD=y
++CONFIG_SGI_SNSC=y
++CONFIG_SGI_TIOCX=y
++CONFIG_SGI_MBCS=m
+ CONFIG_SERIAL_8250=y
+ CONFIG_SERIAL_8250_CONSOLE=y
+ CONFIG_SERIAL_8250_NR_UARTS=6
+ CONFIG_SERIAL_8250_EXTENDED=y
+ CONFIG_SERIAL_8250_SHARE_IRQ=y
++CONFIG_SERIAL_SGI_L1_CONSOLE=y
++CONFIG_SERIAL_SGI_IOC4=y
+ # CONFIG_HW_RANDOM is not set
+ CONFIG_EFI_RTC=y
+ CONFIG_RAW_DRIVER=m
+@@ -100,6 +107,7 @@ CONFIG_HPET=y
+ CONFIG_AGP=m
+ CONFIG_AGP_I460=m
+ CONFIG_AGP_HP_ZX1=m
++CONFIG_AGP_SGI_TIOCA=m
+ CONFIG_DRM=m
+ CONFIG_DRM_TDFX=m
+ CONFIG_DRM_R128=m
+diff --git a/arch/ia64/configs/gensparse_defconfig b/arch/ia64/configs/gensparse_defconfig
+index 7844e6a956a4..5b4fcdd51457 100644
+--- a/arch/ia64/configs/gensparse_defconfig
++++ b/arch/ia64/configs/gensparse_defconfig
+@@ -19,6 +19,7 @@ CONFIG_SPARSEMEM_MANUAL=y
+ CONFIG_IA64_MCA_RECOVERY=y
+ CONFIG_PERFMON=y
+ CONFIG_IA64_PALINFO=y
++CONFIG_SGI_IOC3=y
+ CONFIG_EFI_VARS=y
+ CONFIG_BINFMT_MISC=m
+ CONFIG_ACPI_BUTTON=m
+@@ -36,12 +37,14 @@ CONFIG_BLK_DEV_LOOP=m
+ CONFIG_BLK_DEV_CRYPTOLOOP=m
+ CONFIG_BLK_DEV_NBD=m
+ CONFIG_BLK_DEV_RAM=y
++CONFIG_SGI_IOC4=y
+ CONFIG_IDE=y
+ CONFIG_BLK_DEV_IDECD=y
+ CONFIG_IDE_GENERIC=y
+ CONFIG_BLK_DEV_GENERIC=y
+ CONFIG_BLK_DEV_CMD64X=y
+ CONFIG_BLK_DEV_PIIX=y
++CONFIG_BLK_DEV_SGIIOC4=y
+ CONFIG_SCSI=y
+ CONFIG_BLK_DEV_SD=y
+ CONFIG_CHR_DEV_ST=m
+@@ -76,11 +79,17 @@ CONFIG_E1000=y
+ # CONFIG_SERIO_SERPORT is not set
+ CONFIG_GAMEPORT=m
+ CONFIG_SERIAL_NONSTANDARD=y
++CONFIG_SGI_SNSC=y
++CONFIG_SGI_TIOCX=y
++CONFIG_SGI_MBCS=m
+ CONFIG_SERIAL_8250=y
+ CONFIG_SERIAL_8250_CONSOLE=y
+ CONFIG_SERIAL_8250_NR_UARTS=6
+ CONFIG_SERIAL_8250_EXTENDED=y
+ CONFIG_SERIAL_8250_SHARE_IRQ=y
++CONFIG_SERIAL_SGI_L1_CONSOLE=y
++CONFIG_SERIAL_SGI_IOC4=y
++CONFIG_SERIAL_SGI_IOC3=y
+ # CONFIG_HW_RANDOM is not set
+ CONFIG_EFI_RTC=y
+ CONFIG_RAW_DRIVER=m
+@@ -88,6 +97,7 @@ CONFIG_HPET=y
+ CONFIG_AGP=m
+ CONFIG_AGP_I460=m
+ CONFIG_AGP_HP_ZX1=m
++CONFIG_AGP_SGI_TIOCA=m
+ CONFIG_DRM=m
+ CONFIG_DRM_TDFX=m
+ CONFIG_DRM_R128=m
+diff --git a/arch/ia64/configs/tiger_defconfig b/arch/ia64/configs/tiger_defconfig
+index 1d6e2a01452b..192ed157c9ce 100644
+--- a/arch/ia64/configs/tiger_defconfig
++++ b/arch/ia64/configs/tiger_defconfig
+@@ -12,6 +12,7 @@ CONFIG_MODULE_SRCVERSION_ALL=y
+ # CONFIG_BLK_DEV_BSG is not set
+ CONFIG_PARTITION_ADVANCED=y
+ CONFIG_SGI_PARTITION=y
++CONFIG_IA64_DIG=y
+ CONFIG_MCKINLEY=y
+ CONFIG_IA64_PAGE_SIZE_64KB=y
+ CONFIG_IA64_CYCLONE=y
+diff --git a/arch/ia64/configs/zx1_defconfig b/arch/ia64/configs/zx1_defconfig
+index 8c92e095f8bb..b504c8e2fd52 100644
+--- a/arch/ia64/configs/zx1_defconfig
++++ b/arch/ia64/configs/zx1_defconfig
+@@ -4,6 +4,7 @@ CONFIG_BLK_DEV_INITRD=y
+ CONFIG_KPROBES=y
+ CONFIG_MODULES=y
+ CONFIG_PARTITION_ADVANCED=y
++CONFIG_IA64_HP_ZX1=y
+ CONFIG_MCKINLEY=y
+ CONFIG_SMP=y
+ CONFIG_NR_CPUS=16
+diff --git a/arch/ia64/hp/common/Makefile b/arch/ia64/hp/common/Makefile
+index 11a56ed38229..6026308f9a62 100644
+--- a/arch/ia64/hp/common/Makefile
++++ b/arch/ia64/hp/common/Makefile
+@@ -6,5 +6,7 @@
+ # Copyright (C) Alex Williamson (alex_williamson@hp.com)
+ #
+ 
+-obj-$(CONFIG_IA64_HP_SBA_IOMMU) += sba_iommu.o
++obj-y := sba_iommu.o
++obj-$(CONFIG_IA64_HP_ZX1_SWIOTLB) += hwsw_iommu.o
++obj-$(CONFIG_IA64_GENERIC) += hwsw_iommu.o
+ obj-$(CONFIG_IA64_HP_AML_NFW) += aml_nfw.o
+diff --git a/arch/ia64/kernel/Makefile b/arch/ia64/kernel/Makefile
+index 1a8df6669eee..4ba05140b249 100644
+--- a/arch/ia64/kernel/Makefile
++++ b/arch/ia64/kernel/Makefile
+@@ -10,14 +10,15 @@ endif
+ extra-y	:= head.o vmlinux.lds
+ 
+ obj-y := entry.o efi.o efi_stub.o gate-data.o fsys.o ia64_ksyms.o irq.o irq_ia64.o	\
+-	 irq_lsapic.o ivt.o pal.o patch.o process.o perfmon.o ptrace.o sal.o		\
++	 irq_lsapic.o ivt.o machvec.o pal.o patch.o process.o perfmon.o ptrace.o sal.o		\
+ 	 salinfo.o setup.o signal.o sys_ia64.o time.o traps.o unaligned.o \
+-	 unwind.o mca.o mca_asm.o topology.o dma-mapping.o iosapic.o acpi.o \
+-	 acpi-ext.o
++	 unwind.o mca.o mca_asm.o topology.o dma-mapping.o
+ 
++obj-$(CONFIG_ACPI)		+= acpi.o acpi-ext.o
+ obj-$(CONFIG_IA64_BRL_EMU)	+= brl_emu.o
+ 
+ obj-$(CONFIG_IA64_PALINFO)	+= palinfo.o
++obj-$(CONFIG_IOSAPIC)		+= iosapic.o
+ obj-$(CONFIG_MODULES)		+= module.o
+ obj-$(CONFIG_SMP)		+= smp.o smpboot.o
+ obj-$(CONFIG_NUMA)		+= numa.o
+@@ -30,7 +31,7 @@ obj-$(CONFIG_KEXEC)		+= machine_kexec.o relocate_kernel.o crash.o
+ obj-$(CONFIG_CRASH_DUMP)	+= crash_dump.o
+ obj-$(CONFIG_IA64_UNCACHED_ALLOCATOR)	+= uncached.o
+ obj-$(CONFIG_AUDIT)		+= audit.o
+-obj-y				+= msi_ia64.o
++obj-$(CONFIG_PCI_MSI)		+= msi_ia64.o
+ mca_recovery-y			+= mca_drv.o mca_drv_asm.o
+ obj-$(CONFIG_IA64_MC_ERR_INJECT)+= err_inject.o
+ obj-$(CONFIG_STACKTRACE)	+= stacktrace.o
+diff --git a/arch/ia64/uv/kernel/Makefile b/arch/ia64/uv/kernel/Makefile
+index 297196578d19..124e441d383d 100644
+--- a/arch/ia64/uv/kernel/Makefile
++++ b/arch/ia64/uv/kernel/Makefile
+@@ -10,3 +10,4 @@
+ ccflags-y := -Iarch/ia64/sn/include
+ 
+ obj-y				+= setup.o
++obj-$(CONFIG_IA64_GENERIC)      += machvec.o

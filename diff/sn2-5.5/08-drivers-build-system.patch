@@ -1,0 +1,285 @@
+# Driver Kconfig/Makefile changes - SN2 additions only
+# 14 files: 0 new, 14 modified (+98/-0)
+#
+# MOD drivers/Kconfig
+# MOD drivers/Makefile
+# MOD drivers/char/Kconfig
+# MOD drivers/char/Makefile
+# MOD drivers/char/agp/Kconfig
+# MOD drivers/char/agp/Makefile
+# MOD drivers/ide/Kconfig
+# MOD drivers/ide/Makefile
+# MOD drivers/misc/Kconfig
+# MOD drivers/misc/Makefile
+# MOD drivers/pci/hotplug/Kconfig
+# MOD drivers/pci/hotplug/Makefile
+# MOD drivers/tty/serial/Kconfig
+# MOD drivers/tty/serial/Makefile
+#
+diff --git a/drivers/Kconfig b/drivers/Kconfig
+index 8befa53f43be..5c763f85d28d 100644
+--- a/drivers/Kconfig
++++ b/drivers/Kconfig
+@@ -30,6 +30,8 @@ source "drivers/block/Kconfig"
+ 
+ source "drivers/nvme/Kconfig"
+ 
++# misc before ide - BLK_DEV_SGIIOC4 depends on SGI_IOC4
++
+ source "drivers/misc/Kconfig"
+ 
+ source "drivers/ide/Kconfig"
+diff --git a/drivers/Makefile b/drivers/Makefile
+index aaef17cc6512..54d2585daf02 100644
+--- a/drivers/Makefile
++++ b/drivers/Makefile
+@@ -131,6 +131,7 @@ obj-y				+= mmc/
+ obj-$(CONFIG_MEMSTICK)		+= memstick/
+ obj-$(CONFIG_NEW_LEDS)		+= leds/
+ obj-$(CONFIG_INFINIBAND)	+= infiniband/
++obj-$(CONFIG_SGI_SN)		+= sn/
+ obj-y				+= firmware/
+ obj-$(CONFIG_CRYPTO)		+= crypto/
+ obj-$(CONFIG_SUPERH)		+= sh/
+diff --git a/drivers/char/Kconfig b/drivers/char/Kconfig
+index df0fc997dc3e..2794f4b3f62d 100644
+--- a/drivers/char/Kconfig
++++ b/drivers/char/Kconfig
+@@ -26,6 +26,28 @@ config DEVKMEM
+ 	  kind of kernel debugging operations.
+ 	  When in doubt, say "N".
+ 
++config SGI_SNSC
++	bool "SGI Altix system controller communication support"
++	depends on (IA64_SGI_SN2 || IA64_GENERIC)
++	help
++	  If you have an SGI Altix and you want to enable system
++	  controller communication from user space (you want this!),
++	  say Y.  Otherwise, say N.
++
++config SGI_TIOCX
++       bool "SGI TIO CX driver support"
++       depends on (IA64_SGI_SN2 || IA64_GENERIC)
++       help
++         If you have an SGI Altix and you have fpga devices attached
++         to your TIO, say Y here, otherwise say N.
++
++config SGI_MBCS
++       tristate "SGI FPGA Core Services driver support"
++       depends on SGI_TIOCX
++       help
++         If you have an SGI Altix with an attached SABrick
++         say Y or M here, otherwise say N.
++
+ source "drivers/tty/serial/Kconfig"
+ source "drivers/tty/serdev/Kconfig"
+ 
+diff --git a/drivers/char/Makefile b/drivers/char/Makefile
+index 7c5ea6f9df14..fbea7dd12932 100644
+--- a/drivers/char/Makefile
++++ b/drivers/char/Makefile
+@@ -9,9 +9,11 @@ obj-y				+= misc.o
+ obj-$(CONFIG_ATARI_DSP56K)	+= dsp56k.o
+ obj-$(CONFIG_VIRTIO_CONSOLE)	+= virtio_console.o
+ obj-$(CONFIG_RAW_DRIVER)	+= raw.o
++obj-$(CONFIG_SGI_SNSC)		+= snsc.o snsc_event.o
+ obj-$(CONFIG_MSPEC)		+= mspec.o
+ obj-$(CONFIG_UV_MMTIMER)	+= uv_mmtimer.o
+ obj-$(CONFIG_IBM_BSR)		+= bsr.o
++obj-$(CONFIG_SGI_MBCS)		+= mbcs.o
+ 
+ obj-$(CONFIG_PRINTER)		+= lp.o
+ 
+diff --git a/drivers/char/agp/Kconfig b/drivers/char/agp/Kconfig
+--- a/drivers/char/agp/Kconfig
++++ b/drivers/char/agp/Kconfig
+@@ -150,6 +150,13 @@ config AGP_EFFICEON
+ 	  This option gives you AGP support for the Transmeta Efficeon
+ 	  series processors with integrated northbridges.
+ 
++config AGP_SGI_TIOCA
++        tristate "SGI TIO chipset AGP support"
++        depends on AGP && (IA64_SGI_SN2 || IA64_GENERIC)
++        help
++          This option gives you AGP GART support for the SGI TIO chipset
++          for IA64 processors.
++
+ config INTEL_GTT
+ 	tristate
+ 	depends on X86 && PCI
+diff --git a/drivers/char/agp/Makefile b/drivers/char/agp/Makefile
+index cb2497d157f6..4a786ffd9dee 100644
+--- a/drivers/char/agp/Makefile
++++ b/drivers/char/agp/Makefile
+@@ -16,6 +16,7 @@ obj-$(CONFIG_AGP_I460)		+= i460-agp.o
+ obj-$(CONFIG_AGP_INTEL)		+= intel-agp.o
+ obj-$(CONFIG_INTEL_GTT)		+= intel-gtt.o
+ obj-$(CONFIG_AGP_NVIDIA)	+= nvidia-agp.o
++obj-$(CONFIG_AGP_SGI_TIOCA)	+= sgi-agp.o
+ obj-$(CONFIG_AGP_SIS)		+= sis-agp.o
+ obj-$(CONFIG_AGP_SWORKS)	+= sworks-agp.o
+ obj-$(CONFIG_AGP_UNINORTH)	+= uninorth-agp.o
+diff --git a/drivers/ide/Kconfig b/drivers/ide/Kconfig
+index 1c227ea8ecd3..9eada392df15 100644
+--- a/drivers/ide/Kconfig
++++ b/drivers/ide/Kconfig
+@@ -567,6 +567,15 @@ config BLK_DEV_SVWKS
+ 	  This driver adds PIO/(U)DMA support for the ServerWorks OSB4/CSB5
+ 	  chipsets.
+ 
++config BLK_DEV_SGIIOC4
++	tristate "Silicon Graphics IOC4 chipset ATA/ATAPI support"
++	depends on (IA64_SGI_SN2 || IA64_GENERIC) && SGI_IOC4
++	select BLK_DEV_IDEDMA_PCI
++	help
++	  This driver adds PIO & MultiMode DMA-2 support for the SGI IOC4
++	  chipset, which has one channel and can support two devices.
++	  Please say Y here if you have an Altix System from SGI.
++
+ config BLK_DEV_SIIMAGE
+ 	tristate "Silicon Image chipset support"
+ 	select BLK_DEV_IDEDMA_PCI
+diff --git a/drivers/ide/Makefile b/drivers/ide/Makefile
+index cac02db4098d..9f617a77970f 100644
+--- a/drivers/ide/Makefile
++++ b/drivers/ide/Makefile
+@@ -59,6 +59,7 @@ obj-$(CONFIG_BLK_DEV_PDC202XX_NEW)	+= pdc202xx_new.o
+ obj-$(CONFIG_BLK_DEV_PIIX)		+= piix.o
+ obj-$(CONFIG_BLK_DEV_RZ1000)		+= rz1000.o
+ obj-$(CONFIG_BLK_DEV_SVWKS)		+= serverworks.o
++obj-$(CONFIG_BLK_DEV_SGIIOC4)		+= sgiioc4.o
+ obj-$(CONFIG_BLK_DEV_SIIMAGE)		+= siimage.o
+ obj-$(CONFIG_BLK_DEV_SIS5513)		+= sis5513.o
+ obj-$(CONFIG_BLK_DEV_SL82C105)		+= sl82c105.o
+diff --git a/drivers/misc/Kconfig b/drivers/misc/Kconfig
+--- a/drivers/misc/Kconfig
++++ b/drivers/misc/Kconfig
+@@ -126,6 +126,18 @@ config INTEL_MID_PTI
+ 	  an Intel Atom (non-netbook) mobile device containing a MIPI
+ 	  P1149.7 standard implementation.
+ 
++config SGI_IOC4
++	tristate "SGI IOC4 Base IO support"
++	depends on PCI
++	---help---
++	  This option enables basic support for the IOC4 chip on certain
++	  SGI IO controller cards (IO9, IO10, and PCI-RT).  This option
++	  does not enable any specific functions on such a card, but provides
++	  necessary infrastructure for other drivers to utilize.
++
++	  If you have an SGI Altix with an IOC4-based card say Y.
++	  Otherwise say N.
++
+ config TIFM_CORE
+ 	tristate "TI Flash Media interface support"
+ 	depends on PCI
+diff --git a/drivers/misc/Makefile b/drivers/misc/Makefile
+index c1860d35dc7e..9e1eaf523d6e 100644
+--- a/drivers/misc/Makefile
++++ b/drivers/misc/Makefile
+@@ -21,6 +21,7 @@ obj-$(CONFIG_QCOM_COINCELL)	+= qcom-coincell.o
+ obj-$(CONFIG_QCOM_FASTRPC)	+= fastrpc.o
+ obj-$(CONFIG_SENSORS_BH1770)	+= bh1770glc.o
+ obj-$(CONFIG_SENSORS_APDS990X)	+= apds990x.o
++obj-$(CONFIG_SGI_IOC4)		+= ioc4.o
+ obj-$(CONFIG_ENCLOSURE_SERVICES) += enclosure.o
+ obj-$(CONFIG_KGDB_TESTS)	+= kgdbts.o
+ obj-$(CONFIG_SGI_XP)		+= sgi-xp/
+diff --git a/drivers/pci/hotplug/Kconfig b/drivers/pci/hotplug/Kconfig
+index e7b493c22bf3..e9f78eb390d2 100644
+--- a/drivers/pci/hotplug/Kconfig
++++ b/drivers/pci/hotplug/Kconfig
+@@ -147,6 +147,15 @@ config HOTPLUG_PCI_RPA_DLPAR
+ 
+ 	  When in doubt, say N.
+ 
++config HOTPLUG_PCI_SGI
++	tristate "SGI PCI Hotplug Support"
++	depends on IA64_SGI_SN2 || IA64_GENERIC
++	help
++	  Say Y here if you want to use the SGI Altix Hotplug
++	  Driver for PCI devices.
++
++	  When in doubt, say N.
++
+ config HOTPLUG_PCI_S390
+ 	bool "System z PCI Hotplug Support"
+ 	depends on S390 && 64BIT
+diff --git a/drivers/pci/hotplug/Makefile b/drivers/pci/hotplug/Makefile
+index 5196983220df..7e3331603714 100644
+--- a/drivers/pci/hotplug/Makefile
++++ b/drivers/pci/hotplug/Makefile
+@@ -18,6 +18,7 @@ obj-$(CONFIG_HOTPLUG_PCI_SHPC)		+= shpchp.o
+ obj-$(CONFIG_HOTPLUG_PCI_POWERNV)	+= pnv-php.o
+ obj-$(CONFIG_HOTPLUG_PCI_RPA)		+= rpaphp.o
+ obj-$(CONFIG_HOTPLUG_PCI_RPA_DLPAR)	+= rpadlpar_io.o
++obj-$(CONFIG_HOTPLUG_PCI_SGI)		+= sgi_hotplug.o
+ obj-$(CONFIG_HOTPLUG_PCI_ACPI)		+= acpiphp.o
+ obj-$(CONFIG_HOTPLUG_PCI_S390)		+= s390_pci_hpc.o
+ 
+diff --git a/drivers/tty/serial/Kconfig b/drivers/tty/serial/Kconfig
+index 67a9eb3f94ce..56b887ba1dfb 100644
+--- a/drivers/tty/serial/Kconfig
++++ b/drivers/tty/serial/Kconfig
+@@ -839,6 +839,16 @@ config SERIAL_CPM_CONSOLE
+ 	  your boot loader (lilo or loadlin) about how to pass options to the
+ 	  kernel at boot time.)
+ 
++config SERIAL_SGI_L1_CONSOLE
++	bool "SGI Altix L1 serial console support"
++	depends on IA64_GENERIC || IA64_SGI_SN2
++	select SERIAL_CORE
++	select SERIAL_CORE_CONSOLE
++	help
++		If you have an SGI Altix and you would like to use the system
++		controller serial port as your console (you want this!),
++		say Y.  Otherwise, say N.
++
+ config SERIAL_PIC32
+ 	tristate "Microchip PIC32 serial support"
+ 	depends on MACH_PIC32
+@@ -956,6 +966,23 @@ config SERIAL_JSM
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called jsm.
+ 
++config SERIAL_SGI_IOC4
++	tristate "SGI IOC4 controller serial support"
++	depends on (IA64_GENERIC || IA64_SGI_SN2) && SGI_IOC4
++	select SERIAL_CORE
++	help
++		If you have an SGI Altix with an IOC4 based Base IO card
++		and wish to use the serial ports on this card, say Y.
++		Otherwise, say N.
++
++config SERIAL_SGI_IOC3
++	tristate "SGI Altix IOC3 serial support"
++	depends on (IA64_GENERIC || IA64_SGI_SN2) && SGI_IOC3
++	select SERIAL_CORE
++	help
++	  If you have an SGI Altix with an IOC3 serial card,
++	  say Y or M.  Otherwise, say N.
++
+ config SERIAL_MSM
+ 	tristate "MSM on-chip serial port support"
+ 	depends on ARCH_QCOM
+diff --git a/drivers/tty/serial/Makefile b/drivers/tty/serial/Makefile
+index 863f47056539..490d74533fbd 100644
+--- a/drivers/tty/serial/Makefile
++++ b/drivers/tty/serial/Makefile
+@@ -41,6 +41,7 @@ obj-$(CONFIG_SERIAL_HS_LPC32XX) += lpc32xx_hs.o
+ obj-$(CONFIG_SERIAL_DZ) += dz.o
+ obj-$(CONFIG_SERIAL_ZS) += zs.o
+ obj-$(CONFIG_SERIAL_SH_SCI) += sh-sci.o
++obj-$(CONFIG_SERIAL_SGI_L1_CONSOLE) += sn_console.o
+ obj-$(CONFIG_SERIAL_CPM) += cpm_uart/
+ obj-$(CONFIG_SERIAL_IMX) += imx.o
+ obj-$(CONFIG_SERIAL_MPC52xx) += mpc52xx_uart.o
+@@ -52,6 +53,8 @@ obj-$(CONFIG_SERIAL_SC16IS7XX_CORE) += sc16is7xx.o
+ obj-$(CONFIG_SERIAL_JSM) += jsm/
+ obj-$(CONFIG_SERIAL_TXX9) += serial_txx9.o
+ obj-$(CONFIG_SERIAL_VR41XX) += vr41xx_siu.o
++obj-$(CONFIG_SERIAL_SGI_IOC4) += ioc4_serial.o
++obj-$(CONFIG_SERIAL_SGI_IOC3) += ioc3_serial.o
+ obj-$(CONFIG_SERIAL_ATMEL) += atmel_serial.o
+ obj-$(CONFIG_SERIAL_UARTLITE) += uartlite.o
+ obj-$(CONFIG_SERIAL_MSM) += msm_serial.o

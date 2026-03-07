@@ -21,6 +21,7 @@ fi
 
 
 # fix known compile bug
+echo "fix sn_dma_flush compile bug"
 git apply $_BASE_DIR/sn2-kernel-tools/diff/sn_dma_flush.patch
 
 #echo "SED to fix combile bug"
