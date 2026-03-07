@@ -1,0 +1,65 @@
+# Core kernel changes - fork.c, irq/proc.c
+# 2 files: 0 new, 2 modified (+14/-2)
+#
+# MOD kernel/fork.c
+# MOD kernel/irq/proc.c
+#
+diff --git a/kernel/fork.c b/kernel/fork.c
+index 13b38794efb5..5982f9f4c71d 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -780,7 +780,6 @@ static void set_max_threads(unsigned int max_threads_suggested)
+ int arch_task_struct_size __read_mostly;
+ #endif
+ 
+-#ifndef CONFIG_ARCH_TASK_STRUCT_ALLOCATOR
+ static void task_struct_whitelist(unsigned long *offset, unsigned long *size)
+ {
+ 	/* Fetch thread_struct whitelist for the architecture. */
+@@ -795,7 +794,6 @@ static void task_struct_whitelist(unsigned long *offset, unsigned long *size)
+ 	else
+ 		*offset += offsetof(struct task_struct, thread);
+ }
+-#endif /* CONFIG_ARCH_TASK_STRUCT_ALLOCATOR */
+ 
+ void __init fork_init(void)
+ {
+diff --git a/kernel/irq/proc.c b/kernel/irq/proc.c
+index cfc4f088a0e7..da9addb8d655 100644
+--- a/kernel/irq/proc.c
++++ b/kernel/irq/proc.c
+@@ -100,6 +100,10 @@ static int irq_affinity_hint_proc_show(struct seq_file *m, void *v)
+ 	return 0;
+ }
+ 
++#ifndef is_affinity_mask_valid
++#define is_affinity_mask_valid(val) 1
++#endif
++
+ int no_irq_affinity;
+ static int irq_affinity_proc_show(struct seq_file *m, void *v)
+ {
+@@ -132,6 +136,11 @@ static ssize_t write_irq_affinity(int type, struct file *file,
+ 	if (err)
+ 		goto free_cpumask;
+ 
++	if (!is_affinity_mask_valid(new_value)) {
++		err = -EINVAL;
++		goto free_cpumask;
++	}
++
+ 	/*
+ 	 * Do not allow disabling IRQs completely - it's a too easy
+ 	 * way to make the system unusable accidentally :-) At least
+@@ -223,6 +232,11 @@ static ssize_t default_affinity_write(struct file *file,
+ 	if (err)
+ 		goto out;
+ 
++	if (!is_affinity_mask_valid(new_value)) {
++		err = -EINVAL;
++		goto out;
++	}
++
+ 	/*
+ 	 * Do not allow disabling IRQs completely - it's a too easy
+ 	 * way to make the system unusable accidentally :-) At least

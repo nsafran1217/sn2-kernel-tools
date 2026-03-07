@@ -1,0 +1,16 @@
+# Misc - pci_ids.h
+#
+# MOD include/linux/pci_ids.h
+#
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index 21a572469a4e..1a639325ed43 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -1071,6 +1071,7 @@
+ #define PCI_VENDOR_ID_SGI		0x10a9
+ #define PCI_DEVICE_ID_SGI_IOC3		0x0003
+ #define PCI_DEVICE_ID_SGI_LITHIUM	0x1002
++#define PCI_DEVICE_ID_SGI_IOC4		0x100a
+ 
+ #define PCI_VENDOR_ID_WINBOND		0x10ad
+ #define PCI_DEVICE_ID_WINBOND_82C105	0x0105
