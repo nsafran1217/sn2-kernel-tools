@@ -57,5 +57,5 @@ Apply with: `git apply NN-*.patch`
 
 for p in ~/altix_cross/sn2-kernel-tools/diff/sn2-5.x/*.patch; do
     echo "Applying $(basename $p)..."
-    git apply "$p" || echo "FAILED: $p"
+    git apply --reject --verbose "$p" || echo "FAILED: $p"
 done

@@ -12,7 +12,13 @@ echo $_BASE_DIR
 
 
 # Build the kernel
-cd $_BASE_DIR/src/mainline/linux
+#cd $_BASE_DIR/src/mainline/linux
+# do it in pwd
+if [ ! -f .config ]; then
+	echo ".config not found, are you in a linux source tree?"
+	exit 1
+fi
+
 
 # fix known compile bug
 git apply $_BASE_DIR/sn2-kernel-tools/diff/sn_dma_flush.patch
