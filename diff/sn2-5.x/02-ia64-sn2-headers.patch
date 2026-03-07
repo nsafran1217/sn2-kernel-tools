@@ -1,45 +1,6 @@
-# SN2 headers (arch/ia64/include/asm/sn/)
-# 35 files: 33 new, 2 modified (+10031/-1)
-#
-# NEW arch/ia64/include/asm/sn/acpi.h
-# NEW arch/ia64/include/asm/sn/addrs.h
-# NEW arch/ia64/include/asm/sn/arch.h
-# NEW arch/ia64/include/asm/sn/bte.h
-# NEW arch/ia64/include/asm/sn/clksupport.h
-# NEW arch/ia64/include/asm/sn/geo.h
-# MOD arch/ia64/include/asm/sn/intr.h
-# NEW arch/ia64/include/asm/sn/io.h
-# NEW arch/ia64/include/asm/sn/ioc3.h
-# NEW arch/ia64/include/asm/sn/klconfig.h
-# NEW arch/ia64/include/asm/sn/l1.h
-# NEW arch/ia64/include/asm/sn/leds.h
-# NEW arch/ia64/include/asm/sn/module.h
-# NEW arch/ia64/include/asm/sn/mspec.h
-# NEW arch/ia64/include/asm/sn/nodepda.h
-# NEW arch/ia64/include/asm/sn/pcibr_provider.h
-# NEW arch/ia64/include/asm/sn/pcibus_provider_defs.h
-# NEW arch/ia64/include/asm/sn/pcidev.h
-# NEW arch/ia64/include/asm/sn/pda.h
-# NEW arch/ia64/include/asm/sn/pic.h
-# NEW arch/ia64/include/asm/sn/rw_mmr.h
-# NEW arch/ia64/include/asm/sn/shub_mmr.h
-# NEW arch/ia64/include/asm/sn/shubio.h
-# NEW arch/ia64/include/asm/sn/simulator.h
-# NEW arch/ia64/include/asm/sn/sn2/sn_hwperf.h
-# NEW arch/ia64/include/asm/sn/sn_cpuid.h
-# NEW arch/ia64/include/asm/sn/sn_feature_sets.h
-# MOD arch/ia64/include/asm/sn/sn_sal.h
-# NEW arch/ia64/include/asm/sn/tioca.h
-# NEW arch/ia64/include/asm/sn/tioca_provider.h
-# NEW arch/ia64/include/asm/sn/tioce.h
-# NEW arch/ia64/include/asm/sn/tioce_provider.h
-# NEW arch/ia64/include/asm/sn/tiocp.h
-# NEW arch/ia64/include/asm/sn/tiocx.h
-# NEW arch/ia64/include/asm/sn/types.h
-#
 diff --git a/arch/ia64/include/asm/sn/acpi.h b/arch/ia64/include/asm/sn/acpi.h
 new file mode 100644
-index 000000000000..fd480db25565
+index 0000000..fd480db
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/acpi.h
 @@ -0,0 +1,15 @@
@@ -60,7 +21,7 @@ index 000000000000..fd480db25565
 +#endif /* _ASM_IA64_SN_ACPI_H */
 diff --git a/arch/ia64/include/asm/sn/addrs.h b/arch/ia64/include/asm/sn/addrs.h
 new file mode 100644
-index 000000000000..e715c794b186
+index 0000000..e715c79
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/addrs.h
 @@ -0,0 +1,299 @@
@@ -365,7 +326,7 @@ index 000000000000..e715c794b186
 +#endif /* _ASM_IA64_SN_ADDRS_H */
 diff --git a/arch/ia64/include/asm/sn/arch.h b/arch/ia64/include/asm/sn/arch.h
 new file mode 100644
-index 000000000000..31eb784866f8
+index 0000000..31eb784
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/arch.h
 @@ -0,0 +1,86 @@
@@ -457,7 +418,7 @@ index 000000000000..31eb784866f8
 +#endif /* _ASM_IA64_SN_ARCH_H */
 diff --git a/arch/ia64/include/asm/sn/bte.h b/arch/ia64/include/asm/sn/bte.h
 new file mode 100644
-index 000000000000..cd71ab5faf62
+index 0000000..cd71ab5
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/bte.h
 @@ -0,0 +1,236 @@
@@ -699,7 +660,7 @@ index 000000000000..cd71ab5faf62
 +#endif	/* _ASM_IA64_SN_BTE_H */
 diff --git a/arch/ia64/include/asm/sn/clksupport.h b/arch/ia64/include/asm/sn/clksupport.h
 new file mode 100644
-index 000000000000..d340c365a824
+index 0000000..d340c36
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/clksupport.h
 @@ -0,0 +1,28 @@
@@ -733,7 +694,7 @@ index 000000000000..d340c365a824
 +#endif /* _ASM_IA64_SN_CLKSUPPORT_H */
 diff --git a/arch/ia64/include/asm/sn/geo.h b/arch/ia64/include/asm/sn/geo.h
 new file mode 100644
-index 000000000000..f083c9434066
+index 0000000..f083c94
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/geo.h
 @@ -0,0 +1,132 @@
@@ -870,7 +831,7 @@ index 000000000000..f083c9434066
 +
 +#endif /* _ASM_IA64_SN_GEO_H */
 diff --git a/arch/ia64/include/asm/sn/intr.h b/arch/ia64/include/asm/sn/intr.h
-index 3885a77b21df..e0487aa97418 100644
+index 3885a77..e0487aa 100644
 --- a/arch/ia64/include/asm/sn/intr.h
 +++ b/arch/ia64/include/asm/sn/intr.h
 @@ -9,7 +9,60 @@
@@ -936,7 +897,7 @@ index 3885a77b21df..e0487aa97418 100644
  #endif /* _ASM_IA64_SN_INTR_H */
 diff --git a/arch/ia64/include/asm/sn/io.h b/arch/ia64/include/asm/sn/io.h
 new file mode 100644
-index 000000000000..41c73a735628
+index 0000000..41c73a7
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/io.h
 @@ -0,0 +1,274 @@
@@ -1216,7 +1177,7 @@ index 000000000000..41c73a735628
 +#endif	/* _ASM_SN_IO_H */
 diff --git a/arch/ia64/include/asm/sn/ioc3.h b/arch/ia64/include/asm/sn/ioc3.h
 new file mode 100644
-index 000000000000..d4a524951df3
+index 0000000..d4a5249
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/ioc3.h
 @@ -0,0 +1,242 @@
@@ -1464,7 +1425,7 @@ index 000000000000..d4a524951df3
 +#endif /* IA64_SN_IOC3_H */
 diff --git a/arch/ia64/include/asm/sn/klconfig.h b/arch/ia64/include/asm/sn/klconfig.h
 new file mode 100644
-index 000000000000..bcbf209d63be
+index 0000000..bcbf209
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/klconfig.h
 @@ -0,0 +1,246 @@
@@ -1716,7 +1677,7 @@ index 000000000000..bcbf209d63be
 +#endif /* _ASM_IA64_SN_KLCONFIG_H */
 diff --git a/arch/ia64/include/asm/sn/l1.h b/arch/ia64/include/asm/sn/l1.h
 new file mode 100644
-index 000000000000..344bf44bb356
+index 0000000..344bf44
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/l1.h
 @@ -0,0 +1,51 @@
@@ -1773,7 +1734,7 @@ index 000000000000..344bf44bb356
 +#endif /* _ASM_IA64_SN_L1_H */
 diff --git a/arch/ia64/include/asm/sn/leds.h b/arch/ia64/include/asm/sn/leds.h
 new file mode 100644
-index 000000000000..66cf8c4d92c9
+index 0000000..66cf8c4
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/leds.h
 @@ -0,0 +1,33 @@
@@ -1812,7 +1773,7 @@ index 000000000000..66cf8c4d92c9
 +
 diff --git a/arch/ia64/include/asm/sn/module.h b/arch/ia64/include/asm/sn/module.h
 new file mode 100644
-index 000000000000..734e980ece2f
+index 0000000..734e980
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/module.h
 @@ -0,0 +1,127 @@
@@ -1945,7 +1906,7 @@ index 000000000000..734e980ece2f
 +#endif /* _ASM_IA64_SN_MODULE_H */
 diff --git a/arch/ia64/include/asm/sn/mspec.h b/arch/ia64/include/asm/sn/mspec.h
 new file mode 100644
-index 000000000000..c1d3c50c3223
+index 0000000..c1d3c50
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/mspec.h
 @@ -0,0 +1,59 @@
@@ -2010,7 +1971,7 @@ index 000000000000..c1d3c50c3223
 +#endif /* _ASM_IA64_SN_MSPEC_H */
 diff --git a/arch/ia64/include/asm/sn/nodepda.h b/arch/ia64/include/asm/sn/nodepda.h
 new file mode 100644
-index 000000000000..7c8b4710f071
+index 0000000..7c8b471
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/nodepda.h
 @@ -0,0 +1,82 @@
@@ -2098,7 +2059,7 @@ index 000000000000..7c8b4710f071
 +#endif /* _ASM_IA64_SN_NODEPDA_H */
 diff --git a/arch/ia64/include/asm/sn/pcibr_provider.h b/arch/ia64/include/asm/sn/pcibr_provider.h
 new file mode 100644
-index 000000000000..da205b7cdaac
+index 0000000..da205b7
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/pcibr_provider.h
 @@ -0,0 +1,150 @@
@@ -2254,7 +2215,7 @@ index 000000000000..da205b7cdaac
 +#endif
 diff --git a/arch/ia64/include/asm/sn/pcibus_provider_defs.h b/arch/ia64/include/asm/sn/pcibus_provider_defs.h
 new file mode 100644
-index 000000000000..8f7c83d0f6d3
+index 0000000..8f7c83d
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/pcibus_provider_defs.h
 @@ -0,0 +1,68 @@
@@ -2328,7 +2289,7 @@ index 000000000000..8f7c83d0f6d3
 +#endif				/* _ASM_IA64_SN_PCI_PCIBUS_PROVIDER_H */
 diff --git a/arch/ia64/include/asm/sn/pcidev.h b/arch/ia64/include/asm/sn/pcidev.h
 new file mode 100644
-index 000000000000..1c2382cea807
+index 0000000..1c2382c
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/pcidev.h
 @@ -0,0 +1,85 @@
@@ -2419,7 +2380,7 @@ index 000000000000..1c2382cea807
 +#endif				/* _ASM_IA64_SN_PCI_PCIDEV_H */
 diff --git a/arch/ia64/include/asm/sn/pda.h b/arch/ia64/include/asm/sn/pda.h
 new file mode 100644
-index 000000000000..22ae358c8d16
+index 0000000..22ae358
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/pda.h
 @@ -0,0 +1,68 @@
@@ -2493,7 +2454,7 @@ index 000000000000..22ae358c8d16
 +#endif /* _ASM_IA64_SN_PDA_H */
 diff --git a/arch/ia64/include/asm/sn/pic.h b/arch/ia64/include/asm/sn/pic.h
 new file mode 100644
-index 000000000000..5f9da5fd6e56
+index 0000000..5f9da5f
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/pic.h
 @@ -0,0 +1,261 @@
@@ -2760,7 +2721,7 @@ index 000000000000..5f9da5fd6e56
 +#endif                          /* _ASM_IA64_SN_PCI_PIC_H */
 diff --git a/arch/ia64/include/asm/sn/rw_mmr.h b/arch/ia64/include/asm/sn/rw_mmr.h
 new file mode 100644
-index 000000000000..2d78f4c5a45e
+index 0000000..2d78f4c
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/rw_mmr.h
 @@ -0,0 +1,28 @@
@@ -2794,7 +2755,7 @@ index 000000000000..2d78f4c5a45e
 +#endif /* _ASM_IA64_SN_RW_MMR_H */
 diff --git a/arch/ia64/include/asm/sn/shub_mmr.h b/arch/ia64/include/asm/sn/shub_mmr.h
 new file mode 100644
-index 000000000000..a84d870f4294
+index 0000000..a84d870
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/shub_mmr.h
 @@ -0,0 +1,502 @@
@@ -3302,7 +3263,7 @@ index 000000000000..a84d870f4294
 +#endif /* _ASM_IA64_SN_SHUB_MMR_H */
 diff --git a/arch/ia64/include/asm/sn/shubio.h b/arch/ia64/include/asm/sn/shubio.h
 new file mode 100644
-index 000000000000..8a1ec139f977
+index 0000000..8a1ec13
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/shubio.h
 @@ -0,0 +1,3358 @@
@@ -6666,7 +6627,7 @@ index 000000000000..8a1ec139f977
 +#endif				/* _ASM_IA64_SN_SHUBIO_H */
 diff --git a/arch/ia64/include/asm/sn/simulator.h b/arch/ia64/include/asm/sn/simulator.h
 new file mode 100644
-index 000000000000..c2611f6cfe33
+index 0000000..c2611f6
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/simulator.h
 @@ -0,0 +1,25 @@
@@ -6697,7 +6658,7 @@ index 000000000000..c2611f6cfe33
 +#endif /* _ASM_IA64_SN_SIMULATOR_H */
 diff --git a/arch/ia64/include/asm/sn/sn2/sn_hwperf.h b/arch/ia64/include/asm/sn/sn2/sn_hwperf.h
 new file mode 100644
-index 000000000000..e61ebac38cdd
+index 0000000..e61ebac
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/sn2/sn_hwperf.h
 @@ -0,0 +1,242 @@
@@ -6945,7 +6906,7 @@ index 000000000000..e61ebac38cdd
 +#endif				/* SN_HWPERF_H */
 diff --git a/arch/ia64/include/asm/sn/sn_cpuid.h b/arch/ia64/include/asm/sn/sn_cpuid.h
 new file mode 100644
-index 000000000000..a676dd9ace3e
+index 0000000..a676dd9
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/sn_cpuid.h
 @@ -0,0 +1,132 @@
@@ -7083,7 +7044,7 @@ index 000000000000..a676dd9ace3e
 +
 diff --git a/arch/ia64/include/asm/sn/sn_feature_sets.h b/arch/ia64/include/asm/sn/sn_feature_sets.h
 new file mode 100644
-index 000000000000..8e83ac117ace
+index 0000000..8e83ac1
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/sn_feature_sets.h
 @@ -0,0 +1,58 @@
@@ -7146,7 +7107,7 @@ index 000000000000..8e83ac117ace
 +
 +#endif /* _ASM_IA64_SN_FEATURE_SETS_H */
 diff --git a/arch/ia64/include/asm/sn/sn_sal.h b/arch/ia64/include/asm/sn/sn_sal.h
-index d437aa43343b..5142c444652d 100644
+index d437aa4..5142c44 100644
 --- a/arch/ia64/include/asm/sn/sn_sal.h
 +++ b/arch/ia64/include/asm/sn/sn_sal.h
 @@ -11,16 +11,139 @@
@@ -8299,7 +8260,7 @@ index d437aa43343b..5142c444652d 100644
  	struct {
 diff --git a/arch/ia64/include/asm/sn/tioca.h b/arch/ia64/include/asm/sn/tioca.h
 new file mode 100644
-index 000000000000..666222d7f0f6
+index 0000000..666222d
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/tioca.h
 @@ -0,0 +1,596 @@
@@ -8901,7 +8862,7 @@ index 000000000000..666222d7f0f6
 +#endif  /* _ASM_IA64_SN_TIO_TIOCA_H */
 diff --git a/arch/ia64/include/asm/sn/tioca_provider.h b/arch/ia64/include/asm/sn/tioca_provider.h
 new file mode 100644
-index 000000000000..9a820ac61be3
+index 0000000..9a820ac
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/tioca_provider.h
 @@ -0,0 +1,207 @@
@@ -9114,7 +9075,7 @@ index 000000000000..9a820ac61be3
 +#endif /* _ASM_IA64_SN_TIO_CA_AGP_PROVIDER_H */
 diff --git a/arch/ia64/include/asm/sn/tioce.h b/arch/ia64/include/asm/sn/tioce.h
 new file mode 100644
-index 000000000000..6eae8ada90f0
+index 0000000..6eae8ad
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/tioce.h
 @@ -0,0 +1,760 @@
@@ -9880,7 +9841,7 @@ index 000000000000..6eae8ada90f0
 +#endif /* __ASM_IA64_SN_TIOCE_H__ */
 diff --git a/arch/ia64/include/asm/sn/tioce_provider.h b/arch/ia64/include/asm/sn/tioce_provider.h
 new file mode 100644
-index 000000000000..32c32f30b099
+index 0000000..32c32f3
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/tioce_provider.h
 @@ -0,0 +1,63 @@
@@ -9949,7 +9910,7 @@ index 000000000000..32c32f30b099
 +#endif  /* __ASM_IA64_SN_CE_PROVIDER_H */
 diff --git a/arch/ia64/include/asm/sn/tiocp.h b/arch/ia64/include/asm/sn/tiocp.h
 new file mode 100644
-index 000000000000..e8ad0bb5b6c5
+index 0000000..e8ad0bb
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/tiocp.h
 @@ -0,0 +1,257 @@
@@ -10212,7 +10173,7 @@ index 000000000000..e8ad0bb5b6c5
 +#endif 	/* _ASM_IA64_SN_PCI_TIOCP_H */
 diff --git a/arch/ia64/include/asm/sn/tiocx.h b/arch/ia64/include/asm/sn/tiocx.h
 new file mode 100644
-index 000000000000..d29728492f36
+index 0000000..d297284
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/tiocx.h
 @@ -0,0 +1,72 @@
@@ -10290,7 +10251,7 @@ index 000000000000..d29728492f36
 +#endif				// _ASM_IA64_SN_TIO_TIOCX__
 diff --git a/arch/ia64/include/asm/sn/types.h b/arch/ia64/include/asm/sn/types.h
 new file mode 100644
-index 000000000000..8e04ee211e59
+index 0000000..8e04ee2
 --- /dev/null
 +++ b/arch/ia64/include/asm/sn/types.h
 @@ -0,0 +1,26 @@

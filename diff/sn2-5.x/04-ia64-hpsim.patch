@@ -1,27 +1,6 @@
-# HP Simulator support - all new files (optional)
-# 17 files: 17 new, 0 modified (+2592/-0)
-#
-# NEW arch/ia64/configs/sim_defconfig
-# NEW arch/ia64/hp/sim/Kconfig
-# NEW arch/ia64/hp/sim/Makefile
-# NEW arch/ia64/hp/sim/boot/Makefile
-# NEW arch/ia64/hp/sim/boot/boot_head.S
-# NEW arch/ia64/hp/sim/boot/bootloader.c
-# NEW arch/ia64/hp/sim/boot/bootloader.lds
-# NEW arch/ia64/hp/sim/boot/fw-emu.c
-# NEW arch/ia64/hp/sim/boot/ssc.h
-# NEW arch/ia64/hp/sim/hpsim.S
-# NEW arch/ia64/hp/sim/hpsim_console.c
-# NEW arch/ia64/hp/sim/hpsim_irq.c
-# NEW arch/ia64/hp/sim/hpsim_setup.c
-# NEW arch/ia64/hp/sim/hpsim_ssc.h
-# NEW arch/ia64/hp/sim/simeth.c
-# NEW arch/ia64/hp/sim/simscsi.c
-# NEW arch/ia64/hp/sim/simserial.c
-#
 diff --git a/arch/ia64/configs/sim_defconfig b/arch/ia64/configs/sim_defconfig
 new file mode 100644
-index 000000000000..f0f69fdbddae
+index 0000000..f0f69fd
 --- /dev/null
 +++ b/arch/ia64/configs/sim_defconfig
 @@ -0,0 +1,52 @@
@@ -79,7 +58,7 @@ index 000000000000..f0f69fdbddae
 +CONFIG_DEBUG_MUTEXES=y
 diff --git a/arch/ia64/hp/sim/Kconfig b/arch/ia64/hp/sim/Kconfig
 new file mode 100644
-index 000000000000..56fb4f1d4f7c
+index 0000000..56fb4f1
 --- /dev/null
 +++ b/arch/ia64/hp/sim/Kconfig
 @@ -0,0 +1,23 @@
@@ -108,7 +87,7 @@ index 000000000000..56fb4f1d4f7c
 +
 diff --git a/arch/ia64/hp/sim/Makefile b/arch/ia64/hp/sim/Makefile
 new file mode 100644
-index 000000000000..0224a13d2c5b
+index 0000000..0224a13
 --- /dev/null
 +++ b/arch/ia64/hp/sim/Makefile
 @@ -0,0 +1,17 @@
@@ -131,7 +110,7 @@ index 000000000000..0224a13d2c5b
 +obj-$(CONFIG_HP_SIMSCSI) += simscsi.o
 diff --git a/arch/ia64/hp/sim/boot/Makefile b/arch/ia64/hp/sim/boot/Makefile
 new file mode 100644
-index 000000000000..df6e9968c845
+index 0000000..df6e996
 --- /dev/null
 +++ b/arch/ia64/hp/sim/boot/Makefile
 @@ -0,0 +1,37 @@
@@ -174,7 +153,7 @@ index 000000000000..df6e9968c845
 +	$(call if_changed,ld)
 diff --git a/arch/ia64/hp/sim/boot/boot_head.S b/arch/ia64/hp/sim/boot/boot_head.S
 new file mode 100644
-index 000000000000..a7d178fb41e8
+index 0000000..a7d178f
 --- /dev/null
 +++ b/arch/ia64/hp/sim/boot/boot_head.S
 @@ -0,0 +1,165 @@
@@ -345,7 +324,7 @@ index 000000000000..a7d178fb41e8
 +END(pal_emulator_static)
 diff --git a/arch/ia64/hp/sim/boot/bootloader.c b/arch/ia64/hp/sim/boot/bootloader.c
 new file mode 100644
-index 000000000000..6d804608dc81
+index 0000000..6d80460
 --- /dev/null
 +++ b/arch/ia64/hp/sim/boot/bootloader.c
 @@ -0,0 +1,175 @@
@@ -526,7 +505,7 @@ index 000000000000..6d804608dc81
 +}
 diff --git a/arch/ia64/hp/sim/boot/bootloader.lds b/arch/ia64/hp/sim/boot/bootloader.lds
 new file mode 100644
-index 000000000000..f3f284d6514c
+index 0000000..f3f284d
 --- /dev/null
 +++ b/arch/ia64/hp/sim/boot/bootloader.lds
 @@ -0,0 +1,67 @@
@@ -599,7 +578,7 @@ index 000000000000..f3f284d6514c
 +}
 diff --git a/arch/ia64/hp/sim/boot/fw-emu.c b/arch/ia64/hp/sim/boot/fw-emu.c
 new file mode 100644
-index 000000000000..517fb2822e04
+index 0000000..517fb28
 --- /dev/null
 +++ b/arch/ia64/hp/sim/boot/fw-emu.c
 @@ -0,0 +1,374 @@
@@ -979,7 +958,7 @@ index 000000000000..517fb2822e04
 +}
 diff --git a/arch/ia64/hp/sim/boot/ssc.h b/arch/ia64/hp/sim/boot/ssc.h
 new file mode 100644
-index 000000000000..88752c7509e0
+index 0000000..88752c7
 --- /dev/null
 +++ b/arch/ia64/hp/sim/boot/ssc.h
 @@ -0,0 +1,36 @@
@@ -1021,7 +1000,7 @@ index 000000000000..88752c7509e0
 +#endif /* ssc_h */
 diff --git a/arch/ia64/hp/sim/hpsim.S b/arch/ia64/hp/sim/hpsim.S
 new file mode 100644
-index 000000000000..44b4d53e1689
+index 0000000..44b4d53
 --- /dev/null
 +++ b/arch/ia64/hp/sim/hpsim.S
 @@ -0,0 +1,11 @@
@@ -1038,7 +1017,7 @@ index 000000000000..44b4d53e1689
 +END(ia64_ssc)
 diff --git a/arch/ia64/hp/sim/hpsim_console.c b/arch/ia64/hp/sim/hpsim_console.c
 new file mode 100644
-index 000000000000..bffd9f67a8a1
+index 0000000..bffd9f6
 --- /dev/null
 +++ b/arch/ia64/hp/sim/hpsim_console.c
 @@ -0,0 +1,77 @@
@@ -1121,7 +1100,7 @@ index 000000000000..bffd9f67a8a1
 +}
 diff --git a/arch/ia64/hp/sim/hpsim_irq.c b/arch/ia64/hp/sim/hpsim_irq.c
 new file mode 100644
-index 000000000000..2f1cc59650ab
+index 0000000..2f1cc59
 --- /dev/null
 +++ b/arch/ia64/hp/sim/hpsim_irq.c
 @@ -0,0 +1,76 @@
@@ -1201,9 +1180,18 @@ index 000000000000..2f1cc59650ab
 +	for_each_active_irq(i)
 +		hpsim_irq_set_chip(i);
 +}
+diff --git a/arch/ia64/hp/sim/hpsim_machvec.c b/arch/ia64/hp/sim/hpsim_machvec.c
+new file mode 100644
+index 0000000..c214193
+--- /dev/null
++++ b/arch/ia64/hp/sim/hpsim_machvec.c
+@@ -0,0 +1,3 @@
++#define MACHVEC_PLATFORM_NAME		hpsim
++#define MACHVEC_PLATFORM_HEADER		<asm/machvec_hpsim.h>
++#include <asm/machvec_init.h>
 diff --git a/arch/ia64/hp/sim/hpsim_setup.c b/arch/ia64/hp/sim/hpsim_setup.c
 new file mode 100644
-index 000000000000..41d21d51dc4d
+index 0000000..41d21d5
 --- /dev/null
 +++ b/arch/ia64/hp/sim/hpsim_setup.c
 @@ -0,0 +1,41 @@
@@ -1250,7 +1238,7 @@ index 000000000000..41d21d51dc4d
 +}
 diff --git a/arch/ia64/hp/sim/hpsim_ssc.h b/arch/ia64/hp/sim/hpsim_ssc.h
 new file mode 100644
-index 000000000000..6fd97a487811
+index 0000000..6fd97a4
 --- /dev/null
 +++ b/arch/ia64/hp/sim/hpsim_ssc.h
 @@ -0,0 +1,37 @@
@@ -1293,7 +1281,7 @@ index 000000000000..6fd97a487811
 +#endif /* _IA64_PLATFORM_HPSIM_SSC_H */
 diff --git a/arch/ia64/hp/sim/simeth.c b/arch/ia64/hp/sim/simeth.c
 new file mode 100644
-index 000000000000..f39ef2b4ed72
+index 0000000..f39ef2b
 --- /dev/null
 +++ b/arch/ia64/hp/sim/simeth.c
 @@ -0,0 +1,510 @@
@@ -1809,7 +1797,7 @@ index 000000000000..f39ef2b4ed72
 +__initcall(simeth_probe);
 diff --git a/arch/ia64/hp/sim/simscsi.c b/arch/ia64/hp/sim/simscsi.c
 new file mode 100644
-index 000000000000..0a8a74271173
+index 0000000..0a8a742
 --- /dev/null
 +++ b/arch/ia64/hp/sim/simscsi.c
 @@ -0,0 +1,373 @@
@@ -2188,7 +2176,7 @@ index 000000000000..0a8a74271173
 +device_initcall(simscsi_init);
 diff --git a/arch/ia64/hp/sim/simserial.c b/arch/ia64/hp/sim/simserial.c
 new file mode 100644
-index 000000000000..1a338e541334
+index 0000000..1a338e5
 --- /dev/null
 +++ b/arch/ia64/hp/sim/simserial.c
 @@ -0,0 +1,521 @@
@@ -2712,4 +2700,27 @@ index 000000000000..1a338e541334
 +
 +#ifndef MODULE
 +__initcall(simrs_init);
++#endif
+diff --git a/arch/ia64/include/asm/hpsim.h b/arch/ia64/include/asm/hpsim.h
+new file mode 100644
+index 0000000..00fbd5c
+--- /dev/null
++++ b/arch/ia64/include/asm/hpsim.h
+@@ -0,0 +1,17 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _ASMIA64_HPSIM_H
++#define _ASMIA64_HPSIM_H
++
++#ifndef CONFIG_HP_SIMSERIAL_CONSOLE
++static inline int simcons_register(void) { return 1; }
++#else
++int simcons_register(void);
++#endif
++
++struct tty_driver;
++extern struct tty_driver *hp_simserial_driver;
++
++extern int hpsim_get_irq(int intr);
++void ia64_ctl_trace(long on);
++
 +#endif

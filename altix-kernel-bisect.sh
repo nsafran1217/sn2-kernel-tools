@@ -26,7 +26,7 @@ git apply $_BASE_DIR/sn2-kernel-tools/diff/io_resource.patch
 
 # Fix sn_mmiowb.patch
 echo "fix sn_mmiowb.patch"
-#git apply $_BASE_DIR/sn2-kernel-tools/diff/sn_mmiowb.patch
+git apply $_BASE_DIR/sn2-kernel-tools/diff/sn_mmiowb.patch
 
 
 

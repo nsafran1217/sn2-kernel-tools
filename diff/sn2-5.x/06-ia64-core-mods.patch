@@ -1,55 +1,5 @@
-# ia64 core source modifications - machvec integration
-# 46 files: 0 new, 46 modified (+877/-259)
-#
-# MOD arch/ia64/hp/common/sba_iommu.c
-# MOD arch/ia64/include/asm/acpi.h
-# MOD arch/ia64/include/asm/dma-mapping.h
-# MOD arch/ia64/include/asm/dma.h
-# MOD arch/ia64/include/asm/hw_irq.h
-# MOD arch/ia64/include/asm/io.h
-# MOD arch/ia64/include/asm/iommu.h
-# MOD arch/ia64/include/asm/iosapic.h
-# MOD arch/ia64/include/asm/irq.h
-# MOD arch/ia64/include/asm/mmiowb.h
-# MOD arch/ia64/include/asm/mmzone.h
-# MOD arch/ia64/include/asm/pci.h
-# MOD arch/ia64/include/asm/processor.h
-# MOD arch/ia64/include/asm/switch_to.h
-# MOD arch/ia64/include/asm/tlb.h
-# MOD arch/ia64/include/asm/uv/uv.h
-# MOD arch/ia64/kernel/acpi.c
-# MOD arch/ia64/kernel/dma-mapping.c
-# MOD arch/ia64/kernel/iosapic.c
-# MOD arch/ia64/kernel/irq.c
-# MOD arch/ia64/kernel/irq_ia64.c
-# MOD arch/ia64/kernel/kprobes.c
-# MOD arch/ia64/kernel/machine_kexec.c
-# MOD arch/ia64/kernel/mca.c
-# MOD arch/ia64/kernel/mca_drv.c
-# MOD arch/ia64/kernel/module.c
-# MOD arch/ia64/kernel/msi_ia64.c
-# MOD arch/ia64/kernel/pci-dma.c
-# MOD arch/ia64/kernel/sal.c
-# MOD arch/ia64/kernel/setup.c
-# MOD arch/ia64/kernel/signal.c
-# MOD arch/ia64/kernel/smp.c
-# MOD arch/ia64/kernel/smpboot.c
-# MOD arch/ia64/kernel/sys_ia64.c
-# MOD arch/ia64/kernel/time.c
-# MOD arch/ia64/kernel/topology.c
-# MOD arch/ia64/kernel/unaligned.c
-# MOD arch/ia64/kernel/uncached.c
-# MOD arch/ia64/kernel/vmlinux.lds.S
-# MOD arch/ia64/lib/io.c
-# MOD arch/ia64/mm/discontig.c
-# MOD arch/ia64/mm/init.c
-# MOD arch/ia64/mm/tlb.c
-# MOD arch/ia64/pci/fixup.c
-# MOD arch/ia64/pci/pci.c
-# MOD arch/ia64/uv/kernel/setup.c
-#
 diff --git a/arch/ia64/hp/common/sba_iommu.c b/arch/ia64/hp/common/sba_iommu.c
-index a806227c1fad..3d24cc43385b 100644
+index a806227..3d24cc4 100644
 --- a/arch/ia64/hp/common/sba_iommu.c
 +++ b/arch/ia64/hp/common/sba_iommu.c
 @@ -35,7 +35,6 @@
@@ -227,7 +177,7 @@ index a806227c1fad..3d24cc43385b 100644
 +	dma_ops = &sba_dma_ops;
 +}
 diff --git a/arch/ia64/include/asm/acpi.h b/arch/ia64/include/asm/acpi.h
-index f886d4dc9d55..0ea569040c5b 100644
+index f886d4d..0ea5690 100644
 --- a/arch/ia64/include/asm/acpi.h
 +++ b/arch/ia64/include/asm/acpi.h
 @@ -17,7 +17,7 @@
@@ -276,7 +226,7 @@ index f886d4dc9d55..0ea569040c5b 100644
  int acpi_gsi_to_irq (u32 gsi, unsigned int *irq);
  
 diff --git a/arch/ia64/include/asm/dma-mapping.h b/arch/ia64/include/asm/dma-mapping.h
-index a5d9d788eede..f7ec71e4001e 100644
+index a5d9d78..f7ec71e 100644
 --- a/arch/ia64/include/asm/dma-mapping.h
 +++ b/arch/ia64/include/asm/dma-mapping.h
 @@ -6,11 +6,17 @@
@@ -299,7 +249,7 @@ index a5d9d788eede..f7ec71e4001e 100644
  
  #endif /* _ASM_IA64_DMA_MAPPING_H */
 diff --git a/arch/ia64/include/asm/dma.h b/arch/ia64/include/asm/dma.h
-index 59625e9c1f9c..23604d6a2cb2 100644
+index 59625e9..23604d6 100644
 --- a/arch/ia64/include/asm/dma.h
 +++ b/arch/ia64/include/asm/dma.h
 @@ -12,7 +12,11 @@
@@ -316,7 +266,7 @@ index 59625e9c1f9c..23604d6a2cb2 100644
  #define free_dma(x)
  
 diff --git a/arch/ia64/include/asm/hw_irq.h b/arch/ia64/include/asm/hw_irq.h
-index e6385c7bdeb0..5dd3c6485c3a 100644
+index e6385c7..5dd3c64 100644
 --- a/arch/ia64/include/asm/hw_irq.h
 +++ b/arch/ia64/include/asm/hw_irq.h
 @@ -12,6 +12,7 @@
@@ -391,7 +341,7 @@ index e6385c7bdeb0..5dd3c6485c3a 100644
  
  #endif /* _ASM_IA64_HW_IRQ_H */
 diff --git a/arch/ia64/include/asm/io.h b/arch/ia64/include/asm/io.h
-index 54e70c21352a..a511d62d447a 100644
+index 3d666a1..7faf50e 100644
 --- a/arch/ia64/include/asm/io.h
 +++ b/arch/ia64/include/asm/io.h
 @@ -71,6 +71,7 @@ extern unsigned int num_io_spaces;
@@ -716,10 +666,10 @@ index 54e70c21352a..a511d62d447a 100644
  
  extern void __iomem * ioremap(unsigned long offset, unsigned long size);
 diff --git a/arch/ia64/include/asm/iommu.h b/arch/ia64/include/asm/iommu.h
-index 7904f591a79b..92aceef63710 100644
+index eb0db20..8eaab74 100644
 --- a/arch/ia64/include/asm/iommu.h
 +++ b/arch/ia64/include/asm/iommu.h
-@@ -13,5 +13,6 @@ extern int iommu_detected;
+@@ -18,5 +18,6 @@ arch_rmrr_sanity_check(struct acpi_dmar_reserved_memory *rmrr) { return 0; }
  #define no_iommu		(1)
  #define iommu_detected		(0)
  #endif
@@ -727,7 +677,7 @@ index 7904f591a79b..92aceef63710 100644
  
  #endif
 diff --git a/arch/ia64/include/asm/iosapic.h b/arch/ia64/include/asm/iosapic.h
-index a91aeb413e17..f48556cb8afc 100644
+index a91aeb4..f48556c 100644
 --- a/arch/ia64/include/asm/iosapic.h
 +++ b/arch/ia64/include/asm/iosapic.h
 @@ -52,6 +52,8 @@
@@ -757,7 +707,7 @@ index a91aeb413e17..f48556cb8afc 100644
  # endif /* !__ASSEMBLY__ */
  #endif /* __ASM_IA64_IOSAPIC_H */
 diff --git a/arch/ia64/include/asm/irq.h b/arch/ia64/include/asm/irq.h
-index 5acf52e90872..8b84a55ed38a 100644
+index 5acf52e..8b84a55 100644
 --- a/arch/ia64/include/asm/irq.h
 +++ b/arch/ia64/include/asm/irq.h
 @@ -28,6 +28,9 @@ irq_canonicalize (int irq)
@@ -771,7 +721,7 @@ index 5acf52e90872..8b84a55ed38a 100644
  int create_irq(void);
  void destroy_irq(unsigned int irq);
 diff --git a/arch/ia64/include/asm/mmiowb.h b/arch/ia64/include/asm/mmiowb.h
-index d67aab4ea3b4..297b85ac84a0 100644
+index d67aab4..297b85a 100644
 --- a/arch/ia64/include/asm/mmiowb.h
 +++ b/arch/ia64/include/asm/mmiowb.h
 @@ -3,14 +3,22 @@
@@ -800,7 +750,7 @@ index d67aab4ea3b4..297b85ac84a0 100644
  #include <asm-generic/mmiowb.h>
  
 diff --git a/arch/ia64/include/asm/mmzone.h b/arch/ia64/include/asm/mmzone.h
-index 767201f66c93..e0de61709cf1 100644
+index 767201f..e0de617 100644
 --- a/arch/ia64/include/asm/mmzone.h
 +++ b/arch/ia64/include/asm/mmzone.h
 @@ -27,9 +27,16 @@ static inline int pfn_to_nid(unsigned long pfn)
@@ -824,7 +774,7 @@ index 767201f66c93..e0de61709cf1 100644
  
  #endif /* _ASM_IA64_MMZONE_H */
 diff --git a/arch/ia64/include/asm/pci.h b/arch/ia64/include/asm/pci.h
-index 8c163d1d0189..780e8744ba85 100644
+index 8c163d1..780e874 100644
 --- a/arch/ia64/include/asm/pci.h
 +++ b/arch/ia64/include/asm/pci.h
 @@ -39,9 +39,9 @@ extern int pci_mmap_legacy_page_range(struct pci_bus *bus,
@@ -849,7 +799,7 @@ index 8c163d1d0189..780e8744ba85 100644
 +#endif
  #endif /* _ASM_IA64_PCI_H */
 diff --git a/arch/ia64/include/asm/processor.h b/arch/ia64/include/asm/processor.h
-index 95a2ec37400f..c91ef98ed6bf 100644
+index 95a2ec3..c91ef98 100644
 --- a/arch/ia64/include/asm/processor.h
 +++ b/arch/ia64/include/asm/processor.h
 @@ -679,6 +679,8 @@ enum idle_boot_override {IDLE_NO_OVERRIDE=0, IDLE_HALT, IDLE_FORCE_MWAIT,
@@ -862,7 +812,7 @@ index 95a2ec37400f..c91ef98ed6bf 100644
  
  #endif /* _ASM_IA64_PROCESSOR_H */
 diff --git a/arch/ia64/include/asm/switch_to.h b/arch/ia64/include/asm/switch_to.h
-index 9011e90a6b97..b10f31ec522c 100644
+index 9011e90..b10f31e 100644
 --- a/arch/ia64/include/asm/switch_to.h
 +++ b/arch/ia64/include/asm/switch_to.h
 @@ -69,6 +69,7 @@ extern void ia64_load_extra (struct task_struct *task);
@@ -874,7 +824,7 @@ index 9011e90a6b97..b10f31ec522c 100644
  	}								       \
  } while (0)
 diff --git a/arch/ia64/include/asm/tlb.h b/arch/ia64/include/asm/tlb.h
-index f1f257d632b3..86ec034ba499 100644
+index f1f257d..86ec034 100644
 --- a/arch/ia64/include/asm/tlb.h
 +++ b/arch/ia64/include/asm/tlb.h
 @@ -45,6 +45,7 @@
@@ -886,7 +836,7 @@ index f1f257d632b3..86ec034ba499 100644
  #include <asm-generic/tlb.h>
  
 diff --git a/arch/ia64/include/asm/uv/uv.h b/arch/ia64/include/asm/uv/uv.h
-index 48d4526bf4cd..71df93ee3bc0 100644
+index 48d4526..71df93e 100644
 --- a/arch/ia64/include/asm/uv/uv.h
 +++ b/arch/ia64/include/asm/uv/uv.h
 @@ -2,29 +2,12 @@
@@ -923,7 +873,7 @@ index 48d4526bf4cd..71df93ee3bc0 100644
 -
  #endif	/* _ASM_IA64_UV_UV_H */
 diff --git a/arch/ia64/kernel/acpi.c b/arch/ia64/kernel/acpi.c
-index 70d1587ddcd4..c597ab5275b8 100644
+index 70d1587..c597ab5 100644
 --- a/arch/ia64/kernel/acpi.c
 +++ b/arch/ia64/kernel/acpi.c
 @@ -31,6 +31,7 @@
@@ -1043,7 +993,7 @@ index 70d1587ddcd4..c597ab5275b8 100644
  
  	/* System-Level Interrupt Routing */
 diff --git a/arch/ia64/kernel/dma-mapping.c b/arch/ia64/kernel/dma-mapping.c
-index 4a3262795890..ad7d9963de34 100644
+index 09ef9ce..c17ff18 100644
 --- a/arch/ia64/kernel/dma-mapping.c
 +++ b/arch/ia64/kernel/dma-mapping.c
 @@ -1,5 +1,6 @@
@@ -1053,7 +1003,7 @@ index 4a3262795890..ad7d9963de34 100644
  #include <linux/export.h>
  
  /* Set this to 1 if there is a HW IOMMU in the system */
-@@ -8,6 +9,13 @@ int iommu_detected __read_mostly;
+@@ -8,6 +9,12 @@ int iommu_detected __read_mostly;
  const struct dma_map_ops *dma_ops;
  EXPORT_SYMBOL(dma_ops);
  
@@ -1063,22 +1013,22 @@ index 4a3262795890..ad7d9963de34 100644
 +}
 +EXPORT_SYMBOL(dma_get_ops);
 +
-+#ifdef CONFIG_SWIOTLB
  void *arch_dma_alloc(struct device *dev, size_t size,
  		dma_addr_t *dma_handle, gfp_t gfp, unsigned long attrs)
  {
-@@ -29,3 +37,9 @@ void arch_dma_free(struct device *dev, size_t size, void *cpu_addr,
+@@ -19,3 +26,10 @@ void arch_dma_free(struct device *dev, size_t size, void *cpu_addr,
  {
  	dma_direct_free_pages(dev, size, cpu_addr, dma_addr, attrs);
  }
 +
++#ifdef CONFIG_SWIOTLB
 +void __init swiotlb_dma_init(void)
 +{
 +	swiotlb_init(1);
 +}
 +#endif
 diff --git a/arch/ia64/kernel/iosapic.c b/arch/ia64/kernel/iosapic.c
-index fad4db20ce65..fe6e4946672e 100644
+index fad4db2..fe6e494 100644
 --- a/arch/ia64/kernel/iosapic.c
 +++ b/arch/ia64/kernel/iosapic.c
 @@ -67,7 +67,10 @@
@@ -1113,7 +1063,7 @@ index fad4db20ce65..fe6e4946672e 100644
  #ifdef CONFIG_NUMA
  	{
 diff --git a/arch/ia64/kernel/irq.c b/arch/ia64/kernel/irq.c
-index 0a8e5e585edc..8ed81b252694 100644
+index 0a8e5e5..8ed81b2 100644
 --- a/arch/ia64/kernel/irq.c
 +++ b/arch/ia64/kernel/irq.c
 @@ -35,6 +35,18 @@ void ack_bad_irq(unsigned int irq)
@@ -1154,7 +1104,7 @@ index 0a8e5e585edc..8ed81b252694 100644
  
  int __init arch_early_irq_init(void)
 diff --git a/arch/ia64/kernel/irq_ia64.c b/arch/ia64/kernel/irq_ia64.c
-index 8e91c86e8072..51897c8f9be7 100644
+index 8e91c86..51897c8 100644
 --- a/arch/ia64/kernel/irq_ia64.c
 +++ b/arch/ia64/kernel/irq_ia64.c
 @@ -37,6 +37,7 @@
@@ -1214,7 +1164,7 @@ index 8e91c86e8072..51897c8f9be7 100644
  
  void
 diff --git a/arch/ia64/kernel/kprobes.c b/arch/ia64/kernel/kprobes.c
-index b8356edbde65..5de801a2c0f0 100644
+index b8356ed..5de801a 100644
 --- a/arch/ia64/kernel/kprobes.c
 +++ b/arch/ia64/kernel/kprobes.c
 @@ -979,6 +979,32 @@ int __kprobes kprobe_exceptions_notify(struct notifier_block *self,
@@ -1251,7 +1201,7 @@ index b8356edbde65..5de801a2c0f0 100644
  {
  	return ((struct fnptr *)entry)->ip;
 diff --git a/arch/ia64/kernel/machine_kexec.c b/arch/ia64/kernel/machine_kexec.c
-index efc9b568401c..3b1dd5496d08 100644
+index efc9b56..3b1dd54 100644
 --- a/arch/ia64/kernel/machine_kexec.c
 +++ b/arch/ia64/kernel/machine_kexec.c
 @@ -127,6 +127,7 @@ static void ia64_machine_kexec(struct unw_frame_info *info, void *arg)
@@ -1263,7 +1213,7 @@ index efc9b568401c..3b1dd5496d08 100644
  	(*rnk)(image->head, image->start, ia64_boot_param,
  		     GRANULEROUNDDOWN((unsigned long) pal_addr));
 diff --git a/arch/ia64/kernel/mca.c b/arch/ia64/kernel/mca.c
-index bf2cb9294795..79190d877fa7 100644
+index bf2cb92..79190d8 100644
 --- a/arch/ia64/kernel/mca.c
 +++ b/arch/ia64/kernel/mca.c
 @@ -91,6 +91,7 @@
@@ -1293,7 +1243,7 @@ index bf2cb9294795..79190d877fa7 100644
  int cpe_vector = -1;
  int ia64_cpe_irq = -1;
  
-@@ -590,6 +595,9 @@ ia64_mca_cpe_int_handler (int cpe_irq, void *arg)
+@@ -590,6 +595,9 @@ out:
  	return IRQ_HANDLED;
  }
  
@@ -1414,7 +1364,7 @@ index bf2cb9294795..79190d877fa7 100644
  	return 0;
  }
 diff --git a/arch/ia64/kernel/mca_drv.c b/arch/ia64/kernel/mca_drv.c
-index 4d0ab323dee8..cd7972ede1d6 100644
+index 4d0ab32..cd7972e 100644
 --- a/arch/ia64/kernel/mca_drv.c
 +++ b/arch/ia64/kernel/mca_drv.c
 @@ -26,6 +26,7 @@
@@ -1426,7 +1376,7 @@ index 4d0ab323dee8..cd7972ede1d6 100644
  #include <asm/ptrace.h>
  #include <asm/sal.h>
 diff --git a/arch/ia64/kernel/module.c b/arch/ia64/kernel/module.c
-index 1a42ba885188..326448f9df16 100644
+index 1a42ba8..326448f 100644
 --- a/arch/ia64/kernel/module.c
 +++ b/arch/ia64/kernel/module.c
 @@ -914,14 +914,10 @@ module_finalize (const Elf_Ehdr *hdr, const Elf_Shdr *sechdrs, struct module *mo
@@ -1447,7 +1397,7 @@ index 1a42ba885188..326448f9df16 100644
  
  void *dereference_module_function_descriptor(struct module *mod, void *ptr)
 diff --git a/arch/ia64/kernel/msi_ia64.c b/arch/ia64/kernel/msi_ia64.c
-index df5c28f252e3..519d9432f407 100644
+index df5c28f..519d943 100644
 --- a/arch/ia64/kernel/msi_ia64.c
 +++ b/arch/ia64/kernel/msi_ia64.c
 @@ -43,7 +43,7 @@ static int ia64_set_msi_irq_affinity(struct irq_data *idata,
@@ -1493,7 +1443,7 @@ index df5c28f252e3..519d9432f407 100644
  #ifdef CONFIG_SMP
  static int dmar_msi_set_affinity(struct irq_data *data,
 diff --git a/arch/ia64/kernel/pci-dma.c b/arch/ia64/kernel/pci-dma.c
-index c90221733c6b..f5d49cd3fbb0 100644
+index c902217..f5d49cd 100644
 --- a/arch/ia64/kernel/pci-dma.c
 +++ b/arch/ia64/kernel/pci-dma.c
 @@ -10,6 +10,7 @@
@@ -1530,7 +1480,7 @@ index c90221733c6b..f5d49cd3fbb0 100644
 +#endif /* CONFIG_SWIOTLB */
 +}
 diff --git a/arch/ia64/kernel/sal.c b/arch/ia64/kernel/sal.c
-index c455ece977ad..9b2331ac10ce 100644
+index c455ece..9b2331a 100644
 --- a/arch/ia64/kernel/sal.c
 +++ b/arch/ia64/kernel/sal.c
 @@ -110,6 +110,13 @@ check_versions (struct ia64_sal_systab *systab)
@@ -1557,7 +1507,7 @@ index c455ece977ad..9b2331ac10ce 100644
  	while (!ia64_get_irr(IA64_TIMER_VECTOR))
  		cpu_relax();
 diff --git a/arch/ia64/kernel/setup.c b/arch/ia64/kernel/setup.c
-index bb320c6d0cc9..d4d3ba1864a4 100644
+index c49fcef..037ebbf 100644
 --- a/arch/ia64/kernel/setup.c
 +++ b/arch/ia64/kernel/setup.c
 @@ -30,7 +30,6 @@
@@ -1747,7 +1697,7 @@ index bb320c6d0cc9..d4d3ba1864a4 100644
  
  void __init
 diff --git a/arch/ia64/kernel/signal.c b/arch/ia64/kernel/signal.c
-index d07ed65c9c6e..e5044aed9452 100644
+index d07ed65..e5044ae 100644
 --- a/arch/ia64/kernel/signal.c
 +++ b/arch/ia64/kernel/signal.c
 @@ -363,19 +363,19 @@ ia64_do_signal (struct sigscratch *scr, long in_syscall)
@@ -1776,7 +1726,7 @@ index d07ed65c9c6e..e5044aed9452 100644
  				restart = 0; /* don't restart twice if handle_signal() fails... */
  			}
 diff --git a/arch/ia64/kernel/smp.c b/arch/ia64/kernel/smp.c
-index de35c54f033d..133b63355814 100644
+index de35c54..133b633 100644
 --- a/arch/ia64/kernel/smp.c
 +++ b/arch/ia64/kernel/smp.c
 @@ -36,6 +36,7 @@
@@ -1824,7 +1774,7 @@ index de35c54f033d..133b63355814 100644
  
  void
 diff --git a/arch/ia64/kernel/smpboot.c b/arch/ia64/kernel/smpboot.c
-index 6501d9a9a21b..d0474a0c67db 100644
+index 6501d9a..d0474a0 100644
 --- a/arch/ia64/kernel/smpboot.c
 +++ b/arch/ia64/kernel/smpboot.c
 @@ -47,6 +47,7 @@
@@ -1865,7 +1815,7 @@ index 6501d9a9a21b..d0474a0c67db 100644
  
  	if (migrate_platform_irqs(cpu)) {
 diff --git a/arch/ia64/kernel/sys_ia64.c b/arch/ia64/kernel/sys_ia64.c
-index e14db25146c2..9ebe1d633abc 100644
+index e14db25..9ebe1d6 100644
 --- a/arch/ia64/kernel/sys_ia64.c
 +++ b/arch/ia64/kernel/sys_ia64.c
 @@ -166,3 +166,21 @@ ia64_mremap (unsigned long addr, unsigned long old_len, unsigned long new_len, u
@@ -1891,7 +1841,7 @@ index e14db25146c2..9ebe1d633abc 100644
 +
 +#endif /* CONFIG_PCI */
 diff --git a/arch/ia64/kernel/time.c b/arch/ia64/kernel/time.c
-index 1e95d32c8877..4ecd81b0e8ec 100644
+index 91b4024..3ced0c3 100644
 --- a/arch/ia64/kernel/time.c
 +++ b/arch/ia64/kernel/time.c
 @@ -25,6 +25,7 @@
@@ -1912,7 +1862,7 @@ index 1e95d32c8877..4ecd81b0e8ec 100644
  
  	if (!time_after(ia64_get_itc(), new_itm))
 diff --git a/arch/ia64/kernel/topology.c b/arch/ia64/kernel/topology.c
-index 09fc385c2acd..e311ee13e61d 100644
+index 09fc385..e311ee1 100644
 --- a/arch/ia64/kernel/topology.c
 +++ b/arch/ia64/kernel/topology.c
 @@ -42,6 +42,7 @@ EXPORT_SYMBOL_GPL(arch_fix_phys_package_id);
@@ -1942,7 +1892,7 @@ index 09fc385c2acd..e311ee13e61d 100644
  EXPORT_SYMBOL(arch_unregister_cpu);
  #else
 diff --git a/arch/ia64/kernel/unaligned.c b/arch/ia64/kernel/unaligned.c
-index 2d4e65ba5c3e..eb7d5df59fa3 100644
+index 2d4e65b..eb7d5df 100644
 --- a/arch/ia64/kernel/unaligned.c
 +++ b/arch/ia64/kernel/unaligned.c
 @@ -1431,7 +1431,7 @@ ia64_handle_unaligned (unsigned long ifa, struct pt_regs *regs)
@@ -1973,7 +1923,7 @@ index 2d4e65ba5c3e..eb7d5df59fa3 100644
  	      case STREL_IMM_OP:
  		ret = emulate_store_int(ifa, u.insn, regs);
 diff --git a/arch/ia64/kernel/uncached.c b/arch/ia64/kernel/uncached.c
-index 3776ef225125..16c6d377c502 100644
+index 3776ef2..16c6d37 100644
 --- a/arch/ia64/kernel/uncached.c
 +++ b/arch/ia64/kernel/uncached.c
 @@ -24,6 +24,7 @@
@@ -1997,10 +1947,10 @@ index 3776ef225125..16c6d377c502 100644
  	/* flush the just introduced uncached translation from the TLB */
  	local_flush_tlb_all();
 diff --git a/arch/ia64/kernel/vmlinux.lds.S b/arch/ia64/kernel/vmlinux.lds.S
-index d9d4e21107cd..0da58cf8e213 100644
+index 1ec6b70..d84ffc7 100644
 --- a/arch/ia64/kernel/vmlinux.lds.S
 +++ b/arch/ia64/kernel/vmlinux.lds.S
-@@ -141,6 +141,16 @@ SECTIONS {
+@@ -139,6 +139,16 @@ SECTIONS {
  		__end___mckinley_e9_bundles = .;
  	}
  
@@ -2018,7 +1968,7 @@ index d9d4e21107cd..0da58cf8e213 100644
  	. = ALIGN(PERCPU_PAGE_SIZE);
  	__cpu0_per_cpu = .;
 diff --git a/arch/ia64/lib/io.c b/arch/ia64/lib/io.c
-index c3e02462ed16..d107eaf3790d 100644
+index c3e0246..d107eaf 100644
 --- a/arch/ia64/lib/io.c
 +++ b/arch/ia64/lib/io.c
 @@ -49,3 +49,117 @@ void memset_io(volatile void __iomem *dst, int c, long count)
@@ -2140,7 +2090,7 @@ index c3e02462ed16..d107eaf3790d 100644
 +
 +#endif /* CONFIG_IA64_GENERIC */
 diff --git a/arch/ia64/mm/discontig.c b/arch/ia64/mm/discontig.c
-index 4f33f6e7e206..c0321bd4f37b 100644
+index 4f33f6e..c0321bd 100644
 --- a/arch/ia64/mm/discontig.c
 +++ b/arch/ia64/mm/discontig.c
 @@ -393,7 +393,8 @@ static void __meminit scatter_node_data(void)
@@ -2154,7 +2104,7 @@ index 4f33f6e7e206..c0321bd4f37b 100644
  static void __init initialize_pernode_data(void)
  {
 diff --git a/arch/ia64/mm/init.c b/arch/ia64/mm/init.c
-index bf9df2625bc8..e97e24816bd4 100644
+index b01d68a..8a8cdf7 100644
 --- a/arch/ia64/mm/init.c
 +++ b/arch/ia64/mm/init.c
 @@ -9,7 +9,6 @@
@@ -2181,19 +2131,11 @@ index bf9df2625bc8..e97e24816bd4 100644
  	set_bit(PG_arch_1, &page->flags);	/* mark page as clean */
  }
  
-+#ifdef CONFIG_SWIOTLB
++
  /*
   * Since DMA is i-cache coherent, any (complete) pages that were written via
   * DMA can be marked as "clean" so that lazy_mmu_prot_update() doesn't have to
-@@ -82,6 +82,7 @@ void arch_sync_dma_for_cpu(struct device *dev, phys_addr_t paddr,
- 		set_bit(PG_arch_1, &pfn_to_page(pfn)->flags);
- 	} while (++pfn <= PHYS_PFN(paddr + size - 1));
- }
-+#endif
- 
- inline void
- ia64_set_rbs_bot (void)
-@@ -631,17 +632,13 @@ mem_init (void)
+@@ -631,17 +631,13 @@ mem_init (void)
  	BUG_ON(PTRS_PER_PMD * sizeof(pmd_t) != PAGE_SIZE);
  	BUG_ON(PTRS_PER_PTE * sizeof(pte_t) != PAGE_SIZE);
  
@@ -2217,10 +2159,10 @@ index bf9df2625bc8..e97e24816bd4 100644
  
  #ifdef CONFIG_FLATMEM
 diff --git a/arch/ia64/mm/tlb.c b/arch/ia64/mm/tlb.c
-index 72cc568bc841..0714df1b7854 100644
+index 72cc568..0714df1 100644
 --- a/arch/ia64/mm/tlb.c
 +++ b/arch/ia64/mm/tlb.c
-@@ -245,8 +245,7 @@ setup_ptcg_sem(int max_purges, int nptcg_from)
+@@ -245,8 +245,7 @@ resetsema:
  	spinaphore_init(&ptcg_sem, max_purges);
  }
  
@@ -2248,7 +2190,7 @@ index 72cc568bc841..0714df1b7854 100644
  		return;
  	}
 diff --git a/arch/ia64/pci/fixup.c b/arch/ia64/pci/fixup.c
-index acb55a41260d..e1fa45b2148c 100644
+index acb55a4..e1fa45b 100644
 --- a/arch/ia64/pci/fixup.c
 +++ b/arch/ia64/pci/fixup.c
 @@ -8,7 +8,8 @@
@@ -2272,7 +2214,7 @@ index acb55a41260d..e1fa45b2148c 100644
  	/* Maybe, this machine supports legacy memory map. */
  
 diff --git a/arch/ia64/pci/pci.c b/arch/ia64/pci/pci.c
-index 211757e34198..165e561dc81a 100644
+index 211757e..165e561 100644
 --- a/arch/ia64/pci/pci.c
 +++ b/arch/ia64/pci/pci.c
 @@ -24,6 +24,7 @@
@@ -2346,7 +2288,7 @@ index 211757e34198..165e561dc81a 100644
  	int ret = size;
  
 diff --git a/arch/ia64/uv/kernel/setup.c b/arch/ia64/uv/kernel/setup.c
-index bb025486d791..f1490657bafc 100644
+index bb02548..f149065 100644
 --- a/arch/ia64/uv/kernel/setup.c
 +++ b/arch/ia64/uv/kernel/setup.c
 @@ -8,20 +8,25 @@

@@ -1,31 +1,6 @@
-# Machine vector infrastructure - restores platform dispatch
-# 21 files: 21 new, 0 modified (+891/-0)
-#
-# NEW arch/ia64/dig/Makefile
-# NEW arch/ia64/dig/machvec.c
-# NEW arch/ia64/dig/machvec_vtd.c
-# NEW arch/ia64/dig/setup.c
-# NEW arch/ia64/hp/common/hwsw_iommu.c
-# NEW arch/ia64/hp/sim/hpsim_machvec.c
-# NEW arch/ia64/hp/zx1/Makefile
-# NEW arch/ia64/hp/zx1/hpzx1_machvec.c
-# NEW arch/ia64/hp/zx1/hpzx1_swiotlb_machvec.c
-# NEW arch/ia64/include/asm/hpsim.h
-# NEW arch/ia64/include/asm/machvec.h
-# NEW arch/ia64/include/asm/machvec_dig.h
-# NEW arch/ia64/include/asm/machvec_dig_vtd.h
-# NEW arch/ia64/include/asm/machvec_hpsim.h
-# NEW arch/ia64/include/asm/machvec_hpzx1.h
-# NEW arch/ia64/include/asm/machvec_hpzx1_swiotlb.h
-# NEW arch/ia64/include/asm/machvec_init.h
-# NEW arch/ia64/include/asm/machvec_sn2.h
-# NEW arch/ia64/include/asm/machvec_uv.h
-# NEW arch/ia64/kernel/machvec.c
-# NEW arch/ia64/uv/kernel/machvec.c
-#
 diff --git a/arch/ia64/dig/Makefile b/arch/ia64/dig/Makefile
 new file mode 100644
-index 000000000000..e7f830825470
+index 0000000..e7f8308
 --- /dev/null
 +++ b/arch/ia64/dig/Makefile
 @@ -0,0 +1,15 @@
@@ -46,7 +21,7 @@ index 000000000000..e7f830825470
 +
 diff --git a/arch/ia64/dig/machvec.c b/arch/ia64/dig/machvec.c
 new file mode 100644
-index 000000000000..0c55bdafb473
+index 0000000..0c55bda
 --- /dev/null
 +++ b/arch/ia64/dig/machvec.c
 @@ -0,0 +1,3 @@
@@ -55,7 +30,7 @@ index 000000000000..0c55bdafb473
 +#include <asm/machvec_init.h>
 diff --git a/arch/ia64/dig/machvec_vtd.c b/arch/ia64/dig/machvec_vtd.c
 new file mode 100644
-index 000000000000..7cd3eb471cad
+index 0000000..7cd3eb4
 --- /dev/null
 +++ b/arch/ia64/dig/machvec_vtd.c
 @@ -0,0 +1,3 @@
@@ -64,7 +39,7 @@ index 000000000000..7cd3eb471cad
 +#include <asm/machvec_init.h>
 diff --git a/arch/ia64/dig/setup.c b/arch/ia64/dig/setup.c
 new file mode 100644
-index 000000000000..cc14fdce6db6
+index 0000000..cc14fdc
 --- /dev/null
 +++ b/arch/ia64/dig/setup.c
 @@ -0,0 +1,71 @@
@@ -141,7 +116,7 @@ index 000000000000..cc14fdce6db6
 +}
 diff --git a/arch/ia64/hp/common/hwsw_iommu.c b/arch/ia64/hp/common/hwsw_iommu.c
 new file mode 100644
-index 000000000000..8840ed97712f
+index 0000000..8840ed9
 --- /dev/null
 +++ b/arch/ia64/hp/common/hwsw_iommu.c
 @@ -0,0 +1,60 @@
@@ -205,18 +180,9 @@ index 000000000000..8840ed97712f
 +#endif
 +	}
 +}
-diff --git a/arch/ia64/hp/sim/hpsim_machvec.c b/arch/ia64/hp/sim/hpsim_machvec.c
-new file mode 100644
-index 000000000000..c21419359185
---- /dev/null
-+++ b/arch/ia64/hp/sim/hpsim_machvec.c
-@@ -0,0 +1,3 @@
-+#define MACHVEC_PLATFORM_NAME		hpsim
-+#define MACHVEC_PLATFORM_HEADER		<asm/machvec_hpsim.h>
-+#include <asm/machvec_init.h>
 diff --git a/arch/ia64/hp/zx1/Makefile b/arch/ia64/hp/zx1/Makefile
 new file mode 100644
-index 000000000000..46b37d820b59
+index 0000000..46b37d8
 --- /dev/null
 +++ b/arch/ia64/hp/zx1/Makefile
 @@ -0,0 +1,9 @@
@@ -231,7 +197,7 @@ index 000000000000..46b37d820b59
 +obj-$(CONFIG_IA64_GENERIC) += hpzx1_machvec.o hpzx1_swiotlb_machvec.o
 diff --git a/arch/ia64/hp/zx1/hpzx1_machvec.c b/arch/ia64/hp/zx1/hpzx1_machvec.c
 new file mode 100644
-index 000000000000..32518b0f923e
+index 0000000..32518b0
 --- /dev/null
 +++ b/arch/ia64/hp/zx1/hpzx1_machvec.c
 @@ -0,0 +1,3 @@
@@ -240,39 +206,16 @@ index 000000000000..32518b0f923e
 +#include <asm/machvec_init.h>
 diff --git a/arch/ia64/hp/zx1/hpzx1_swiotlb_machvec.c b/arch/ia64/hp/zx1/hpzx1_swiotlb_machvec.c
 new file mode 100644
-index 000000000000..4392a96b3c58
+index 0000000..4392a96
 --- /dev/null
 +++ b/arch/ia64/hp/zx1/hpzx1_swiotlb_machvec.c
 @@ -0,0 +1,3 @@
 +#define MACHVEC_PLATFORM_NAME		hpzx1_swiotlb
 +#define MACHVEC_PLATFORM_HEADER		<asm/machvec_hpzx1_swiotlb.h>
 +#include <asm/machvec_init.h>
-diff --git a/arch/ia64/include/asm/hpsim.h b/arch/ia64/include/asm/hpsim.h
-new file mode 100644
-index 000000000000..00fbd5cc8ab8
---- /dev/null
-+++ b/arch/ia64/include/asm/hpsim.h
-@@ -0,0 +1,17 @@
-+/* SPDX-License-Identifier: GPL-2.0 */
-+#ifndef _ASMIA64_HPSIM_H
-+#define _ASMIA64_HPSIM_H
-+
-+#ifndef CONFIG_HP_SIMSERIAL_CONSOLE
-+static inline int simcons_register(void) { return 1; }
-+#else
-+int simcons_register(void);
-+#endif
-+
-+struct tty_driver;
-+extern struct tty_driver *hp_simserial_driver;
-+
-+extern int hpsim_get_irq(int intr);
-+void ia64_ctl_trace(long on);
-+
-+#endif
 diff --git a/arch/ia64/include/asm/machvec.h b/arch/ia64/include/asm/machvec.h
 new file mode 100644
-index 000000000000..beae261fbcb4
+index 0000000..beae261
 --- /dev/null
 +++ b/arch/ia64/include/asm/machvec.h
 @@ -0,0 +1,347 @@
@@ -625,7 +568,7 @@ index 000000000000..beae261fbcb4
 +#endif /* _ASM_IA64_MACHVEC_H */
 diff --git a/arch/ia64/include/asm/machvec_dig.h b/arch/ia64/include/asm/machvec_dig.h
 new file mode 100644
-index 000000000000..bc230f69faeb
+index 0000000..bc230f6
 --- /dev/null
 +++ b/arch/ia64/include/asm/machvec_dig.h
 @@ -0,0 +1,17 @@
@@ -648,7 +591,7 @@ index 000000000000..bc230f69faeb
 +#endif /* _ASM_IA64_MACHVEC_DIG_h */
 diff --git a/arch/ia64/include/asm/machvec_dig_vtd.h b/arch/ia64/include/asm/machvec_dig_vtd.h
 new file mode 100644
-index 000000000000..bb44eb9039dd
+index 0000000..bb44eb9
 --- /dev/null
 +++ b/arch/ia64/include/asm/machvec_dig_vtd.h
 @@ -0,0 +1,19 @@
@@ -673,7 +616,7 @@ index 000000000000..bb44eb9039dd
 +#endif /* _ASM_IA64_MACHVEC_DIG_VTD_h */
 diff --git a/arch/ia64/include/asm/machvec_hpsim.h b/arch/ia64/include/asm/machvec_hpsim.h
 new file mode 100644
-index 000000000000..056f8405822e
+index 0000000..056f840
 --- /dev/null
 +++ b/arch/ia64/include/asm/machvec_hpsim.h
 @@ -0,0 +1,19 @@
@@ -698,7 +641,7 @@ index 000000000000..056f8405822e
 +#endif /* _ASM_IA64_MACHVEC_HPSIM_h */
 diff --git a/arch/ia64/include/asm/machvec_hpzx1.h b/arch/ia64/include/asm/machvec_hpzx1.h
 new file mode 100644
-index 000000000000..5299ac38bfb6
+index 0000000..5299ac3
 --- /dev/null
 +++ b/arch/ia64/include/asm/machvec_hpzx1.h
 @@ -0,0 +1,19 @@
@@ -723,7 +666,7 @@ index 000000000000..5299ac38bfb6
 +#endif /* _ASM_IA64_MACHVEC_HPZX1_h */
 diff --git a/arch/ia64/include/asm/machvec_hpzx1_swiotlb.h b/arch/ia64/include/asm/machvec_hpzx1_swiotlb.h
 new file mode 100644
-index 000000000000..5aec6a008c61
+index 0000000..5aec6a0
 --- /dev/null
 +++ b/arch/ia64/include/asm/machvec_hpzx1_swiotlb.h
 @@ -0,0 +1,20 @@
@@ -749,7 +692,7 @@ index 000000000000..5aec6a008c61
 +#endif /* _ASM_IA64_MACHVEC_HPZX1_SWIOTLB_h */
 diff --git a/arch/ia64/include/asm/machvec_init.h b/arch/ia64/include/asm/machvec_init.h
 new file mode 100644
-index 000000000000..2aafb69a3787
+index 0000000..2aafb69
 --- /dev/null
 +++ b/arch/ia64/include/asm/machvec_init.h
 @@ -0,0 +1,35 @@
@@ -790,7 +733,7 @@ index 000000000000..2aafb69a3787
 +MACHVEC_DEFINE(MACHVEC_PLATFORM_NAME)
 diff --git a/arch/ia64/include/asm/machvec_sn2.h b/arch/ia64/include/asm/machvec_sn2.h
 new file mode 100644
-index 000000000000..a243e4fb4877
+index 0000000..a243e4f
 --- /dev/null
 +++ b/arch/ia64/include/asm/machvec_sn2.h
 @@ -0,0 +1,114 @@
@@ -910,7 +853,7 @@ index 000000000000..a243e4fb4877
 +#endif /* _ASM_IA64_MACHVEC_SN2_H */
 diff --git a/arch/ia64/include/asm/machvec_uv.h b/arch/ia64/include/asm/machvec_uv.h
 new file mode 100644
-index 000000000000..2c50853f35ac
+index 0000000..2c50853
 --- /dev/null
 +++ b/arch/ia64/include/asm/machvec_uv.h
 @@ -0,0 +1,26 @@
@@ -942,7 +885,7 @@ index 000000000000..2c50853f35ac
 +#endif /* _ASM_IA64_MACHVEC_UV_H */
 diff --git a/arch/ia64/kernel/machvec.c b/arch/ia64/kernel/machvec.c
 new file mode 100644
-index 000000000000..ebd82535f51b
+index 0000000..ebd8253
 --- /dev/null
 +++ b/arch/ia64/kernel/machvec.c
 @@ -0,0 +1,77 @@
@@ -1025,7 +968,7 @@ index 000000000000..ebd82535f51b
 +EXPORT_SYMBOL(machvec_timer_interrupt);
 diff --git a/arch/ia64/uv/kernel/machvec.c b/arch/ia64/uv/kernel/machvec.c
 new file mode 100644
-index 000000000000..50737a9dca74
+index 0000000..50737a9
 --- /dev/null
 +++ b/arch/ia64/uv/kernel/machvec.c
 @@ -0,0 +1,11 @@

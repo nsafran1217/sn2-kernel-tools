@@ -1,52 +1,6 @@
-# SN2 platform code (arch/ia64/sn/) - all new files
-# 42 files: 42 new, 0 modified (+11053/-0)
-#
-# NEW arch/ia64/sn/Makefile
-# NEW arch/ia64/sn/include/ioerror.h
-# NEW arch/ia64/sn/include/tio.h
-# NEW arch/ia64/sn/include/xtalk/hubdev.h
-# NEW arch/ia64/sn/include/xtalk/xbow.h
-# NEW arch/ia64/sn/include/xtalk/xwidgetdev.h
-# NEW arch/ia64/sn/kernel/Makefile
-# NEW arch/ia64/sn/kernel/bte.c
-# NEW arch/ia64/sn/kernel/bte_error.c
-# NEW arch/ia64/sn/kernel/huberror.c
-# NEW arch/ia64/sn/kernel/idle.c
-# NEW arch/ia64/sn/kernel/io_acpi_init.c
-# NEW arch/ia64/sn/kernel/io_common.c
-# NEW arch/ia64/sn/kernel/io_init.c
-# NEW arch/ia64/sn/kernel/iomv.c
-# NEW arch/ia64/sn/kernel/irq.c
-# NEW arch/ia64/sn/kernel/klconflib.c
-# NEW arch/ia64/sn/kernel/machvec.c
-# NEW arch/ia64/sn/kernel/mca.c
-# NEW arch/ia64/sn/kernel/msi_sn.c
-# NEW arch/ia64/sn/kernel/pio_phys.S
-# NEW arch/ia64/sn/kernel/setup.c
-# NEW arch/ia64/sn/kernel/sn2/Makefile
-# NEW arch/ia64/sn/kernel/sn2/cache.c
-# NEW arch/ia64/sn/kernel/sn2/io.c
-# NEW arch/ia64/sn/kernel/sn2/prominfo_proc.c
-# NEW arch/ia64/sn/kernel/sn2/ptc_deadlock.S
-# NEW arch/ia64/sn/kernel/sn2/sn2_smp.c
-# NEW arch/ia64/sn/kernel/sn2/sn_hwperf.c
-# NEW arch/ia64/sn/kernel/sn2/sn_proc_fs.c
-# NEW arch/ia64/sn/kernel/sn2/timer.c
-# NEW arch/ia64/sn/kernel/sn2/timer_interrupt.c
-# NEW arch/ia64/sn/kernel/tiocx.c
-# NEW arch/ia64/sn/pci/Makefile
-# NEW arch/ia64/sn/pci/pci_dma.c
-# NEW arch/ia64/sn/pci/pcibr/Makefile
-# NEW arch/ia64/sn/pci/pcibr/pcibr_ate.c
-# NEW arch/ia64/sn/pci/pcibr/pcibr_dma.c
-# NEW arch/ia64/sn/pci/pcibr/pcibr_provider.c
-# NEW arch/ia64/sn/pci/pcibr/pcibr_reg.c
-# NEW arch/ia64/sn/pci/tioca_provider.c
-# NEW arch/ia64/sn/pci/tioce_provider.c
-#
 diff --git a/arch/ia64/sn/Makefile b/arch/ia64/sn/Makefile
 new file mode 100644
-index 000000000000..79a7df02e812
+index 0000000..79a7df0
 --- /dev/null
 +++ b/arch/ia64/sn/Makefile
 @@ -0,0 +1,12 @@
@@ -64,7 +18,7 @@ index 000000000000..79a7df02e812
 +obj-y += kernel/ pci/
 diff --git a/arch/ia64/sn/include/ioerror.h b/arch/ia64/sn/include/ioerror.h
 new file mode 100644
-index 000000000000..e68f2b0789a7
+index 0000000..e68f2b0
 --- /dev/null
 +++ b/arch/ia64/sn/include/ioerror.h
 @@ -0,0 +1,81 @@
@@ -151,7 +105,7 @@ index 000000000000..e68f2b0789a7
 +#endif /* _ASM_IA64_SN_IOERROR_H */
 diff --git a/arch/ia64/sn/include/tio.h b/arch/ia64/sn/include/tio.h
 new file mode 100644
-index 000000000000..6b2e7b75eb19
+index 0000000..6b2e7b7
 --- /dev/null
 +++ b/arch/ia64/sn/include/tio.h
 @@ -0,0 +1,41 @@
@@ -198,7 +152,7 @@ index 000000000000..6b2e7b75eb19
 +#endif /*  _ASM_IA64_SN_TIO_H */
 diff --git a/arch/ia64/sn/include/xtalk/hubdev.h b/arch/ia64/sn/include/xtalk/hubdev.h
 new file mode 100644
-index 000000000000..8182583c762c
+index 0000000..8182583
 --- /dev/null
 +++ b/arch/ia64/sn/include/xtalk/hubdev.h
 @@ -0,0 +1,91 @@
@@ -295,7 +249,7 @@ index 000000000000..8182583c762c
 +#endif /* _ASM_IA64_SN_XTALK_HUBDEV_H */
 diff --git a/arch/ia64/sn/include/xtalk/xbow.h b/arch/ia64/sn/include/xtalk/xbow.h
 new file mode 100644
-index 000000000000..90f37a4133d0
+index 0000000..90f37a4
 --- /dev/null
 +++ b/arch/ia64/sn/include/xtalk/xbow.h
 @@ -0,0 +1,301 @@
@@ -602,7 +556,7 @@ index 000000000000..90f37a4133d0
 +#endif /* _ASM_IA64_SN_XTALK_XBOW_H */
 diff --git a/arch/ia64/sn/include/xtalk/xwidgetdev.h b/arch/ia64/sn/include/xtalk/xwidgetdev.h
 new file mode 100644
-index 000000000000..2800eda0fd68
+index 0000000..2800eda
 --- /dev/null
 +++ b/arch/ia64/sn/include/xtalk/xwidgetdev.h
 @@ -0,0 +1,70 @@
@@ -678,7 +632,7 @@ index 000000000000..2800eda0fd68
 +#endif                          /* _ASM_IA64_SN_XTALK_XWIDGET_H */
 diff --git a/arch/ia64/sn/kernel/Makefile b/arch/ia64/sn/kernel/Makefile
 new file mode 100644
-index 000000000000..9c349dd23265
+index 0000000..9c349dd
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/Makefile
 @@ -0,0 +1,18 @@
@@ -702,7 +656,7 @@ index 000000000000..9c349dd23265
 +obj-$(CONFIG_PCI_MSI)		+= msi_sn.o
 diff --git a/arch/ia64/sn/kernel/bte.c b/arch/ia64/sn/kernel/bte.c
 new file mode 100644
-index 000000000000..9900e6d4add6
+index 0000000..9900e6d
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/bte.c
 @@ -0,0 +1,475 @@
@@ -1183,7 +1137,7 @@ index 000000000000..9900e6d4add6
 +}
 diff --git a/arch/ia64/sn/kernel/bte_error.c b/arch/ia64/sn/kernel/bte_error.c
 new file mode 100644
-index 000000000000..d92786c09b34
+index 0000000..d92786c
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/bte_error.c
 @@ -0,0 +1,255 @@
@@ -1444,7 +1398,7 @@ index 000000000000..d92786c09b34
 +
 diff --git a/arch/ia64/sn/kernel/huberror.c b/arch/ia64/sn/kernel/huberror.c
 new file mode 100644
-index 000000000000..97fa56dddf50
+index 0000000..97fa56d
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/huberror.c
 @@ -0,0 +1,220 @@
@@ -1670,7 +1624,7 @@ index 000000000000..97fa56dddf50
 +
 diff --git a/arch/ia64/sn/kernel/idle.c b/arch/ia64/sn/kernel/idle.c
 new file mode 100644
-index 000000000000..49d178f022b5
+index 0000000..49d178f
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/idle.c
 @@ -0,0 +1,30 @@
@@ -1706,7 +1660,7 @@ index 000000000000..49d178f022b5
 +}
 diff --git a/arch/ia64/sn/kernel/io_acpi_init.c b/arch/ia64/sn/kernel/io_acpi_init.c
 new file mode 100644
-index 000000000000..c31fe637b0b4
+index 0000000..c31fe63
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/io_acpi_init.c
 @@ -0,0 +1,513 @@
@@ -2225,7 +2179,7 @@ index 000000000000..c31fe637b0b4
 +}
 diff --git a/arch/ia64/sn/kernel/io_common.c b/arch/ia64/sn/kernel/io_common.c
 new file mode 100644
-index 000000000000..d46847323ef6
+index 0000000..d468473
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/io_common.c
 @@ -0,0 +1,561 @@
@@ -2792,10 +2746,10 @@ index 000000000000..d46847323ef6
 +
 diff --git a/arch/ia64/sn/kernel/io_init.c b/arch/ia64/sn/kernel/io_init.c
 new file mode 100644
-index 000000000000..2446ffa0957a
+index 0000000..d63809a
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/io_init.c
-@@ -0,0 +1,311 @@
+@@ -0,0 +1,308 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
@@ -2993,9 +2947,6 @@ index 000000000000..2446ffa0957a
 +		if (res->parent && res->parent->child)
 +			release_resource(res);
 +
-+		/* Ensure resource is marked as assigned so parent lookups succeed */
-+		res->flags &= ~IORESOURCE_UNSET;
-+
 +		if (res->flags & IORESOURCE_IO)
 +			insert_resource(&ioport_resource, res);
 +		else
@@ -3109,10 +3060,10 @@ index 000000000000..2446ffa0957a
 +}
 diff --git a/arch/ia64/sn/kernel/iomv.c b/arch/ia64/sn/kernel/iomv.c
 new file mode 100644
-index 000000000000..749a2cf399c0
+index 0000000..2b22a71
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/iomv.c
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,82 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
@@ -3190,10 +3141,6 @@ index 000000000000..749a2cf399c0
 +	volatile unsigned long *adr = pda->pio_write_status_addr;
 +	unsigned long val = pda->pio_write_status_val;
 +
-+	/*fix for commit 49ca6462fc9e0f5a67cd96eeddd844efc3fb33b9*/
-+	if (adr == NULL) 
-+        return;
-+
 +	while ((*adr & SH_PIO_WRITE_STATUS_PENDING_WRITE_COUNT_MASK) != val)
 +		cpu_relax();
 +}
@@ -3201,7 +3148,7 @@ index 000000000000..749a2cf399c0
 +EXPORT_SYMBOL(__sn_mmiowb);
 diff --git a/arch/ia64/sn/kernel/irq.c b/arch/ia64/sn/kernel/irq.c
 new file mode 100644
-index 000000000000..d9b576df4f82
+index 0000000..d9b576d
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/irq.c
 @@ -0,0 +1,489 @@
@@ -3696,7 +3643,7 @@ index 000000000000..d9b576df4f82
 +}
 diff --git a/arch/ia64/sn/kernel/klconflib.c b/arch/ia64/sn/kernel/klconflib.c
 new file mode 100644
-index 000000000000..87682b48ef83
+index 0000000..87682b4
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/klconflib.c
 @@ -0,0 +1,107 @@
@@ -3809,7 +3756,7 @@ index 000000000000..87682b48ef83
 +}
 diff --git a/arch/ia64/sn/kernel/machvec.c b/arch/ia64/sn/kernel/machvec.c
 new file mode 100644
-index 000000000000..02bb9155840c
+index 0000000..02bb915
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/machvec.c
 @@ -0,0 +1,11 @@
@@ -3826,7 +3773,7 @@ index 000000000000..02bb9155840c
 +#include <asm/machvec_init.h>
 diff --git a/arch/ia64/sn/kernel/mca.c b/arch/ia64/sn/kernel/mca.c
 new file mode 100644
-index 000000000000..bc3bd930c74c
+index 0000000..bc3bd93
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/mca.c
 @@ -0,0 +1,144 @@
@@ -3976,7 +3923,7 @@ index 000000000000..bc3bd930c74c
 +device_initcall(sn_salinfo_init);
 diff --git a/arch/ia64/sn/kernel/msi_sn.c b/arch/ia64/sn/kernel/msi_sn.c
 new file mode 100644
-index 000000000000..fb25065b22c6
+index 0000000..fb25065
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/msi_sn.c
 @@ -0,0 +1,238 @@
@@ -4220,7 +4167,7 @@ index 000000000000..fb25065b22c6
 +};
 diff --git a/arch/ia64/sn/kernel/pio_phys.S b/arch/ia64/sn/kernel/pio_phys.S
 new file mode 100644
-index 000000000000..3c7d48d6ecb8
+index 0000000..3c7d48d
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/pio_phys.S
 @@ -0,0 +1,71 @@
@@ -4297,7 +4244,7 @@ index 000000000000..3c7d48d6ecb8
 +
 diff --git a/arch/ia64/sn/kernel/setup.c b/arch/ia64/sn/kernel/setup.c
 new file mode 100644
-index 000000000000..e6a5049ef503
+index 0000000..e6a5049
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/setup.c
 @@ -0,0 +1,786 @@
@@ -5089,7 +5036,7 @@ index 000000000000..e6a5049ef503
 +
 diff --git a/arch/ia64/sn/kernel/sn2/Makefile b/arch/ia64/sn/kernel/sn2/Makefile
 new file mode 100644
-index 000000000000..170bde4549da
+index 0000000..170bde4
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/sn2/Makefile
 @@ -0,0 +1,13 @@
@@ -5108,7 +5055,7 @@ index 000000000000..170bde4549da
 +	 prominfo_proc.o timer.o timer_interrupt.o sn_hwperf.o
 diff --git a/arch/ia64/sn/kernel/sn2/cache.c b/arch/ia64/sn/kernel/sn2/cache.c
 new file mode 100644
-index 000000000000..2862cb33026d
+index 0000000..2862cb3
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/sn2/cache.c
 @@ -0,0 +1,41 @@
@@ -5155,7 +5102,7 @@ index 000000000000..2862cb33026d
 +EXPORT_SYMBOL(sn_flush_all_caches);
 diff --git a/arch/ia64/sn/kernel/sn2/io.c b/arch/ia64/sn/kernel/sn2/io.c
 new file mode 100644
-index 000000000000..a12c0586de38
+index 0000000..a12c058
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/sn2/io.c
 @@ -0,0 +1,101 @@
@@ -5262,7 +5209,7 @@ index 000000000000..a12c0586de38
 +#endif
 diff --git a/arch/ia64/sn/kernel/sn2/prominfo_proc.c b/arch/ia64/sn/kernel/sn2/prominfo_proc.c
 new file mode 100644
-index 000000000000..e15457bf21ac
+index 0000000..e15457b
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/sn2/prominfo_proc.c
 @@ -0,0 +1,207 @@
@@ -5475,7 +5422,7 @@ index 000000000000..e15457bf21ac
 +}
 diff --git a/arch/ia64/sn/kernel/sn2/ptc_deadlock.S b/arch/ia64/sn/kernel/sn2/ptc_deadlock.S
 new file mode 100644
-index 000000000000..bebbcc4f8dd4
+index 0000000..bebbcc4
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/sn2/ptc_deadlock.S
 @@ -0,0 +1,92 @@
@@ -5573,7 +5520,7 @@ index 000000000000..bebbcc4f8dd4
 +	.endp sn2_ptc_deadlock_recovery_core
 diff --git a/arch/ia64/sn/kernel/sn2/sn2_smp.c b/arch/ia64/sn/kernel/sn2/sn2_smp.c
 new file mode 100644
-index 000000000000..b510f4f17fd4
+index 0000000..b510f4f
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/sn2/sn2_smp.c
 @@ -0,0 +1,577 @@
@@ -6156,7 +6103,7 @@ index 000000000000..b510f4f17fd4
 +
 diff --git a/arch/ia64/sn/kernel/sn2/sn_hwperf.c b/arch/ia64/sn/kernel/sn2/sn_hwperf.c
 new file mode 100644
-index 000000000000..55febd65911a
+index 0000000..55febd6
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/sn2/sn_hwperf.c
 @@ -0,0 +1,1004 @@
@@ -7166,7 +7113,7 @@ index 000000000000..55febd65911a
 +EXPORT_SYMBOL(sn_hwperf_get_nearest_node);
 diff --git a/arch/ia64/sn/kernel/sn2/sn_proc_fs.c b/arch/ia64/sn/kernel/sn2/sn_proc_fs.c
 new file mode 100644
-index 000000000000..c2a4d84297b0
+index 0000000..c2a4d84
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/sn2/sn_proc_fs.c
 @@ -0,0 +1,69 @@
@@ -7241,7 +7188,7 @@ index 000000000000..c2a4d84297b0
 +#endif /* CONFIG_PROC_FS */
 diff --git a/arch/ia64/sn/kernel/sn2/timer.c b/arch/ia64/sn/kernel/sn2/timer.c
 new file mode 100644
-index 000000000000..3009d9d86f29
+index 0000000..3009d9d
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/sn2/timer.c
 @@ -0,0 +1,61 @@
@@ -7308,7 +7255,7 @@ index 000000000000..3009d9d86f29
 +}
 diff --git a/arch/ia64/sn/kernel/sn2/timer_interrupt.c b/arch/ia64/sn/kernel/sn2/timer_interrupt.c
 new file mode 100644
-index 000000000000..103d6ea8e94b
+index 0000000..103d6ea
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/sn2/timer_interrupt.c
 @@ -0,0 +1,60 @@
@@ -7374,7 +7321,7 @@ index 000000000000..103d6ea8e94b
 +}
 diff --git a/arch/ia64/sn/kernel/tiocx.c b/arch/ia64/sn/kernel/tiocx.c
 new file mode 100644
-index 000000000000..32d0380eb72e
+index 0000000..32d0380
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/tiocx.c
 @@ -0,0 +1,569 @@
@@ -7949,7 +7896,7 @@ index 000000000000..32d0380eb72e
 +MODULE_SUPPORTED_DEVICE(DEVICE_NAME);
 diff --git a/arch/ia64/sn/pci/Makefile b/arch/ia64/sn/pci/Makefile
 new file mode 100644
-index 000000000000..321576b1b425
+index 0000000..321576b
 --- /dev/null
 +++ b/arch/ia64/sn/pci/Makefile
 @@ -0,0 +1,10 @@
@@ -7965,10 +7912,10 @@ index 000000000000..321576b1b425
 +obj-y := pci_dma.o tioca_provider.o tioce_provider.o pcibr/
 diff --git a/arch/ia64/sn/pci/pci_dma.c b/arch/ia64/sn/pci/pci_dma.c
 new file mode 100644
-index 000000000000..b7d42e4edc1f
+index 0000000..fb92689
 --- /dev/null
 +++ b/arch/ia64/sn/pci/pci_dma.c
-@@ -0,0 +1,446 @@
+@@ -0,0 +1,426 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
@@ -8136,11 +8083,6 @@ index 000000000000..b7d42e4edc1f
 + * no way of saving the dmamap handle from the alloc to later free
 + * (which is pretty much unacceptable).
 + *
-+ * mappings with the DMA_ATTR_WRITE_BARRIER get mapped with
-+ * dma_map_consistent() so that writes force a flush of pending DMA.
-+ * (See "SGI Altix Architecture Considerations for Linux Device Drivers",
-+ * Document Number: 007-4763-001)
-+ *
 + * TODO: simplify our interface;
 + *       figure out how to save dmamap handle so can use two step.
 + */
@@ -8158,12 +8100,8 @@ index 000000000000..b7d42e4edc1f
 +	BUG_ON(!dev_is_pci(dev));
 +
 +	phys_addr = __pa(cpu_addr);
-+	if (attrs & DMA_ATTR_WRITE_BARRIER)
-+		dma_addr = provider->dma_map_consistent(pdev, phys_addr,
-+							size, SN_DMA_ADDR_PHYS);
-+	else
-+		dma_addr = provider->dma_map(pdev, phys_addr, size,
-+					     SN_DMA_ADDR_PHYS);
++	dma_addr = provider->dma_map(pdev, phys_addr, size,
++				     SN_DMA_ADDR_PHYS);
 +
 +	if (!dma_addr) {
 +		printk(KERN_ERR "%s: out of ATEs\n", __func__);
@@ -8232,11 +8170,6 @@ index 000000000000..b7d42e4edc1f
 + * @direction: direction of the DMA transaction
 + * @attrs: optional dma attributes
 + *
-+ * mappings with the DMA_ATTR_WRITE_BARRIER get mapped with
-+ * dma_map_consistent() so that writes force a flush of pending DMA.
-+ * (See "SGI Altix Architecture Considerations for Linux Device Drivers",
-+ * Document Number: 007-4763-001)
-+ *
 + * Maps each entry of @sg for DMA.
 + */
 +static int sn_dma_map_sg(struct device *dev, struct scatterlist *sgl,
@@ -8257,15 +8190,9 @@ index 000000000000..b7d42e4edc1f
 +	for_each_sg(sgl, sg, nhwentries, i) {
 +		dma_addr_t dma_addr;
 +		phys_addr = SG_ENT_PHYS_ADDRESS(sg);
-+		if (attrs & DMA_ATTR_WRITE_BARRIER)
-+			dma_addr = provider->dma_map_consistent(pdev,
-+								phys_addr,
-+								sg->length,
-+								SN_DMA_ADDR_PHYS);
-+		else
-+			dma_addr = provider->dma_map(pdev, phys_addr,
-+						     sg->length,
-+						     SN_DMA_ADDR_PHYS);
++		dma_addr = provider->dma_map(pdev, phys_addr,
++					     sg->length,
++					     SN_DMA_ADDR_PHYS);
 +
 +		sg->dma_address = dma_addr;
 +		if (!sg->dma_address) {
@@ -8417,7 +8344,7 @@ index 000000000000..b7d42e4edc1f
 +}
 diff --git a/arch/ia64/sn/pci/pcibr/Makefile b/arch/ia64/sn/pci/pcibr/Makefile
 new file mode 100644
-index 000000000000..712f6af7c6e0
+index 0000000..712f6af
 --- /dev/null
 +++ b/arch/ia64/sn/pci/pcibr/Makefile
 @@ -0,0 +1,13 @@
@@ -8436,7 +8363,7 @@ index 000000000000..712f6af7c6e0
 +				    pcibr_ate.o pcibr_provider.o
 diff --git a/arch/ia64/sn/pci/pcibr/pcibr_ate.c b/arch/ia64/sn/pci/pcibr/pcibr_ate.c
 new file mode 100644
-index 000000000000..b67bb4cb73ff
+index 0000000..b67bb4c
 --- /dev/null
 +++ b/arch/ia64/sn/pci/pcibr/pcibr_ate.c
 @@ -0,0 +1,177 @@
@@ -8619,7 +8546,7 @@ index 000000000000..b67bb4cb73ff
 +}
 diff --git a/arch/ia64/sn/pci/pcibr/pcibr_dma.c b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
 new file mode 100644
-index 000000000000..6b632c290af2
+index 0000000..1e863b2
 --- /dev/null
 +++ b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
 @@ -0,0 +1,413 @@
@@ -8860,7 +8787,7 @@ index 000000000000..6b632c290af2
 + * unlike the PIC Device(x) Write Request Buffer Flush register.
 + */
 +
-+void sn_dma_flush(unsigned long addr)
++void sn_dma_flush(u64 addr)
 +{
 +	nasid_t nasid;
 +	int is_tio;
@@ -9038,7 +8965,7 @@ index 000000000000..6b632c290af2
 +EXPORT_SYMBOL(sn_dma_flush);
 diff --git a/arch/ia64/sn/pci/pcibr/pcibr_provider.c b/arch/ia64/sn/pci/pcibr/pcibr_provider.c
 new file mode 100644
-index 000000000000..7195df1da121
+index 0000000..7195df1
 --- /dev/null
 +++ b/arch/ia64/sn/pci/pcibr/pcibr_provider.c
 @@ -0,0 +1,265 @@
@@ -9309,7 +9236,7 @@ index 000000000000..7195df1da121
 +EXPORT_SYMBOL_GPL(sn_ioboard_to_pci_bus);
 diff --git a/arch/ia64/sn/pci/pcibr/pcibr_reg.c b/arch/ia64/sn/pci/pcibr/pcibr_reg.c
 new file mode 100644
-index 000000000000..8b8bbd51d433
+index 0000000..8b8bbd5
 --- /dev/null
 +++ b/arch/ia64/sn/pci/pcibr/pcibr_reg.c
 @@ -0,0 +1,285 @@
@@ -9600,7 +9527,7 @@ index 000000000000..8b8bbd51d433
 +}
 diff --git a/arch/ia64/sn/pci/tioca_provider.c b/arch/ia64/sn/pci/tioca_provider.c
 new file mode 100644
-index 000000000000..a70b11fd57d6
+index 0000000..a70b11f
 --- /dev/null
 +++ b/arch/ia64/sn/pci/tioca_provider.c
 @@ -0,0 +1,677 @@
@@ -10283,7 +10210,7 @@ index 000000000000..a70b11fd57d6
 +}
 diff --git a/arch/ia64/sn/pci/tioce_provider.c b/arch/ia64/sn/pci/tioce_provider.c
 new file mode 100644
-index 000000000000..3bd9abc35485
+index 0000000..3bd9abc
 --- /dev/null
 +++ b/arch/ia64/sn/pci/tioce_provider.c
 @@ -0,0 +1,1062 @@

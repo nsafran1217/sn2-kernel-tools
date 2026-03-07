@@ -1,20 +1,5 @@
-# ia64 Kconfig/Makefile changes
-# 11 files: 0 new, 11 modified (+166/-48)
-#
-# MOD arch/ia64/Kconfig
-# MOD arch/ia64/Kconfig.debug
-# MOD arch/ia64/Makefile
-# MOD arch/ia64/configs/bigsur_defconfig
-# MOD arch/ia64/configs/generic_defconfig
-# MOD arch/ia64/configs/gensparse_defconfig
-# MOD arch/ia64/configs/tiger_defconfig
-# MOD arch/ia64/configs/zx1_defconfig
-# MOD arch/ia64/hp/common/Makefile
-# MOD arch/ia64/kernel/Makefile
-# MOD arch/ia64/uv/kernel/Makefile
-#
 diff --git a/arch/ia64/Kconfig b/arch/ia64/Kconfig
-index 16714477eef4..070eb45cfd7c 100644
+index bab7cd8..3b84b3d 100644
 --- a/arch/ia64/Kconfig
 +++ b/arch/ia64/Kconfig
 @@ -10,14 +10,12 @@ config IA64
@@ -262,7 +247,7 @@ index 16714477eef4..070eb45cfd7c 100644
  	tristate "Memory special operations driver"
  	depends on IA64
 diff --git a/arch/ia64/Kconfig.debug b/arch/ia64/Kconfig.debug
-index 40ca23bd228d..1371efc9b005 100644
+index 40ca23b..1371efc 100644
 --- a/arch/ia64/Kconfig.debug
 +++ b/arch/ia64/Kconfig.debug
 @@ -14,7 +14,7 @@ config IA64_GRANULE_16MB
@@ -275,7 +260,7 @@ index 40ca23bd228d..1371efc9b005 100644
  endchoice
  
 diff --git a/arch/ia64/Makefile b/arch/ia64/Makefile
-index 32240000dc0c..5c3bcaee5980 100644
+index 3224000..5c3bcae 100644
 --- a/arch/ia64/Makefile
 +++ b/arch/ia64/Makefile
 @@ -39,23 +39,29 @@ $(error Sorry, you need a newer version of the assember, one that is built from
@@ -354,7 +339,7 @@ index 32240000dc0c..5c3bcaee5980 100644
  endef
  
 diff --git a/arch/ia64/configs/bigsur_defconfig b/arch/ia64/configs/bigsur_defconfig
-index b630bd7351c4..b6bda1838629 100644
+index b630bd7..b6bda18 100644
 --- a/arch/ia64/configs/bigsur_defconfig
 +++ b/arch/ia64/configs/bigsur_defconfig
 @@ -7,6 +7,7 @@ CONFIG_MODULES=y
@@ -366,7 +351,7 @@ index b630bd7351c4..b6bda1838629 100644
  CONFIG_NR_CPUS=2
  CONFIG_PREEMPT=y
 diff --git a/arch/ia64/configs/generic_defconfig b/arch/ia64/configs/generic_defconfig
-index 661d90b3e148..81f686dee53c 100644
+index 661d90b..81f686d 100644
 --- a/arch/ia64/configs/generic_defconfig
 +++ b/arch/ia64/configs/generic_defconfig
 @@ -44,12 +44,14 @@ CONFIG_BLK_DEV_LOOP=m
@@ -410,7 +395,7 @@ index 661d90b3e148..81f686dee53c 100644
  CONFIG_DRM_TDFX=m
  CONFIG_DRM_R128=m
 diff --git a/arch/ia64/configs/gensparse_defconfig b/arch/ia64/configs/gensparse_defconfig
-index 7844e6a956a4..5b4fcdd51457 100644
+index 7844e6a..5b4fcdd 100644
 --- a/arch/ia64/configs/gensparse_defconfig
 +++ b/arch/ia64/configs/gensparse_defconfig
 @@ -19,6 +19,7 @@ CONFIG_SPARSEMEM_MANUAL=y
@@ -463,7 +448,7 @@ index 7844e6a956a4..5b4fcdd51457 100644
  CONFIG_DRM_TDFX=m
  CONFIG_DRM_R128=m
 diff --git a/arch/ia64/configs/tiger_defconfig b/arch/ia64/configs/tiger_defconfig
-index 1d6e2a01452b..192ed157c9ce 100644
+index 1d6e2a0..192ed15 100644
 --- a/arch/ia64/configs/tiger_defconfig
 +++ b/arch/ia64/configs/tiger_defconfig
 @@ -12,6 +12,7 @@ CONFIG_MODULE_SRCVERSION_ALL=y
@@ -475,7 +460,7 @@ index 1d6e2a01452b..192ed157c9ce 100644
  CONFIG_IA64_PAGE_SIZE_64KB=y
  CONFIG_IA64_CYCLONE=y
 diff --git a/arch/ia64/configs/zx1_defconfig b/arch/ia64/configs/zx1_defconfig
-index 8c92e095f8bb..b504c8e2fd52 100644
+index 8c92e09..b504c8e 100644
 --- a/arch/ia64/configs/zx1_defconfig
 +++ b/arch/ia64/configs/zx1_defconfig
 @@ -4,6 +4,7 @@ CONFIG_BLK_DEV_INITRD=y
@@ -487,7 +472,7 @@ index 8c92e095f8bb..b504c8e2fd52 100644
  CONFIG_SMP=y
  CONFIG_NR_CPUS=16
 diff --git a/arch/ia64/hp/common/Makefile b/arch/ia64/hp/common/Makefile
-index 11a56ed38229..6026308f9a62 100644
+index 11a56ed..6026308 100644
 --- a/arch/ia64/hp/common/Makefile
 +++ b/arch/ia64/hp/common/Makefile
 @@ -6,5 +6,7 @@
@@ -500,7 +485,7 @@ index 11a56ed38229..6026308f9a62 100644
 +obj-$(CONFIG_IA64_GENERIC) += hwsw_iommu.o
  obj-$(CONFIG_IA64_HP_AML_NFW) += aml_nfw.o
 diff --git a/arch/ia64/kernel/Makefile b/arch/ia64/kernel/Makefile
-index 1a8df6669eee..4ba05140b249 100644
+index 1a8df66..4ba0514 100644
 --- a/arch/ia64/kernel/Makefile
 +++ b/arch/ia64/kernel/Makefile
 @@ -10,14 +10,15 @@ endif
@@ -532,7 +517,7 @@ index 1a8df6669eee..4ba05140b249 100644
  obj-$(CONFIG_IA64_MC_ERR_INJECT)+= err_inject.o
  obj-$(CONFIG_STACKTRACE)	+= stacktrace.o
 diff --git a/arch/ia64/uv/kernel/Makefile b/arch/ia64/uv/kernel/Makefile
-index 297196578d19..124e441d383d 100644
+index 2971965..124e441 100644
 --- a/arch/ia64/uv/kernel/Makefile
 +++ b/arch/ia64/uv/kernel/Makefile
 @@ -10,3 +10,4 @@
