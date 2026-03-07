@@ -1067,9 +1067,9 @@ index 4a3262795890..ad7d9963de34 100644
  void *arch_dma_alloc(struct device *dev, size_t size,
  		dma_addr_t *dma_handle, gfp_t gfp, unsigned long attrs)
  {
-@@ -25,3 +33,9 @@ long arch_dma_coherent_to_pfn(struct device *dev, void *cpu_addr,
+@@ -29,3 +37,9 @@ void arch_dma_free(struct device *dev, size_t size, void *cpu_addr,
  {
- 	return page_to_pfn(virt_to_page(cpu_addr));
+ 	dma_direct_free_pages(dev, size, cpu_addr, dma_addr, attrs);
  }
 +
 +void __init swiotlb_dma_init(void)
