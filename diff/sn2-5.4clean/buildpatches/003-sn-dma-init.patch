@@ -1,0 +1,41 @@
+From 850a4d156c5e44899931e43cfb266dfeb8d07e85 Mon Sep 17 00:00:00 2001
+From: SN2 Dev <sn2@dev>
+Date: Sun, 8 Mar 2026 02:08:07 +0000
+Subject: [PATCH] ia64/sn2: call sn_dma_init() from sn_setup() to register DMA
+ ops
+
+Without machvec dispatch, nothing was calling sn_dma_init() to set
+dma_ops to SN2's custom SHUB-based DMA operations. With SWIOTLB
+disabled for SN2 and no DMA ops registered, all DMA operations
+failed with ENODEV, preventing network (tg3) and storage drivers
+from functioning.
+
+Previously sn_dma_init() was called via the machvec platform_dma_init
+function pointer. With compile-time SN2, we call it directly from
+sn_setup().
+---
+ arch/ia64/sn/kernel/setup.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/arch/ia64/sn/kernel/setup.c b/arch/ia64/sn/kernel/setup.c
+index e6a5049..d31dc13 100644
+--- a/arch/ia64/sn/kernel/setup.c
++++ b/arch/ia64/sn/kernel/setup.c
+@@ -487,6 +487,15 @@ void __init sn_setup(char **cmdline_p)
+ 
+ 	sn_timer_init();
+ 
++	/*
++	 * Register SN2 DMA operations.  Must be done before any
++	 * drivers that use DMA are initialized.
++	 */
++	{
++		extern void sn_dma_init(void);
++		sn_dma_init();
++	}
++
+ 	/*
+ 	 * set pm_power_off to a SAL call to allow
+ 	 * sn machines to power off. The SAL call can be replaced
+-- 
+2.43.0

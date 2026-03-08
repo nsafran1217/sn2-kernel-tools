@@ -1,0 +1,215 @@
+From 7c39a59c197cb0584347ec0126fe9ea01fead051 Mon Sep 17 00:00:00 2001
+From: SN2 Dev <sn2@dev>
+Date: Sun, 8 Mar 2026 01:40:28 +0000
+Subject: [PATCH] ia64/sn2: add missing machvec.h includes for ia64_platform_is
+
+Multiple SN2 platform files and drivers call ia64_platform_is() but
+did not include asm/machvec.h where it is defined. Previously this
+was pulled in transitively through asm/io.h in the machvec-based
+patches, but our compile-time approach doesn't add it to io.h's
+main include chain.
+
+Also add a preprocessor-visible #define ia64_platform_is in machvec.h
+so that qla1280.c's #if !defined(ia64_platform_is) guard works
+correctly, and replace qla1280's buggy fallback macro with a proper
+include.
+---
+ arch/ia64/include/asm/machvec.h         | 2 ++
+ arch/ia64/sn/kernel/io_common.c         | 1 +
+ arch/ia64/sn/kernel/mca.c               | 1 +
+ arch/ia64/sn/kernel/sn2/prominfo_proc.c | 1 +
+ arch/ia64/sn/kernel/sn2/sn2_smp.c       | 1 +
+ arch/ia64/sn/kernel/sn2/sn_hwperf.c     | 1 +
+ arch/ia64/sn/kernel/tiocx.c             | 1 +
+ drivers/char/mbcs.c                     | 1 +
+ drivers/char/mspec.c                    | 1 +
+ drivers/char/snsc.c                     | 1 +
+ drivers/scsi/qla1280.c                  | 2 +-
+ drivers/scsi/qla2xxx/qla_init.c         | 4 ++++
+ drivers/sn/ioc3.c                       | 2 ++
+ drivers/tty/serial/sn_console.c         | 1 +
+ 14 files changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/arch/ia64/include/asm/machvec.h b/arch/ia64/include/asm/machvec.h
+index 3970f94..c300ea0 100644
+--- a/arch/ia64/include/asm/machvec.h
++++ b/arch/ia64/include/asm/machvec.h
+@@ -20,6 +20,7 @@ static inline int ia64_platform_is(const char *name)
+ }
+ 
+ #define ia64_platform_name	"sn2"
++#define ia64_platform_is	ia64_platform_is
+ 
+ #else /* !CONFIG_IA64_SGI_SN2 */
+ 
+@@ -29,6 +30,7 @@ static inline int ia64_platform_is(const char *name)
+ }
+ 
+ #define ia64_platform_name	"dig"
++#define ia64_platform_is	ia64_platform_is
+ 
+ #endif /* CONFIG_IA64_SGI_SN2 */
+ 
+diff --git a/arch/ia64/sn/kernel/io_common.c b/arch/ia64/sn/kernel/io_common.c
+index d468473..be8279c 100644
+--- a/arch/ia64/sn/kernel/io_common.c
++++ b/arch/ia64/sn/kernel/io_common.c
+@@ -28,6 +28,7 @@
+ #include <linux/acpi.h>
+ #include <asm/sn/sn2/sn_hwperf.h>
+ #include <asm/sn/acpi.h>
++#include <asm/machvec.h>
+ 
+ extern void sn_init_cpei_timer(void);
+ extern void register_sn_procfs(void);
+diff --git a/arch/ia64/sn/kernel/mca.c b/arch/ia64/sn/kernel/mca.c
+index bc3bd93..0157e04 100644
+--- a/arch/ia64/sn/kernel/mca.c
++++ b/arch/ia64/sn/kernel/mca.c
+@@ -14,6 +14,7 @@
+ #include <asm/mca.h>
+ #include <asm/sal.h>
+ #include <asm/sn/sn_sal.h>
++#include <asm/machvec.h>
+ 
+ /*
+  * Interval for calling SAL to poll for errors that do NOT cause error
+diff --git a/arch/ia64/sn/kernel/sn2/prominfo_proc.c b/arch/ia64/sn/kernel/sn2/prominfo_proc.c
+index e15457b..104d594 100644
+--- a/arch/ia64/sn/kernel/sn2/prominfo_proc.c
++++ b/arch/ia64/sn/kernel/sn2/prominfo_proc.c
+@@ -17,6 +17,7 @@
+ #include <asm/sn/sn_sal.h>
+ #include <asm/sn/sn_cpuid.h>
+ #include <asm/sn/addrs.h>
++#include <asm/machvec.h>
+ 
+ MODULE_DESCRIPTION("PROM version reporting for /proc");
+ MODULE_AUTHOR("Chad Talbott");
+diff --git a/arch/ia64/sn/kernel/sn2/sn2_smp.c b/arch/ia64/sn/kernel/sn2/sn2_smp.c
+index 7241f73..78aa45d 100644
+--- a/arch/ia64/sn/kernel/sn2/sn2_smp.c
++++ b/arch/ia64/sn/kernel/sn2/sn2_smp.c
+@@ -29,6 +29,7 @@
+ #include <asm/sal.h>
+ #include <asm/delay.h>
+ #include <asm/io.h>
++#include <asm/machvec.h>
+ #include <asm/smp.h>
+ #include <asm/tlb.h>
+ #include <asm/numa.h>
+diff --git a/arch/ia64/sn/kernel/sn2/sn_hwperf.c b/arch/ia64/sn/kernel/sn2/sn_hwperf.c
+index 55febd6..abfd221 100644
+--- a/arch/ia64/sn/kernel/sn2/sn_hwperf.c
++++ b/arch/ia64/sn/kernel/sn2/sn_hwperf.c
+@@ -45,6 +45,7 @@
+ #include <asm/sn/geo.h>
+ #include <asm/sn/sn2/sn_hwperf.h>
+ #include <asm/sn/addrs.h>
++#include <asm/machvec.h>
+ 
+ static void *sn_hwperf_salheap = NULL;
+ static int sn_hwperf_obj_cnt = 0;
+diff --git a/arch/ia64/sn/kernel/tiocx.c b/arch/ia64/sn/kernel/tiocx.c
+index 32d0380..36b9953 100644
+--- a/arch/ia64/sn/kernel/tiocx.c
++++ b/arch/ia64/sn/kernel/tiocx.c
+@@ -23,6 +23,7 @@
+ #include <asm/sn/tiocx.h>
+ #include <asm/sn/l1.h>
+ #include <asm/sn/module.h>
++#include <asm/machvec.h>
+ #include "tio.h"
+ #include "xtalk/xwidgetdev.h"
+ #include "xtalk/hubdev.h"
+diff --git a/drivers/char/mbcs.c b/drivers/char/mbcs.c
+index 0a31b60..a18788b 100644
+--- a/drivers/char/mbcs.c
++++ b/drivers/char/mbcs.c
+@@ -33,6 +33,7 @@
+ #include <asm/sn/addrs.h>
+ #include <asm/sn/intr.h>
+ #include <asm/sn/tiocx.h>
++#include <asm/machvec.h>
+ #include "mbcs.h"
+ 
+ #define MBCS_DEBUG 0
+diff --git a/drivers/char/mspec.c b/drivers/char/mspec.c
+index e75c9df..592bfa1 100644
+--- a/drivers/char/mspec.c
++++ b/drivers/char/mspec.c
+@@ -53,6 +53,7 @@
+ #include <asm/sn/io.h>
+ #include <asm/sn/bte.h>
+ #include <asm/sn/shubio.h>
++#include <asm/machvec.h>
+ 
+ 
+ #define FETCHOP_ID	"SGI Fetchop,"
+diff --git a/drivers/char/snsc.c b/drivers/char/snsc.c
+index 5918ea7..315ea04 100644
+--- a/drivers/char/snsc.c
++++ b/drivers/char/snsc.c
+@@ -27,6 +27,7 @@
+ #include <asm/sn/module.h>
+ #include <asm/sn/geo.h>
+ #include <asm/sn/nodepda.h>
++#include <asm/machvec.h>
+ #include "snsc.h"
+ 
+ #define SYSCTL_BASENAME	"snsc"
+diff --git a/drivers/scsi/qla1280.c b/drivers/scsi/qla1280.c
+index e5760c4..6cabaa7 100644
+--- a/drivers/scsi/qla1280.c
++++ b/drivers/scsi/qla1280.c
+@@ -381,7 +381,7 @@
+ #define NVRAM_DELAY()			udelay(500)	/* 2 microseconds */
+ 
+ #if defined(__ia64__) && !defined(ia64_platform_is)
+-#define ia64_platform_is(foo)		(!strcmp(x, platform_name))
++#include <asm/machvec.h>
+ #endif
+ 
+ 
+diff --git a/drivers/scsi/qla2xxx/qla_init.c b/drivers/scsi/qla2xxx/qla_init.c
+index 41ba140..67df84d 100644
+--- a/drivers/scsi/qla2xxx/qla_init.c
++++ b/drivers/scsi/qla2xxx/qla_init.c
+@@ -17,6 +17,10 @@
+ #include <asm/prom.h>
+ #endif
+ 
++#ifdef CONFIG_IA64
++#include <asm/machvec.h>
++#endif
++
+ #include <target/target_core_base.h>
+ #include "qla_target.h"
+ 
+diff --git a/drivers/sn/ioc3.c b/drivers/sn/ioc3.c
+index 358025a..08e532d 100644
+--- a/drivers/sn/ioc3.c
++++ b/drivers/sn/ioc3.c
+@@ -19,6 +19,8 @@
+ #include <linux/rwsem.h>
+ #include <linux/slab.h>
+ 
++#include <asm/machvec.h>
++
+ #define IOC3_PCI_SIZE 0x100000
+ 
+ static LIST_HEAD(ioc3_devices);
+diff --git a/drivers/tty/serial/sn_console.c b/drivers/tty/serial/sn_console.c
+index 2834933..718f3e6 100644
+--- a/drivers/tty/serial/sn_console.c
++++ b/drivers/tty/serial/sn_console.c
+@@ -35,6 +35,7 @@
+ #include <asm/io.h>
+ #include <asm/sn/simulator.h>
+ #include <asm/sn/sn_sal.h>
++#include <asm/machvec.h>
+ 
+ /* number of characters we can transmit to the SAL console at a time */
+ #define SN_SAL_MAX_CHARS 120
+-- 
+2.43.0

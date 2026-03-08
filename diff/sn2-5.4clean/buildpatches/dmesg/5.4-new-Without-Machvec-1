@@ -1,0 +1,269 @@
+Uncompressing Linux... done
+Linux version 5.4.0-SN2-TEST-96ab4f5ee495-ia64 (nathan@NathanPC) (gcc version 14.2.0 (GCC)) #3 SMP Sat Mar 7 20:46:00 EST 2026
+EFI v1.10 by INTEL:
+efi:  SALsystab=0x3002a08df0  ACPI 2.0=0x3002a095e0
+printk: debug: ignoring loglevel setting.
+printk: console [sn_sal0] enabled
+ACPI: Early table checksum verification disabled
+ACPI: RSDP 0x0000003002A095E0 000024 (v02 SGI   )
+ACPI: XSDT 0x0000003002A09620 000044 (v01 SGI    XSDTSN2  00010001 ?    00000001)
+ACPI: APIC 0x0000003002A09680 000044 (v01 SGI    APICSN2  00010001 ?    00000001)
+ACPI: SRAT 0x0000003002A096E0 000078 (v01 SGI    SRATSN2  00010001 ?    00000001)
+ACPI: SLIT 0x0000003002A09770 00002D (v01 SGI    SLITSN2  00010001 ?    00000001)
+ACPI: FACP 0x0000003002A09840 0000F4 (v03 SGI    FACPSN2  00030001 ?    00000001)
+ACPI BIOS Warning (bug): Invalid length for FADT/Pm1aEventBlock: 0, using default 32 (20190816/tbfadt-669)
+ACPI BIOS Warning (bug): Invalid length for FADT/Pm1aControlBlock: 0, using default 16 (20190816/tbfadt-669)
+ACPI BIOS Warning (bug): Invalid length for FADT/PmTimerBlock: 0, using default 32 (20190816/tbfadt-669)
+ACPI: DSDT 0x0000003002A09800 000024 (v02 SGI    DSDTSN2  00020001 ?    00000001)
+ACPI: FACS 0x0000003002A097B0 000040
+ACPI: Local APIC address (____ptrval____)
+2 CPUs available, 2 CPUs total
+Number of logical nodes in system = 1
+Number of memory chunks in system = 1
+SMP: Allowing 2 CPUs, 0 hotplug CPUs
+SAL 3.2: SGI SN2 version 4.56
+SAL Platform features:
+ ITC_Drift
+
+SAL: AP wakeup using external interrupt vector 0x12
+Increasing MCA rendezvous timeout from 20000 to 49000 milliseconds
+MCA related initialization done
+ACPI: Early table checksum verification disabled
+ACPI: RSDP 0x0000003002A095E0 000024 (v02 SGI   )
+ACPI: XSDT 0x0000003002A09620 000044 (v01 SGI    XSDTSN2  00010001 ?    00000001)
+ACPI: APIC 0x0000003002A09680 000044 (v01 SGI    APICSN2  00010001 ?    00000001)
+ACPI: SRAT 0x0000003002A096E0 000078 (v01 SGI    SRATSN2  00010001 ?    00000001)
+ACPI: SLIT 0x0000003002A09770 00002D (v01 SGI    SLITSN2  00010001 ?    00000001)
+ACPI: FACP 0x0000003002A09840 0000F4 (v03 SGI    FACPSN2  00030001 ?    00000001)
+ACPI BIOS Warning (bug): Invalid length for FADT/Pm1aEventBlock: 0, using default 32 (20190816/tbfadt-669)
+ACPI BIOS Warning (bug): Invalid length for FADT/Pm1aControlBlock: 0, using default 16 (20190816/tbfadt-669)
+ACPI BIOS Warning (bug): Invalid length for FADT/PmTimerBlock: 0, using default 32 (20190816/tbfadt-669)
+ACPI: DSDT 0x0000003002A09800 000024 (v02 SGI    DSDTSN2  00020001 ?    00000001)
+ACPI: FACS 0x0000003002A097B0 000040
+SGI: Disabling VGA console
+SGI SAL version 4.56
+clocksource: sn2_rtc: mask: 0x7fffffffffffff max_cycles: 0x49cd42e20, max_idle_ns: 440795202120 ns
+Virtual mem_map starts at 0x(____ptrval____)
+Zone ranges:
+  Normal   [mem 0x0000003003000000-0x00000034f7ffffff]
+Movable zone start for each node
+Early memory node ranges
+  node   0: [mem 0x0000003003000000-0x00000030f7ffffff]
+  node   0: [mem 0x0000003400000000-0x00000034f67effff]
+  node   0: [mem 0x00000034f7800000-0x00000034f7d5ffff]
+  node   0: [mem 0x00000034f7da0000-0x00000034f7e0ffff]
+  node   0: [mem 0x00000034f7e80000-0x00000034f7e9ffff]
+Initmem setup node 0 [mem 0x0000003003000000-0x00000034f7e9ffff]
+On node 0 totalpages: 125918
+  Normal zone: 278 pages used for memmap
+  Normal zone: 0 pages reserved
+  Normal zone: 125918 pages, LIFO batch:3
+pcpu-alloc: s45592 r8192 d208360 u262144 alloc=4*65536
+pcpu-alloc: [0] 0 [0] 1
+Built 1 zonelists, mobility grouping on.  Total pages: 125640
+Policy zone: Normal
+Kernel command line: BOOT_IMAGE=net0:/t2/kernel/vmlinuz-test  root=/dev/nfs nfsroot=10.40.0.120:/t2/altixroot,v3,tcp ip=dhcp rw console=ttySG0,38400n8 earlyprintk=serial log_buf_len=1M ignore_loglevel modprobe.blacklist=ehci_hcd,ehci_pci,uhci_hcd ro
+Dentry cache hash table entries: 1048576 (order: 7, 8388608 bytes, linear)
+Inode-cache hash table entries: 524288 (order: 6, 4194304 bytes, linear)
+Sorting __ex_table...
+mem auto-init: stack:off, heap alloc:off, heap free:off
+Memory: 7999104K/8058752K available (18971K kernel code, 5867K rwdata, 2900K rodata, 1344K init, 7241K bss, 59648K reserved, 0K cma-reserved)
+rcu: Hierarchical RCU implementation.
+rcu:    RCU restricting CPUs from NR_CPUS=4096 to nr_cpu_ids=2.
+rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=2
+NR_IRQS: 1024
+ACPI: Local APIC address (____ptrval____)
+register_intr: No IOSAPIC for GSI 52
+Persistent clock returned invalid value
+CPU 0: base freq=200.000MHz, ITC ratio=15/2, ITC freq=1500.000MHz
+
+clocksource: itc: mask: 0xffffffffffffffff max_cycles: 0x159f22938a9, max_idle_ns: 440795218881 ns
+Console: colour dummy device 80x25
+printk: console [ttySG0] enabled
+printk: console [ttySG0] enabled
+printk: console [sn_sal0] disabled
+printk: console [sn_sal0] disabled
+ACPI: Core revision 20190816
+Calibrating delay loop... 2246.65 BogoMIPS (lpj=4493312)
+pid_max: default: 32768 minimum: 301
+LSM: Security Framework initializing
+Mount-cache hash table entries: 16384 (order: 1, 131072 bytes, linear)
+Mountpoint-cache hash table entries: 16384 (order: 1, 131072 bytes, linear)
+Boot processor id 0x0/0x0
+rcu: Hierarchical SRCU implementation.
+smp: Bringing up secondary CPUs ...
+Fixed BSP b0 value from CPU 1
+CPU 1: base freq=200.000MHz, ITC ratio=15/2, ITC freq=1500.000MHz
+
+smp: Brought up 1 node, 2 CPUs
+Total of 2 processors activated (4493.31 BogoMIPS).
+devtmpfs: initialized
+random: get_random_u32 called from bucket_table_alloc.isra.0+0xd0/0x220 with crng_init=0
+DMI not present or invalid.
+clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+futex hash table entries: 512 (order: 0, 65536 bytes, linear)
+regulator-dummy: no parameters
+NET: Registered protocol family 16
+audit: initializing netlink subsys (disabled)
+ACPI  DSDT OEM Rev 0x20001
+PCI host bridge to bus 0001:00
+pci_bus 0001:00: root bus resource [io  0x800000080f400000-0x800000080f40ffff] (bus address [0x0000-0xffff])
+audit: type=2000 audit(0.404:1): state=initialized audit_enabled=0 res=1
+pci_bus 0001:00: root bus resource [mem 0x80000008c0000000-0x80000008c00fffff] (bus address [0x00000000-0x000fffff])
+pci_bus 0001:00: No busn resource found for root bus, will use [bus 00-ff]
+pci 0001:00:01.0: [10a9:100a] type 00 class 0x0b4000
+pci 0001:00:01.0: reg 0x10: [mem 0x00200000-0x002fffff]
+pci 0001:00:02.0: [1106:3038] type 00 class 0x0c0300
+pci 0001:00:02.0: reg 0x20: [io  0x800000080f401000-0x800000080f40101f]
+pci 0001:00:02.0: supports D1 D2
+pci 0001:00:02.0: PME# supported from D0 D1 D2 D3hot D3cold
+pci 0001:00:02.1: [1106:3038] type 00 class 0x0c0300
+pci 0001:00:02.1: reg 0x20: [io  0x800000080f401020-0x800000080f40103f]
+pci 0001:00:02.1: supports D1 D2
+pci 0001:00:02.1: PME# supported from D0 D1 D2 D3hot D3cold
+pci 0001:00:02.2: [1106:3104] type 00 class 0x0c0320
+pci 0001:00:02.2: reg 0x10: [mem 0x00300000-0x003000ff]
+pci 0001:00:02.2: supports D1 D2
+pci 0001:00:02.2: PME# supported from D0 D1 D2 D3hot D3cold
+pci 0001:00:03.0: [1725:7174] type 00 class 0x010600
+pci 0001:00:03.0: reg 0x10: [mem 0x00301000-0x00301fff 64bit]
+pci 0001:00:04.0: [14e4:1645] type 00 class 0x020000
+pci 0001:00:04.0: reg 0x10: [mem 0x00310000-0x0031ffff 64bit]
+pci 0001:00:04.0: PME# supported from D3hot
+pci 0001:00:01.0: can't claim BAR 0 [mem 0x00200000-0x002fffff]: no compatible bridge window
+pci 0001:00:02.2: can't claim BAR 0 [mem 0x00300000-0x003000ff]: no compatible bridge window
+pci 0001:00:03.0: can't claim BAR 0 [mem 0x00301000-0x00301fff 64bit]: no compatible bridge window
+pci 0001:00:04.0: can't claim BAR 0 [mem 0x00310000-0x0031ffff 64bit]: no compatible bridge window
+pci_bus 0001:00: busn_res: [bus 00-ff] end is updated to 00
+PCI host bridge to bus 0002:00
+pci_bus 0002:00: root bus resource [io  0x0000-0xffff]
+pci_bus 0002:00: root bus resource [mem 0x00000000-0x000fffff]
+pci_bus 0002:00: No busn resource found for root bus, will use [bus 00-ff]
+pci_bus 0002:00: busn_res: [bus 00-ff] end is updated to 00
+ACPI: bus type PCI registered
+HugeTLB registered 256 MiB page size, pre-allocated 0 pages
+ACPI: Added _OSI(Module Device)
+ACPI: Added _OSI(Processor Device)
+ACPI: Added _OSI(3.0 _SCP Extensions)
+ACPI: Added _OSI(Processor Aggregator Device)
+ACPI: Added _OSI(Linux-Dell-Video)
+ACPI: Added _OSI(Linux-Lenovo-NV-HDMI-Audio)
+ACPI: Added _OSI(Linux-HPI-Hybrid-Graphics)
+ACPI Error: AE_NO_ACPI_TABLES, While loading namespace from ACPI tables (20190816/tbxfload-68)
+ACPI: SCI (ACPI GSI 52) not registered
+ACPI: Interpreter enabled
+ACPI: (supports S0)
+ACPI: Using IOSAPIC for interrupt routing
+vgaarb: loaded
+SCSI subsystem initialized
+libata version 3.00 loaded.
+pps_core: LinuxPPS API ver. 1 registered
+pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+PTP clock support registered
+Registered efivars operations
+NetLabel: Initializing
+NetLabel:  domain hash size = 128
+NetLabel:  protocols = UNLABELED CIPSOv4 CALIPSO
+NetLabel:  unlabeled traffic allowed by default
+clocksource: Switched to clocksource sn2_rtc
+VFS: Disk quotas dquot_6.6.0
+VFS: Dquot-cache hash table entries: 8192 (order 0, 65536 bytes)
+pnp: PnP ACPI init
+pnp: PnP ACPI: found 0 devices
+thermal_sys: Registered thermal governor 'step_wise'
+NET: Registered protocol family 2
+tcp_listen_portaddr_hash hash table entries: 4096 (order: 0, 65536 bytes, linear)
+TCP established hash table entries: 65536 (order: 3, 524288 bytes, linear)
+TCP bind hash table entries: 65536 (order: 4, 1048576 bytes, linear)
+random: fast init done
+TCP: Hash tables configured (established 65536 bind 65536)
+UDP hash table entries: 4096 (order: 1, 131072 bytes, linear)
+UDP-Lite hash table entries: 4096 (order: 1, 131072 bytes, linear)
+NET: Registered protocol family 1
+RPC: Registered named UNIX socket transport module.
+RPC: Registered udp transport module.
+RPC: Registered tcp transport module.
+RPC: Registered tcp NFSv4.1 backchannel transport module.
+pci 0001:00:02.0: can't derive routing for PCI INT A
+pci 0001:00:02.0: PCI INT A: no GSI
+pci 0001:00:02.0: quirk_usb_early_handoff+0x0/0x320 took 14514 usecs
+pci 0001:00:02.1: can't derive routing for PCI INT B
+pci 0001:00:02.1: PCI INT B: no GSI
+pci 0001:00:02.2: can't derive routing for PCI INT C
+pci 0001:00:02.2: PCI INT C: no GSI
+pci 0001:00:02.2: quirk_usb_early_handoff+0x0/0x320 took 10116 usecs
+PCI: CLS 0 bytes, default 128
+PAL Information Facility v0.5
+workingset: timestamp_bits=52 max_order=17 bucket_order=0
+NFS: Registering the id_resolver key type
+Key type id_resolver registered
+Key type id_legacy registered
+SGI XFS with ACLs, security attributes, realtime, no debug enabled
+NET: Registered protocol family 38
+Key type asymmetric registered
+Asymmetric key parser 'x509' registered
+Block layer SCSI generic (bsg) driver version 0.4 loaded (major 252)
+io scheduler mq-deadline registered
+io scheduler kyber registered
+Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+sn_console: Console driver init
+ttySG0 at I/O 0x0 (irq = 0, base_baud = 0) is a SGI SN L1
+IOC4 0001:00:01.0: can't derive routing for PCI INT A
+IOC4 0001:00:01.0: PCI INT A: no GSI
+IOC4 0001:00:01.0: IO10 card detected.
+IOC4 0001:00:01.0: PCI clock is 30 ns.
+IOC4 loading sgiioc4 submodule
+Uniform Multi-Platform E-IDE driver
+ide-gd driver 1.18
+ide-cd driver 5.00
+megaraid cmm: 2.20.2.7 (Release Date: Sun Jul 16 00:01:03 EST 2006)
+sata_vsc 0001:00:03.0: version 2.3
+sata_vsc 0001:00:03.0: can't derive routing for PCI INT A
+sata_vsc 0001:00:03.0: PCI INT A: no GSI
+sata_vsc 0001:00:03.0: failed to start port 0 (errno=-12)
+sata_vsc: probe of 0001:00:03.0 failed with error -12
+libphy: Fixed MDIO Bus: probed
+tg3.c:v3.137 (May 11, 2014)
+tg3 0001:00:04.0: can't derive routing for PCI INT A
+tg3 0001:00:04.0: PCI INT A: no GSI
+tg3 0001:00:04.0: tg3_test_dma: Buffer write failed. err = -19
+tg3 0001:00:04.0: DMA engine test failed, aborting
+mousedev: PS/2 mouse device common for all mice
+EFI Variables Facility v0.08 2004-May-17
+NET: Registered protocol family 10
+Segment Routing with IPv6
+NET: Registered protocol family 17
+Key type dns_resolver registered
+registered taskstats version 1
+salruntime_sn_intr_handler:  Invalid provider_call 3
+IOC4 firmware revision 83
+0001:00:01.0: ttyIOC0 at I/O 0x0 (irq = 60, base_baud = 0) is a SGI IOC4 Serial [rs232]
+0001:00:01.0: ttyIOC1 at I/O 0x1 (irq = 60, base_baud = 0) is a SGI IOC4 Serial [rs232]
+0001:00:01.0: ttyIOC2 at I/O 0x2 (irq = 60, base_baud = 0) is a SGI IOC4 Serial [rs232]
+0001:00:01.0: ttyIOC3 at I/O 0x3 (irq = 60, base_baud = 0) is a SGI IOC4 Serial [rs232]
+0001:00:01.0: ttyAIOC0 at I/O 0x0 (irq = 60, base_baud = 0) is a SGI IOC4 Serial [rs422]
+0001:00:01.0: ttyAIOC1 at I/O 0x1 (irq = 60, base_baud = 0) is a SGI IOC4 Serial [rs422]
+0001:00:01.0: ttyAIOC2 at I/O 0x2 (irq = 60, base_baud = 0) is a SGI IOC4 Serial [rs422]
+0001:00:01.0: ttyAIOC3 at I/O 0x3 (irq = 60, base_baud = 0) is a SGI IOC4 Serial [rs422]
+SGIIOC4: IDE controller at PCI slot 0001:00:01.0, revision 83
+legacy IDE will be removed in 2021, please switch to libata
+Report any missing HW support to linux-ide@vger.kernel.org
+    ide0: MMIO-DMA
+ide0: unable to allocate PRD table
+ide0: DMA disabled
+Probing IDE interface ide0...
+hda: MATSHITADVD-ROM SR-8177, ATAPI CD/DVD-ROM drive
+ide0 at 0xc00000080f200100-0xc00000080f20011c,0xc00000080f200120 on irq 60
+ide-cd: hda: ATAPI 24X DVD-ROM drive, 256kB Cache
+cdrom: Uniform CD-ROM driver Revision: 3.20
+random: crng init done
+
+VFS: Unable to mount root fs via NFS, trying floppy.
+VFS: Cannot open root device "nfs" or unknown-block(2,0): error -6
+Please append a correct "root=" boot option; here are the available partitions:
+0300         4194302 hda
+ driver: ide-cdrom
+Kernel panic - not syncing: VFS: Unable to mount root fs on unknown-block(2,0)
+---[ end Kernel panic - not syncing: VFS: Unable to mount root fs on unknown-block(2,0) ]---
+

@@ -1,0 +1,36 @@
+From b96c1429054239c986ed95eb42ded971c700a686 Mon Sep 17 00:00:00 2001
+From: SN2 Dev <sn2@dev>
+Date: Sun, 8 Mar 2026 01:35:35 +0000
+Subject: [PATCH] ia64/mm: guard arch_sync_dma_for_cpu with
+ ARCH_HAS_SYNC_DMA_FOR_CPU
+
+When SWIOTLB is disabled (SN2 has its own DMA via SHUB),
+ARCH_HAS_SYNC_DMA_FOR_CPU is not selected, so dma-noncoherent.h
+provides a static inline stub that conflicts with the definition
+in init.c. Guard it so it only compiles when needed.
+---
+ arch/ia64/mm/init.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/ia64/mm/init.c b/arch/ia64/mm/init.c
+index bf9df26..1552537 100644
+--- a/arch/ia64/mm/init.c
++++ b/arch/ia64/mm/init.c
+@@ -73,6 +73,7 @@ __ia64_sync_icache_dcache (pte_t pte)
+  * DMA can be marked as "clean" so that lazy_mmu_prot_update() doesn't have to
+  * flush them when they get mapped into an executable vm-area.
+  */
++#ifdef CONFIG_ARCH_HAS_SYNC_DMA_FOR_CPU
+ void arch_sync_dma_for_cpu(struct device *dev, phys_addr_t paddr,
+ 		size_t size, enum dma_data_direction dir)
+ {
+@@ -82,6 +83,7 @@ void arch_sync_dma_for_cpu(struct device *dev, phys_addr_t paddr,
+ 		set_bit(PG_arch_1, &pfn_to_page(pfn)->flags);
+ 	} while (++pfn <= PHYS_PFN(paddr + size - 1));
+ }
++#endif
+ 
+ inline void
+ ia64_set_rbs_bot (void)
+-- 
+2.43.0
