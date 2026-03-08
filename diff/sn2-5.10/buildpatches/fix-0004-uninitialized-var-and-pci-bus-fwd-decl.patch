@@ -1,0 +1,56 @@
+Subject: [PATCH] ia64/sn: fix uninitialized_var() removal and struct pci_bus warning
+
+The uninitialized_var() macro was removed in v5.10 (commit 3f649ab728cd).
+It previously expanded to (x = x) to suppress GCC "may be used
+uninitialized" warnings.  Without the macro, the declaration fails
+entirely and causes a build error.
+
+Replace uninitialized_var(x) with a plain declaration in both
+tiocx.c and pcibr_provider.c.  The variables are always set by
+ia64_sn_sysctl_ioboard_get() before use; the original warning
+suppression was unnecessary.
+
+Also add a forward declaration for struct pci_bus in pcibr_provider.h
+to fix a -Wvisibility warning.  The header uses struct pci_bus * in
+a function prototype but never included <linux/pci.h> or forward-
+declared the type.
+
+---
+ arch/ia64/include/asm/sn/pcibr_provider.h | 2 ++
+ arch/ia64/sn/kernel/tiocx.c               | 2 +-
+ arch/ia64/sn/pci/pcibr/pcibr_provider.c   | 2 +-
+ 3 files changed, 4 insertions(+), 2 deletions(-)
+
+--- a/arch/ia64/include/asm/sn/pcibr_provider.h
++++ b/arch/ia64/include/asm/sn/pcibr_provider.h
+@@ -11,6 +11,8 @@
+ #include <asm/sn/intr.h>
+ #include <asm/sn/pcibus_provider_defs.h>
+ 
++struct pci_bus;
++
+ /* Workarounds */
+ #define PV907516 (1 << 1) /* TIOCP: Don't write the write buffer flush reg */
+ 
+--- a/arch/ia64/sn/kernel/tiocx.c
++++ b/arch/ia64/sn/kernel/tiocx.c
+@@ -372,7 +372,7 @@
+ 
+ static int is_fpga_tio(int nasid, int *bt)
+ {
+-	u16 uninitialized_var(ioboard_type);	/* GCC be quiet */
++	u16 ioboard_type;	/* set by ia64_sn_sysctl_ioboard_get */
+ 	long rc;
+ 
+ 	rc = ia64_sn_sysctl_ioboard_get(nasid, &ioboard_type);
+--- a/arch/ia64/sn/pci/pcibr/pcibr_provider.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_provider.c
+@@ -82,7 +82,7 @@
+ u16 sn_ioboard_to_pci_bus(struct pci_bus *pci_bus)
+ {
+ 	long rc;
+-	u16 uninitialized_var(ioboard);		/* GCC be quiet */
++	u16 ioboard;			/* set by ia64_sn_sysctl_ioboard_get */
+ 	nasid_t nasid = NASID_GET(SN_PCIBUS_BUSSOFT(pci_bus)->bs_base);
+ 
+ 	rc = ia64_sn_sysctl_ioboard_get(nasid, &ioboard);

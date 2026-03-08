@@ -1,0 +1,32 @@
+Subject: [PATCH] ia64/mm: guard ia64_global_tlb_purge with #ifndef CONFIG_IA64_SGI_SN2
+
+When CONFIG_IA64_SGI_SN2 is enabled, the SN2 patch redirects the
+call site in flush_tlb_range() to sn2_global_tlb_purge() via an
+#ifdef.  This leaves the static ia64_global_tlb_purge() with no
+callers, producing a -Wunused-function warning.
+
+Wrap the function definition with #ifndef CONFIG_IA64_SGI_SN2 so
+it is not compiled when SN2 is configured.
+
+---
+ arch/ia64/mm/tlb.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+--- a/arch/ia64/mm/tlb.c
++++ b/arch/ia64/mm/tlb.c
+@@ -245,6 +245,7 @@
+ }
+ 
+ #ifdef CONFIG_SMP
++#ifndef CONFIG_IA64_SGI_SN2
+ static void
+ ia64_global_tlb_purge (struct mm_struct *mm, unsigned long start,
+ 		       unsigned long end, unsigned long nbits)
+@@ -282,6 +283,7 @@
+                 activate_context(active_mm);
+         }
+ }
++#endif /* !CONFIG_IA64_SGI_SN2 */
+ #endif /* CONFIG_SMP */
+ 
+ void

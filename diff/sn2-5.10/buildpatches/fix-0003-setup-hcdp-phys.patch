@@ -1,0 +1,31 @@
+Subject: [PATCH] ia64/sn: use hcdp_phys instead of efi.hcdp in sn_scan_pcdp()
+
+In v5.7, Ard Biesheuvel's EFI cleanup series moved HCDP and MPS table
+handling from the generic struct efi into ia64-local code.  The hcdp
+member was removed from struct efi and replaced with a global
+unsigned long hcdp_phys in arch/ia64/kernel/efi.c.
+
+Update sn_scan_pcdp() to use the new hcdp_phys variable instead of
+the removed efi.hcdp member.
+
+---
+ arch/ia64/sn/kernel/setup.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+--- a/arch/ia64/sn/kernel/setup.c
++++ b/arch/ia64/sn/kernel/setup.c
+@@ -321,11 +321,11 @@
+ 	struct pcdp *pcdp;
+ 	struct pcdp_device_desc device;
+ 	struct pcdp_interface_pci if_pci;
+-	extern struct efi efi;
++	extern unsigned long hcdp_phys;
+ 
+-	if (efi.hcdp == EFI_INVALID_TABLE_ADDR)
++	if (hcdp_phys == EFI_INVALID_TABLE_ADDR)
+ 		return;		/* no hcdp/pcdp table */
+ 
+-	pcdp = __va(efi.hcdp);
++	pcdp = __va(hcdp_phys);
+ 
+ 	if (pcdp->rev < 3)

@@ -1,0 +1,36 @@
+Subject: [PATCH] drivers/char: update snsc_event.c for v5.10 tasklet API
+
+In v5.10 (commit 12cc923f1ccc), the tasklet API was updated:
+DECLARE_TASKLET changed from 3 arguments (name, func, data) to
+2 arguments (name, callback), and the callback signature changed
+from void (*func)(unsigned long) to void (*func)(struct tasklet_struct *).
+
+Update scdrv_event() and its DECLARE_TASKLET to match.  The 'data'
+argument was already unused (passed as 0, received as 'dummy').
+
+---
+ drivers/char/snsc_event.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+--- a/drivers/char/snsc_event.c
++++ b/drivers/char/snsc_event.c
+@@ -25,8 +25,8 @@
+ 
+ static struct subch_data_s *event_sd;
+ 
+-void scdrv_event(unsigned long);
+-DECLARE_TASKLET(sn_sysctl_event, scdrv_event, 0);
++void scdrv_event(struct tasklet_struct *);
++DECLARE_TASKLET(sn_sysctl_event, scdrv_event);
+ 
+ /*
+  * scdrv_event_interrupt
+@@ -232,7 +232,7 @@
+  * that there are no more immediately available.
+  */
+ void
+-scdrv_event(unsigned long dummy)
++scdrv_event(struct tasklet_struct *unused)
+ {
+ 	int status;
+ 	int len;

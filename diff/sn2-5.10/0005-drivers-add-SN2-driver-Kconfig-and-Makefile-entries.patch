@@ -1,8 +1,12 @@
-diff --git a/drivers/Kconfig b/drivers/Kconfig
-index 8befa53f43be..5c763f85d28d 100644
---- a/drivers/Kconfig
-+++ b/drivers/Kconfig
-@@ -30,6 +30,8 @@ source "drivers/block/Kconfig"
+Subject: [PATCH 5/6] drivers: add SN2 driver Kconfig and Makefile entries
+
+---
+ 12 files changed
+
+diff -ruN --no-dereference a/drivers/Kconfig b/drivers/Kconfig
+--- a/drivers/Kconfig	2026-03-08 15:07:45.000000000 +0000
++++ b/drivers/Kconfig	2026-03-08 16:03:33.970178410 +0000
+@@ -30,6 +30,8 @@
  
  source "drivers/nvme/Kconfig"
  
@@ -11,11 +15,10 @@ index 8befa53f43be..5c763f85d28d 100644
  source "drivers/misc/Kconfig"
  
  source "drivers/ide/Kconfig"
-diff --git a/drivers/Makefile b/drivers/Makefile
-index aaef17cc6512..54d2585daf02 100644
---- a/drivers/Makefile
-+++ b/drivers/Makefile
-@@ -131,6 +131,7 @@ obj-y				+= mmc/
+diff -ruN --no-dereference a/drivers/Makefile b/drivers/Makefile
+--- a/drivers/Makefile	2026-03-08 15:07:45.000000000 +0000
++++ b/drivers/Makefile	2026-03-08 16:03:33.971178410 +0000
+@@ -132,6 +132,7 @@
  obj-$(CONFIG_MEMSTICK)		+= memstick/
  obj-$(CONFIG_NEW_LEDS)		+= leds/
  obj-$(CONFIG_INFINIBAND)	+= infiniband/
@@ -23,11 +26,10 @@ index aaef17cc6512..54d2585daf02 100644
  obj-y				+= firmware/
  obj-$(CONFIG_CRYPTO)		+= crypto/
  obj-$(CONFIG_SUPERH)		+= sh/
-diff --git a/drivers/char/Kconfig b/drivers/char/Kconfig
-index d229a2d..3a11dc2 100644
---- a/drivers/char/Kconfig
-+++ b/drivers/char/Kconfig
-@@ -471,6 +471,28 @@ config ADI
+diff -ruN --no-dereference a/drivers/char/Kconfig b/drivers/char/Kconfig
+--- a/drivers/char/Kconfig	2026-03-08 15:07:45.000000000 +0000
++++ b/drivers/char/Kconfig	2026-03-08 16:03:33.972178410 +0000
+@@ -471,6 +471,28 @@
  	  and SSM (Silicon Secured Memory).  Intended consumers of this
  	  driver include crash and makedumpfile.
  
@@ -56,11 +58,10 @@ index d229a2d..3a11dc2 100644
  endmenu
  
  config RANDOM_TRUST_CPU
-diff --git a/drivers/char/Makefile b/drivers/char/Makefile
-index 7c5ea6f9df14..fbea7dd12932 100644
---- a/drivers/char/Makefile
-+++ b/drivers/char/Makefile
-@@ -9,9 +9,11 @@ obj-y				+= misc.o
+diff -ruN --no-dereference a/drivers/char/Makefile b/drivers/char/Makefile
+--- a/drivers/char/Makefile	2026-03-08 15:07:45.000000000 +0000
++++ b/drivers/char/Makefile	2026-03-08 16:03:33.973178410 +0000
+@@ -9,9 +9,11 @@
  obj-$(CONFIG_ATARI_DSP56K)	+= dsp56k.o
  obj-$(CONFIG_VIRTIO_CONSOLE)	+= virtio_console.o
  obj-$(CONFIG_RAW_DRIVER)	+= raw.o
@@ -72,10 +73,10 @@ index 7c5ea6f9df14..fbea7dd12932 100644
  
  obj-$(CONFIG_PRINTER)		+= lp.o
  
-diff --git a/drivers/char/agp/Kconfig b/drivers/char/agp/Kconfig
---- a/drivers/char/agp/Kconfig
-+++ b/drivers/char/agp/Kconfig
-@@ -150,6 +150,13 @@ config AGP_EFFICEON
+diff -ruN --no-dereference a/drivers/char/agp/Kconfig b/drivers/char/agp/Kconfig
+--- a/drivers/char/agp/Kconfig	2026-03-08 15:07:45.000000000 +0000
++++ b/drivers/char/agp/Kconfig	2026-03-08 16:03:33.974178409 +0000
+@@ -150,6 +150,13 @@
  	  This option gives you AGP support for the Transmeta Efficeon
  	  series processors with integrated northbridges.
  
@@ -89,11 +90,10 @@ diff --git a/drivers/char/agp/Kconfig b/drivers/char/agp/Kconfig
  config INTEL_GTT
  	tristate
  	depends on X86 && PCI
-diff --git a/drivers/char/agp/Makefile b/drivers/char/agp/Makefile
-index cb2497d157f6..4a786ffd9dee 100644
---- a/drivers/char/agp/Makefile
-+++ b/drivers/char/agp/Makefile
-@@ -16,6 +16,7 @@ obj-$(CONFIG_AGP_I460)		+= i460-agp.o
+diff -ruN --no-dereference a/drivers/char/agp/Makefile b/drivers/char/agp/Makefile
+--- a/drivers/char/agp/Makefile	2026-03-08 15:07:45.000000000 +0000
++++ b/drivers/char/agp/Makefile	2026-03-08 16:03:33.974178409 +0000
+@@ -16,6 +16,7 @@
  obj-$(CONFIG_AGP_INTEL)		+= intel-agp.o
  obj-$(CONFIG_INTEL_GTT)		+= intel-gtt.o
  obj-$(CONFIG_AGP_NVIDIA)	+= nvidia-agp.o
@@ -101,11 +101,10 @@ index cb2497d157f6..4a786ffd9dee 100644
  obj-$(CONFIG_AGP_SIS)		+= sis-agp.o
  obj-$(CONFIG_AGP_SWORKS)	+= sworks-agp.o
  obj-$(CONFIG_AGP_UNINORTH)	+= uninorth-agp.o
-diff --git a/drivers/ide/Kconfig b/drivers/ide/Kconfig
-index 1c227ea8ecd3..9eada392df15 100644
---- a/drivers/ide/Kconfig
-+++ b/drivers/ide/Kconfig
-@@ -567,6 +567,15 @@ config BLK_DEV_SVWKS
+diff -ruN --no-dereference a/drivers/ide/Kconfig b/drivers/ide/Kconfig
+--- a/drivers/ide/Kconfig	2026-03-08 15:07:45.000000000 +0000
++++ b/drivers/ide/Kconfig	2026-03-08 16:03:33.988178407 +0000
+@@ -567,6 +567,15 @@
  	  This driver adds PIO/(U)DMA support for the ServerWorks OSB4/CSB5
  	  chipsets.
  
@@ -121,11 +120,10 @@ index 1c227ea8ecd3..9eada392df15 100644
  config BLK_DEV_SIIMAGE
  	tristate "Silicon Image chipset support"
  	select BLK_DEV_IDEDMA_PCI
-diff --git a/drivers/ide/Makefile b/drivers/ide/Makefile
-index cac02db4098d..9f617a77970f 100644
---- a/drivers/ide/Makefile
-+++ b/drivers/ide/Makefile
-@@ -59,6 +59,7 @@ obj-$(CONFIG_BLK_DEV_PDC202XX_NEW)	+= pdc202xx_new.o
+diff -ruN --no-dereference a/drivers/ide/Makefile b/drivers/ide/Makefile
+--- a/drivers/ide/Makefile	2026-03-08 15:07:45.000000000 +0000
++++ b/drivers/ide/Makefile	2026-03-08 16:03:33.994178406 +0000
+@@ -57,6 +57,7 @@
  obj-$(CONFIG_BLK_DEV_PIIX)		+= piix.o
  obj-$(CONFIG_BLK_DEV_RZ1000)		+= rz1000.o
  obj-$(CONFIG_BLK_DEV_SVWKS)		+= serverworks.o
@@ -133,17 +131,17 @@ index cac02db4098d..9f617a77970f 100644
  obj-$(CONFIG_BLK_DEV_SIIMAGE)		+= siimage.o
  obj-$(CONFIG_BLK_DEV_SIS5513)		+= sis5513.o
  obj-$(CONFIG_BLK_DEV_SL82C105)		+= sl82c105.o
-diff --git a/drivers/misc/Kconfig b/drivers/misc/Kconfig
---- a/drivers/misc/Kconfig
-+++ b/drivers/misc/Kconfig
-@@ -126,6 +126,18 @@ config INTEL_MID_PTI
+diff -ruN --no-dereference a/drivers/misc/Kconfig b/drivers/misc/Kconfig
+--- a/drivers/misc/Kconfig	2026-03-08 15:07:45.000000000 +0000
++++ b/drivers/misc/Kconfig	2026-03-08 16:03:33.998178405 +0000
+@@ -125,6 +125,18 @@
  	  an Intel Atom (non-netbook) mobile device containing a MIPI
  	  P1149.7 standard implementation.
  
 +config SGI_IOC4
 +	tristate "SGI IOC4 Base IO support"
 +	depends on PCI
-+	---help---
++	help
 +	  This option enables basic support for the IOC4 chip on certain
 +	  SGI IO controller cards (IO9, IO10, and PCI-RT).  This option
 +	  does not enable any specific functions on such a card, but provides
@@ -155,11 +153,10 @@ diff --git a/drivers/misc/Kconfig b/drivers/misc/Kconfig
  config TIFM_CORE
  	tristate "TI Flash Media interface support"
  	depends on PCI
-diff --git a/drivers/misc/Makefile b/drivers/misc/Makefile
-index c1860d35dc7e..9e1eaf523d6e 100644
---- a/drivers/misc/Makefile
-+++ b/drivers/misc/Makefile
-@@ -21,6 +21,7 @@ obj-$(CONFIG_QCOM_COINCELL)	+= qcom-coincell.o
+diff -ruN --no-dereference a/drivers/misc/Makefile b/drivers/misc/Makefile
+--- a/drivers/misc/Makefile	2026-03-08 15:07:45.000000000 +0000
++++ b/drivers/misc/Makefile	2026-03-08 16:03:34.000178405 +0000
+@@ -21,6 +21,7 @@
  obj-$(CONFIG_QCOM_FASTRPC)	+= fastrpc.o
  obj-$(CONFIG_SENSORS_BH1770)	+= bh1770glc.o
  obj-$(CONFIG_SENSORS_APDS990X)	+= apds990x.o
@@ -167,43 +164,10 @@ index c1860d35dc7e..9e1eaf523d6e 100644
  obj-$(CONFIG_ENCLOSURE_SERVICES) += enclosure.o
  obj-$(CONFIG_KGDB_TESTS)	+= kgdbts.o
  obj-$(CONFIG_SGI_XP)		+= sgi-xp/
-diff --git a/drivers/pci/hotplug/Kconfig b/drivers/pci/hotplug/Kconfig
-index e7b493c22bf3..e9f78eb390d2 100644
---- a/drivers/pci/hotplug/Kconfig
-+++ b/drivers/pci/hotplug/Kconfig
-@@ -147,6 +147,15 @@ config HOTPLUG_PCI_RPA_DLPAR
- 
- 	  When in doubt, say N.
- 
-+config HOTPLUG_PCI_SGI
-+	tristate "SGI PCI Hotplug Support"
-+	depends on IA64_SGI_SN2 || IA64_GENERIC
-+	help
-+	  Say Y here if you want to use the SGI Altix Hotplug
-+	  Driver for PCI devices.
-+
-+	  When in doubt, say N.
-+
- config HOTPLUG_PCI_S390
- 	bool "System z PCI Hotplug Support"
- 	depends on S390 && 64BIT
-diff --git a/drivers/pci/hotplug/Makefile b/drivers/pci/hotplug/Makefile
-index 5196983220df..7e3331603714 100644
---- a/drivers/pci/hotplug/Makefile
-+++ b/drivers/pci/hotplug/Makefile
-@@ -18,6 +18,7 @@ obj-$(CONFIG_HOTPLUG_PCI_SHPC)		+= shpchp.o
- obj-$(CONFIG_HOTPLUG_PCI_POWERNV)	+= pnv-php.o
- obj-$(CONFIG_HOTPLUG_PCI_RPA)		+= rpaphp.o
- obj-$(CONFIG_HOTPLUG_PCI_RPA_DLPAR)	+= rpadlpar_io.o
-+obj-$(CONFIG_HOTPLUG_PCI_SGI)		+= sgi_hotplug.o
- obj-$(CONFIG_HOTPLUG_PCI_ACPI)		+= acpiphp.o
- obj-$(CONFIG_HOTPLUG_PCI_S390)		+= s390_pci_hpc.o
- 
-diff --git a/drivers/tty/serial/Kconfig b/drivers/tty/serial/Kconfig
-index 67a9eb3f94ce..56b887ba1dfb 100644
---- a/drivers/tty/serial/Kconfig
-+++ b/drivers/tty/serial/Kconfig
-@@ -839,6 +839,16 @@ config SERIAL_CPM_CONSOLE
+diff -ruN --no-dereference a/drivers/tty/serial/Kconfig b/drivers/tty/serial/Kconfig
+--- a/drivers/tty/serial/Kconfig	2026-03-08 15:07:45.000000000 +0000
++++ b/drivers/tty/serial/Kconfig	2026-03-08 16:03:34.055178396 +0000
+@@ -839,6 +839,16 @@
  	  your boot loader (lilo or loadlin) about how to pass options to the
  	  kernel at boot time.)
  
@@ -220,7 +184,7 @@ index 67a9eb3f94ce..56b887ba1dfb 100644
  config SERIAL_PIC32
  	tristate "Microchip PIC32 serial support"
  	depends on MACH_PIC32
-@@ -956,6 +966,23 @@ config SERIAL_JSM
+@@ -956,6 +966,23 @@
  	  To compile this driver as a module, choose M here: the
  	  module will be called jsm.
  
@@ -244,11 +208,10 @@ index 67a9eb3f94ce..56b887ba1dfb 100644
  config SERIAL_MSM
  	tristate "MSM on-chip serial port support"
  	depends on ARCH_QCOM
-diff --git a/drivers/tty/serial/Makefile b/drivers/tty/serial/Makefile
-index caf167f..c6f80b9 100644
---- a/drivers/tty/serial/Makefile
-+++ b/drivers/tty/serial/Makefile
-@@ -41,6 +41,7 @@ obj-$(CONFIG_SERIAL_HS_LPC32XX) += lpc32xx_hs.o
+diff -ruN --no-dereference a/drivers/tty/serial/Makefile b/drivers/tty/serial/Makefile
+--- a/drivers/tty/serial/Makefile	2026-03-08 15:07:45.000000000 +0000
++++ b/drivers/tty/serial/Makefile	2026-03-08 16:03:34.057178396 +0000
+@@ -41,6 +41,7 @@
  obj-$(CONFIG_SERIAL_DZ) += dz.o
  obj-$(CONFIG_SERIAL_ZS) += zs.o
  obj-$(CONFIG_SERIAL_SH_SCI) += sh-sci.o
@@ -256,3 +219,12 @@ index caf167f..c6f80b9 100644
  obj-$(CONFIG_SERIAL_CPM) += cpm_uart/
  obj-$(CONFIG_SERIAL_IMX) += imx.o
  obj-$(CONFIG_SERIAL_IMX_EARLYCON) += imx_earlycon.o
+@@ -53,6 +54,8 @@
+ obj-$(CONFIG_SERIAL_JSM) += jsm/
+ obj-$(CONFIG_SERIAL_TXX9) += serial_txx9.o
+ obj-$(CONFIG_SERIAL_VR41XX) += vr41xx_siu.o
++obj-$(CONFIG_SERIAL_SGI_IOC4) += ioc4_serial.o
++obj-$(CONFIG_SERIAL_SGI_IOC3) += ioc3_serial.o
+ obj-$(CONFIG_SERIAL_ATMEL) += atmel_serial.o
+ obj-$(CONFIG_SERIAL_UARTLITE) += uartlite.o
+ obj-$(CONFIG_SERIAL_MSM) += msm_serial.o

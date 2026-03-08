@@ -1,0 +1,26 @@
+Subject: [PATCH] ia64/mm: remove orphan #endif in init.c
+
+The v5.5 patch had two hunks for init.c: hunk #1 added
+#ifdef CONFIG_ARCH_HAS_SYNC_DMA_FOR_CPU before arch_sync_dma_for_cpu(),
+hunk #2 added #endif after it.  When applied to v5.10, hunk #1 was
+rejected (function renamed to arch_dma_mark_clean()), but hunk #2
+applied — leaving an orphan #endif that causes a build error.
+
+The #ifdef guard is no longer needed in v5.10 since
+ARCH_HAS_DMA_MARK_CLEAN is unconditionally selected and the function
+is always compiled.  Remove the stray #endif.
+
+---
+ arch/ia64/mm/init.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+--- a/arch/ia64/mm/init.c
++++ b/arch/ia64/mm/init.c
+@@ -81,7 +81,6 @@
+ 		set_bit(PG_arch_1, &pfn_to_page(pfn)->flags);
+ 	} while (++pfn <= PHYS_PFN(paddr + size - 1));
+ }
+-#endif
+ 
+ inline void
+ ia64_set_rbs_bot (void)
