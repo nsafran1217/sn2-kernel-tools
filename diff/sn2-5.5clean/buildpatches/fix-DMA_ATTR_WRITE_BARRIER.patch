@@ -1,0 +1,48 @@
+Subject: [PATCH] ia64/sn2: define DMA_ATTR_WRITE_BARRIER locally in pci_dma.c
+
+DMA_ATTR_WRITE_BARRIER (bit 0) was removed from include/linux/dma-mapping.h
+when SN2 support was stripped from the kernel (commit 737e2520c), since
+pci_dma.c was its only consumer.  Re-define it locally using its original
+bit value, which does not conflict with any current DMA_ATTR_* flag (the
+mainline attributes begin at bit 1).
+
+This fixes a build error:
+
+  arch/ia64/sn/pci/pci_dma.c:190:21: error: 'DMA_ATTR_WRITE_BARRIER'
+  undeclared (first use in this function)
+
+The attribute causes SN2's DMA mapping functions to use
+dma_map_consistent() instead of dma_map(), configuring the SHUB hardware
+for write-barrier DMA mode that forces all pending DMA writes to complete,
+preventing PIO-read-before-DMA-write races on Altix interconnects.
+
+See fix-DMA_ATTR_WRITE_BARRIER.md for full analysis.
+
+---
+ arch/ia64/sn/pci/pci_dma.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+--- a/arch/ia64/sn/pci/pci_dma.c
++++ b/arch/ia64/sn/pci/pci_dma.c
+@@ -18,6 +18,21 @@
+ #include <asm/sn/pcidev.h>
+ #include <asm/sn/sn_sal.h>
+ 
++/*
++ * DMA_ATTR_WRITE_BARRIER was a DMA attribute (bit 0) originally defined in
++ * include/linux/dma-mapping.h. It was an SN2-specific attribute that caused
++ * DMA mappings to use dma_map_consistent() instead of dma_map(), forcing all
++ * pending DMA writes to complete and providing strict ordering of DMA from a
++ * device across all intervening buses and bridges. It was removed from the
++ * core kernel headers when SN2 support was removed (commit 737e2520c) since
++ * SN2's pci_dma.c was its only consumer. We re-define it here locally using
++ * its original bit value, which does not conflict with any current DMA_ATTR_*
++ * flags (the mainline attributes begin at bit 1).
++ */
++#ifndef DMA_ATTR_WRITE_BARRIER
++#define DMA_ATTR_WRITE_BARRIER		(1UL << 0)
++#endif
++
+ #define SG_ENT_VIRT_ADDRESS(sg)	(sg_virt((sg)))
+ #define SG_ENT_PHYS_ADDRESS(SG)	virt_to_phys(SG_ENT_VIRT_ADDRESS(SG))
+ 

@@ -1,0 +1,234 @@
+Subject: [PATCH 5/6] drivers: add SN2 Kconfig and Makefile entries
+
+Build system hookups for SN2 drivers.
+
+Adds CONFIG_SGI_SN and CONFIG_SGI_IOC4 guards to existing driver
+Kconfig and Makefile files across char, agp, ide, misc, and serial.
+
+---
+
+--- a/drivers/Kconfig	2026-03-08 02:38:23.000000000 +0000
++++ b/drivers/Kconfig	2026-03-08 04:03:38.362481526 +0000
+@@ -30,6 +30,8 @@
+ 
+ source "drivers/nvme/Kconfig"
+ 
++# misc before ide - BLK_DEV_SGIIOC4 depends on SGI_IOC4
++
+ source "drivers/misc/Kconfig"
+ 
+ source "drivers/ide/Kconfig"
+diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' drivers.clean/Makefile drivers/Makefile
+--- a/drivers/Makefile	2026-03-08 02:38:23.000000000 +0000
++++ b/drivers/Makefile	2026-03-08 04:03:38.362481526 +0000
+@@ -131,6 +131,7 @@
+ obj-$(CONFIG_MEMSTICK)		+= memstick/
+ obj-$(CONFIG_NEW_LEDS)		+= leds/
+ obj-$(CONFIG_INFINIBAND)	+= infiniband/
++obj-$(CONFIG_SGI_SN)		+= sn/
+ obj-y				+= firmware/
+ obj-$(CONFIG_CRYPTO)		+= crypto/
+ obj-$(CONFIG_SUPERH)		+= sh/
+diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' drivers.clean/char/Kconfig drivers/char/Kconfig
+--- a/drivers/char/Kconfig	2026-03-08 02:38:23.000000000 +0000
++++ b/drivers/char/Kconfig	2026-03-08 04:03:38.363481533 +0000
+@@ -26,6 +26,28 @@
+ 	  kind of kernel debugging operations.
+ 	  When in doubt, say "N".
+ 
++config SGI_SNSC
++	bool "SGI Altix system controller communication support"
++	depends on (IA64_SGI_SN2 || IA64_GENERIC)
++	help
++	  If you have an SGI Altix and you want to enable system
++	  controller communication from user space (you want this!),
++	  say Y.  Otherwise, say N.
++
++config SGI_TIOCX
++       bool "SGI TIO CX driver support"
++       depends on (IA64_SGI_SN2 || IA64_GENERIC)
++       help
++         If you have an SGI Altix and you have fpga devices attached
++         to your TIO, say Y here, otherwise say N.
++
++config SGI_MBCS
++       tristate "SGI FPGA Core Services driver support"
++       depends on SGI_TIOCX
++       help
++         If you have an SGI Altix with an attached SABrick
++         say Y or M here, otherwise say N.
++
+ source "drivers/tty/serial/Kconfig"
+ source "drivers/tty/serdev/Kconfig"
+ 
+diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' drivers.clean/char/Makefile drivers/char/Makefile
+--- a/drivers/char/Makefile	2026-03-08 02:38:23.000000000 +0000
++++ b/drivers/char/Makefile	2026-03-08 04:03:38.363481533 +0000
+@@ -9,9 +9,11 @@
+ obj-$(CONFIG_ATARI_DSP56K)	+= dsp56k.o
+ obj-$(CONFIG_VIRTIO_CONSOLE)	+= virtio_console.o
+ obj-$(CONFIG_RAW_DRIVER)	+= raw.o
++obj-$(CONFIG_SGI_SNSC)		+= snsc.o snsc_event.o
+ obj-$(CONFIG_MSPEC)		+= mspec.o
+ obj-$(CONFIG_UV_MMTIMER)	+= uv_mmtimer.o
+ obj-$(CONFIG_IBM_BSR)		+= bsr.o
++obj-$(CONFIG_SGI_MBCS)		+= mbcs.o
+ 
+ obj-$(CONFIG_PRINTER)		+= lp.o
+ 
+diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' drivers.clean/char/agp/Kconfig drivers/char/agp/Kconfig
+--- a/drivers/char/agp/Kconfig	2026-03-08 02:38:23.000000000 +0000
++++ b/drivers/char/agp/Kconfig	2026-03-08 04:03:38.364481540 +0000
+@@ -150,6 +150,13 @@
+ 	  This option gives you AGP support for the Transmeta Efficeon
+ 	  series processors with integrated northbridges.
+ 
++config AGP_SGI_TIOCA
++        tristate "SGI TIO chipset AGP support"
++        depends on AGP && (IA64_SGI_SN2 || IA64_GENERIC)
++        help
++          This option gives you AGP GART support for the SGI TIO chipset
++          for IA64 processors.
++
+ config INTEL_GTT
+ 	tristate
+ 	depends on X86 && PCI
+diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' drivers.clean/char/agp/Makefile drivers/char/agp/Makefile
+--- a/drivers/char/agp/Makefile	2026-03-08 02:38:05.000000000 +0000
++++ b/drivers/char/agp/Makefile	2026-03-08 04:03:38.364481540 +0000
+@@ -16,6 +16,7 @@
+ obj-$(CONFIG_AGP_INTEL)		+= intel-agp.o
+ obj-$(CONFIG_INTEL_GTT)		+= intel-gtt.o
+ obj-$(CONFIG_AGP_NVIDIA)	+= nvidia-agp.o
++obj-$(CONFIG_AGP_SGI_TIOCA)	+= sgi-agp.o
+ obj-$(CONFIG_AGP_SIS)		+= sis-agp.o
+ obj-$(CONFIG_AGP_SWORKS)	+= sworks-agp.o
+ obj-$(CONFIG_AGP_UNINORTH)	+= uninorth-agp.o
+diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' drivers.clean/char/agp/sgi-agp.c drivers/char/agp/sgi-agp.c
+--- a/drivers/ide/Kconfig	2026-03-08 02:38:24.000000000 +0000
++++ b/drivers/ide/Kconfig	2026-03-08 04:03:38.369481574 +0000
+@@ -567,6 +567,15 @@
+ 	  This driver adds PIO/(U)DMA support for the ServerWorks OSB4/CSB5
+ 	  chipsets.
+ 
++config BLK_DEV_SGIIOC4
++	tristate "Silicon Graphics IOC4 chipset ATA/ATAPI support"
++	depends on (IA64_SGI_SN2 || IA64_GENERIC) && SGI_IOC4
++	select BLK_DEV_IDEDMA_PCI
++	help
++	  This driver adds PIO & MultiMode DMA-2 support for the SGI IOC4
++	  chipset, which has one channel and can support two devices.
++	  Please say Y here if you have an Altix System from SGI.
++
+ config BLK_DEV_SIIMAGE
+ 	tristate "Silicon Image chipset support"
+ 	select BLK_DEV_IDEDMA_PCI
+diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' drivers.clean/ide/Makefile drivers/ide/Makefile
+--- a/drivers/ide/Makefile	2026-03-08 02:38:24.000000000 +0000
++++ b/drivers/ide/Makefile	2026-03-08 04:03:38.370481581 +0000
+@@ -59,6 +59,7 @@
+ obj-$(CONFIG_BLK_DEV_PIIX)		+= piix.o
+ obj-$(CONFIG_BLK_DEV_RZ1000)		+= rz1000.o
+ obj-$(CONFIG_BLK_DEV_SVWKS)		+= serverworks.o
++obj-$(CONFIG_BLK_DEV_SGIIOC4)		+= sgiioc4.o
+ obj-$(CONFIG_BLK_DEV_SIIMAGE)		+= siimage.o
+ obj-$(CONFIG_BLK_DEV_SIS5513)		+= sis5513.o
+ obj-$(CONFIG_BLK_DEV_SL82C105)		+= sl82c105.o
+diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' drivers.clean/ide/sgiioc4.c drivers/ide/sgiioc4.c
+--- a/drivers/misc/Kconfig	2026-03-08 02:38:24.000000000 +0000
++++ b/drivers/misc/Kconfig	2026-03-08 04:03:38.371481588 +0000
+@@ -125,6 +125,18 @@
+ 	  an Intel Atom (non-netbook) mobile device containing a MIPI
+ 	  P1149.7 standard implementation.
+ 
++config SGI_IOC4
++	tristate "SGI IOC4 Base IO support"
++	depends on PCI
++	---help---
++	  This option enables basic support for the IOC4 chip on certain
++	  SGI IO controller cards (IO9, IO10, and PCI-RT).  This option
++	  does not enable any specific functions on such a card, but provides
++	  necessary infrastructure for other drivers to utilize.
++
++	  If you have an SGI Altix with an IOC4-based card say Y.
++	  Otherwise say N.
++
+ config TIFM_CORE
+ 	tristate "TI Flash Media interface support"
+ 	depends on PCI
+diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' drivers.clean/misc/Makefile drivers/misc/Makefile
+--- a/drivers/misc/Makefile	2026-03-08 02:38:24.000000000 +0000
++++ b/drivers/misc/Makefile	2026-03-08 04:03:38.372481595 +0000
+@@ -21,6 +21,7 @@
+ obj-$(CONFIG_QCOM_FASTRPC)	+= fastrpc.o
+ obj-$(CONFIG_SENSORS_BH1770)	+= bh1770glc.o
+ obj-$(CONFIG_SENSORS_APDS990X)	+= apds990x.o
++obj-$(CONFIG_SGI_IOC4)		+= ioc4.o
+ obj-$(CONFIG_ENCLOSURE_SERVICES) += enclosure.o
+ obj-$(CONFIG_KGDB_TESTS)	+= kgdbts.o
+ obj-$(CONFIG_SGI_XP)		+= sgi-xp/
+diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' drivers.clean/misc/ioc4.c drivers/misc/ioc4.c
+--- a/drivers/tty/serial/Kconfig	2026-03-08 02:38:25.000000000 +0000
++++ b/drivers/tty/serial/Kconfig	2026-03-08 04:03:38.380481650 +0000
+@@ -839,6 +839,16 @@
+ 	  your boot loader (lilo or loadlin) about how to pass options to the
+ 	  kernel at boot time.)
+ 
++config SERIAL_SGI_L1_CONSOLE
++	bool "SGI Altix L1 serial console support"
++	depends on IA64_GENERIC || IA64_SGI_SN2
++	select SERIAL_CORE
++	select SERIAL_CORE_CONSOLE
++	help
++		If you have an SGI Altix and you would like to use the system
++		controller serial port as your console (you want this!),
++		say Y.  Otherwise, say N.
++
+ config SERIAL_PIC32
+ 	tristate "Microchip PIC32 serial support"
+ 	depends on MACH_PIC32
+@@ -956,6 +966,23 @@
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called jsm.
+ 
++config SERIAL_SGI_IOC4
++	tristate "SGI IOC4 controller serial support"
++	depends on (IA64_GENERIC || IA64_SGI_SN2) && SGI_IOC4
++	select SERIAL_CORE
++	help
++		If you have an SGI Altix with an IOC4 based Base IO card
++		and wish to use the serial ports on this card, say Y.
++		Otherwise, say N.
++
++config SERIAL_SGI_IOC3
++	tristate "SGI Altix IOC3 serial support"
++	depends on (IA64_GENERIC || IA64_SGI_SN2) && SGI_IOC3
++	select SERIAL_CORE
++	help
++	  If you have an SGI Altix with an IOC3 serial card,
++	  say Y or M.  Otherwise, say N.
++
+ config SERIAL_MSM
+ 	tristate "MSM on-chip serial port support"
+ 	depends on ARCH_QCOM
+diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' drivers.clean/tty/serial/Makefile drivers/tty/serial/Makefile
+--- a/drivers/tty/serial/Makefile	2026-03-08 02:38:25.000000000 +0000
++++ b/drivers/tty/serial/Makefile	2026-03-08 04:03:38.380481650 +0000
+@@ -41,6 +41,7 @@
+ obj-$(CONFIG_SERIAL_DZ) += dz.o
+ obj-$(CONFIG_SERIAL_ZS) += zs.o
+ obj-$(CONFIG_SERIAL_SH_SCI) += sh-sci.o
++obj-$(CONFIG_SERIAL_SGI_L1_CONSOLE) += sn_console.o
+ obj-$(CONFIG_SERIAL_CPM) += cpm_uart/
+ obj-$(CONFIG_SERIAL_IMX) += imx.o
+ obj-$(CONFIG_SERIAL_MPC52xx) += mpc52xx_uart.o
+@@ -52,6 +53,8 @@
+ obj-$(CONFIG_SERIAL_JSM) += jsm/
+ obj-$(CONFIG_SERIAL_TXX9) += serial_txx9.o
+ obj-$(CONFIG_SERIAL_VR41XX) += vr41xx_siu.o
++obj-$(CONFIG_SERIAL_SGI_IOC4) += ioc4_serial.o
++obj-$(CONFIG_SERIAL_SGI_IOC3) += ioc3_serial.o
+ obj-$(CONFIG_SERIAL_ATMEL) += atmel_serial.o
+ obj-$(CONFIG_SERIAL_UARTLITE) += uartlite.o
+ obj-$(CONFIG_SERIAL_MSM) += msm_serial.o
+diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' drivers.clean/tty/serial/ioc3_serial.c drivers/tty/serial/ioc3_serial.c

@@ -1,0 +1,81 @@
+Subject: [PATCH 3/6] ia64: add SN2 Kconfig and Makefile entries
+
+Build system integration for CONFIG_IA64_SGI_SN2.
+
+  - arch/ia64/Kconfig: Add IA64_SGI_SN2 bool, SGI_SN, SWIOTLB conditional
+    for ARCH_HAS_SYNC_DMA_FOR_CPU, ZONE_DMA32 exclusion, NUMA selects
+  - arch/ia64/Makefile: Add core-$(CONFIG_IA64_SGI_SN2) += arch/ia64/sn/
+
+---
+
+--- a/arch/ia64/Kconfig	2026-03-08 02:47:00.000000000 +0000
++++ b/arch/ia64/Kconfig	2026-03-08 04:03:47.419544143 +0000
+@@ -34,7 +34,7 @@
+ 	select HAVE_MEMBLOCK_NODE_MAP
+ 	select HAVE_VIRT_CPU_ACCOUNTING
+ 	select DMA_NONCOHERENT_MMAP
+-	select ARCH_HAS_SYNC_DMA_FOR_CPU
++	select ARCH_HAS_SYNC_DMA_FOR_CPU if SWIOTLB
+ 	select VIRT_TO_BUS
+ 	select GENERIC_IRQ_PROBE
+ 	select GENERIC_PENDING_IRQ if SMP
+@@ -48,7 +48,7 @@
+ 	select ARCH_THREAD_STACK_ALLOCATOR
+ 	select ARCH_CLOCKSOURCE_DATA
+ 	select GENERIC_TIME_VSYSCALL
+-	select SWIOTLB
++	select SWIOTLB if !IA64_SGI_SN2
+ 	select SYSCTL_ARCH_UNALIGN_NO_WARN
+ 	select HAVE_MOD_ARCH_SPECIFIC
+ 	select MODULES_USE_ELF_RELA
+@@ -71,6 +71,7 @@
+ 
+ config ZONE_DMA32
+ 	def_bool y
++	depends on !IA64_SGI_SN2
+ 
+ config MMU
+ 	bool
+@@ -184,6 +185,21 @@
+ 	default "7" if MCKINLEY
+ 	default "6" if ITANIUM
+ 
++config IA64_SGI_SN2
++	bool "SGI-SN2 (Altix) support"
++	select NUMA
++	select ACPI_NUMA
++	select IA64_UNCACHED_ALLOCATOR
++	help
++	  Selecting this option will add support for SGI Altix (SN2) systems.
++	  This builds a kernel with SN2 platform code including custom I/O,
++	  DMA, IRQ, and NUMA support for the SHUB interconnect.  If you have
++	  an SGI Altix system, say Y.  Otherwise, say N.
++
++config SGI_SN
++	def_bool y
++	depends on IA64_SGI_SN2
++
+ config IA64_SGI_UV
+ 	bool "SGI-UV support"
+ 	help
+@@ -410,6 +426,8 @@
+ 	  the "force" module parameter, e.g., with the "aml_nfw.force"
+ 	  kernel command line option.
+ 
++source "drivers/sn/Kconfig"
++
+ config KEXEC
+ 	bool "kexec system call"
+ 	depends on !SMP || HOTPLUG_CPU
+diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' arch.clean/ia64/Makefile arch/ia64/Makefile
+--- a/arch/ia64/Makefile	2026-03-08 02:47:00.000000000 +0000
++++ b/arch/ia64/Makefile	2026-03-08 04:03:38.243480703 +0000
+@@ -50,6 +50,7 @@
+ 
+ libs-y				+= arch/ia64/lib/
+ core-y				+= arch/ia64/kernel/ arch/ia64/mm/
++core-$(CONFIG_IA64_SGI_SN2)	+= arch/ia64/sn/
+ core-$(CONFIG_IA64_SGI_UV)	+= arch/ia64/uv/
+ 
+ drivers-y			+= arch/ia64/pci/ arch/ia64/hp/common/
+diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' arch.clean/ia64/include/asm/hw_irq.h arch/ia64/include/asm/hw_irq.h
