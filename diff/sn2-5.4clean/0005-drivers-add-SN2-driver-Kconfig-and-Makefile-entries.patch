@@ -1,6 +1,6 @@
-From 8cd525a8044cba12905ca55f03dfa74bb7d5d224 Mon Sep 17 00:00:00 2001
+From b83bbb3120932c855494800f9bf6c39add1a15eb Mon Sep 17 00:00:00 2001
 From: SN2 Dev <sn2@dev>
-Date: Sun, 8 Mar 2026 00:33:13 +0000
+Date: Sun, 8 Mar 2026 02:08:43 +0000
 Subject: [PATCH 5/6] drivers: add SN2 driver Kconfig and Makefile entries
 
 ---

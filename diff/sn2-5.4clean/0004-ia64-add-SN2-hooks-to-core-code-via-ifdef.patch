@@ -1,23 +1,23 @@
-From 6ce6457bf1218227e8e579182ed75b87c15e36e4 Mon Sep 17 00:00:00 2001
+From 6e8e2a8d75005f3f0eb862d058b5a9f3a7587bd3 Mon Sep 17 00:00:00 2001
 From: SN2 Dev <sn2@dev>
-Date: Sun, 8 Mar 2026 00:32:58 +0000
+Date: Sun, 8 Mar 2026 02:08:43 +0000
 Subject: [PATCH 4/6] ia64: add SN2 hooks to core code via ifdef
 
 ---
- arch/ia64/include/asm/hw_irq.h    |  8 +++++
- arch/ia64/include/asm/io.h        | 53 +++++++++++++++++++++++++++++++
- arch/ia64/include/asm/mmiowb.h    |  5 +++
- arch/ia64/kernel/acpi.c           | 10 +++---
- arch/ia64/kernel/irq_ia64.c       |  8 ++++-
- arch/ia64/kernel/msi_ia64.c       | 14 ++++++++
- arch/ia64/kernel/sal.c            |  8 +++++
- arch/ia64/kernel/setup.c          | 39 ++++++++++++++++++++---
- arch/ia64/kernel/smpboot.c        |  8 +++++
- arch/ia64/kernel/uncached.c       |  8 +++++
- arch/ia64/mm/tlb.c                |  6 ++++
- arch/ia64/pci/pci.c               |  6 ++++
- arch/ia64/sn/kernel/sn2/sn2_smp.c |  9 ++++++
- 13 files changed, 172 insertions(+), 10 deletions(-)
+ arch/ia64/include/asm/hw_irq.h |  8 +++++
+ arch/ia64/include/asm/io.h     | 53 ++++++++++++++++++++++++++++++++++
+ arch/ia64/include/asm/mmiowb.h |  5 ++++
+ arch/ia64/kernel/acpi.c        | 10 ++++---
+ arch/ia64/kernel/irq_ia64.c    |  8 ++++-
+ arch/ia64/kernel/msi_ia64.c    | 14 +++++++++
+ arch/ia64/kernel/sal.c         |  8 +++++
+ arch/ia64/kernel/setup.c       | 39 +++++++++++++++++++++----
+ arch/ia64/kernel/smpboot.c     |  8 +++++
+ arch/ia64/kernel/uncached.c    |  8 +++++
+ arch/ia64/mm/init.c            |  2 ++
+ arch/ia64/mm/tlb.c             |  6 ++++
+ arch/ia64/pci/pci.c            |  6 ++++
+ 13 files changed, 165 insertions(+), 10 deletions(-)
 
 diff --git a/arch/ia64/include/asm/hw_irq.h b/arch/ia64/include/asm/hw_irq.h
 index e6385c7..5e2746f 100644
@@ -379,6 +379,26 @@ index 3776ef2..34c829d 100644
  
  	/* flush the just introduced uncached translation from the TLB */
  	local_flush_tlb_all();
+diff --git a/arch/ia64/mm/init.c b/arch/ia64/mm/init.c
+index bf9df26..1552537 100644
+--- a/arch/ia64/mm/init.c
++++ b/arch/ia64/mm/init.c
+@@ -73,6 +73,7 @@ __ia64_sync_icache_dcache (pte_t pte)
+  * DMA can be marked as "clean" so that lazy_mmu_prot_update() doesn't have to
+  * flush them when they get mapped into an executable vm-area.
+  */
++#ifdef CONFIG_ARCH_HAS_SYNC_DMA_FOR_CPU
+ void arch_sync_dma_for_cpu(struct device *dev, phys_addr_t paddr,
+ 		size_t size, enum dma_data_direction dir)
+ {
+@@ -82,6 +83,7 @@ void arch_sync_dma_for_cpu(struct device *dev, phys_addr_t paddr,
+ 		set_bit(PG_arch_1, &pfn_to_page(pfn)->flags);
+ 	} while (++pfn <= PHYS_PFN(paddr + size - 1));
+ }
++#endif
+ 
+ inline void
+ ia64_set_rbs_bot (void)
 diff --git a/arch/ia64/mm/tlb.c b/arch/ia64/mm/tlb.c
 index 72cc568..1de779b 100644
 --- a/arch/ia64/mm/tlb.c
@@ -414,23 +434,6 @@ index 211757e..baaf029 100644
  }
  
  void pcibios_add_bus(struct pci_bus *bus)
-diff --git a/arch/ia64/sn/kernel/sn2/sn2_smp.c b/arch/ia64/sn/kernel/sn2/sn2_smp.c
-index b510f4f..7241f73 100644
---- a/arch/ia64/sn/kernel/sn2/sn2_smp.c
-+++ b/arch/ia64/sn/kernel/sn2/sn2_smp.c
-@@ -575,3 +575,12 @@ module_init(sn2_ptc_init);
- module_exit(sn2_ptc_exit);
- #endif /* CONFIG_PROC_FS */
- 
-+/*
-+ * Override the weak default ia64_send_ipi with SN2's SHUB-based IPI.
-+ * This avoids needing machvec dispatch for IPI sending.
-+ */
-+void ia64_send_ipi(int cpuid, int vector, int delivery_mode, int redirect)
-+{
-+	sn2_send_IPI(cpuid, vector, delivery_mode, redirect);
-+}
-+
 -- 
 2.43.0
 

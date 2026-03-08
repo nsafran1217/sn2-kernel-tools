@@ -1,6 +1,6 @@
-From 834f27f6d150f9055aa61ef3e42fde95d17db7f5 Mon Sep 17 00:00:00 2001
+From 7c3f6f5774b38ee2efb04079d7790aaa4b71f1a3 Mon Sep 17 00:00:00 2001
 From: SN2 Dev <sn2@dev>
-Date: Sun, 8 Mar 2026 00:23:35 +0000
+Date: Sun, 8 Mar 2026 02:08:42 +0000
 Subject: [PATCH 1/6] Drop-in: SN2 platform, headers, drivers, misc
 
 ---
@@ -52,26 +52,26 @@ Subject: [PATCH 1/6] Drop-in: SN2 platform, headers, drivers, misc
  arch/ia64/sn/kernel/huberror.c                |  220 ++
  arch/ia64/sn/kernel/idle.c                    |   30 +
  arch/ia64/sn/kernel/io_acpi_init.c            |  513 +++
- arch/ia64/sn/kernel/io_common.c               |  561 +++
+ arch/ia64/sn/kernel/io_common.c               |  562 +++
  arch/ia64/sn/kernel/io_init.c                 |  311 ++
  arch/ia64/sn/kernel/iomv.c                    |   86 +
  arch/ia64/sn/kernel/irq.c                     |  489 +++
  arch/ia64/sn/kernel/klconflib.c               |  107 +
- arch/ia64/sn/kernel/mca.c                     |  144 +
+ arch/ia64/sn/kernel/mca.c                     |  145 +
  arch/ia64/sn/kernel/msi_sn.c                  |  238 ++
  arch/ia64/sn/kernel/pio_phys.S                |   71 +
- arch/ia64/sn/kernel/setup.c                   |  786 ++++
+ arch/ia64/sn/kernel/setup.c                   |  795 ++++
  arch/ia64/sn/kernel/sn2/Makefile              |   13 +
  arch/ia64/sn/kernel/sn2/cache.c               |   41 +
  arch/ia64/sn/kernel/sn2/io.c                  |  101 +
- arch/ia64/sn/kernel/sn2/prominfo_proc.c       |  207 +
+ arch/ia64/sn/kernel/sn2/prominfo_proc.c       |  208 +
  arch/ia64/sn/kernel/sn2/ptc_deadlock.S        |   92 +
- arch/ia64/sn/kernel/sn2/sn2_smp.c             |  577 +++
- arch/ia64/sn/kernel/sn2/sn_hwperf.c           | 1004 +++++
+ arch/ia64/sn/kernel/sn2/sn2_smp.c             |  587 +++
+ arch/ia64/sn/kernel/sn2/sn_hwperf.c           | 1005 +++++
  arch/ia64/sn/kernel/sn2/sn_proc_fs.c          |   69 +
  arch/ia64/sn/kernel/sn2/timer.c               |   61 +
  arch/ia64/sn/kernel/sn2/timer_interrupt.c     |   60 +
- arch/ia64/sn/kernel/tiocx.c                   |  569 +++
+ arch/ia64/sn/kernel/tiocx.c                   |  570 +++
  arch/ia64/sn/pci/Makefile                     |   10 +
  arch/ia64/sn/pci/pci_dma.c                    |  446 +++
  arch/ia64/sn/pci/pcibr/Makefile               |   13 +
@@ -82,22 +82,22 @@ Subject: [PATCH 1/6] Drop-in: SN2 platform, headers, drivers, misc
  arch/ia64/sn/pci/tioca_provider.c             |  677 ++++
  arch/ia64/sn/pci/tioce_provider.c             | 1062 ++++++
  drivers/char/agp/sgi-agp.c                    |  338 ++
- drivers/char/mbcs.c                           |  831 ++++
+ drivers/char/mbcs.c                           |  832 ++++
  drivers/char/mbcs.h                           |  553 +++
- drivers/char/snsc.c                           |  469 +++
+ drivers/char/snsc.c                           |  470 +++
  drivers/char/snsc.h                           |   92 +
  drivers/char/snsc_event.c                     |  303 ++
  drivers/ide/sgiioc4.c                         |  630 ++++
  drivers/misc/ioc4.c                           |  498 +++
  drivers/sn/Kconfig                            |   22 +
  drivers/sn/Makefile                           |    7 +
- drivers/sn/ioc3.c                             |  844 +++++
+ drivers/sn/ioc3.c                             |  846 +++++
  drivers/tty/serial/ioc3_serial.c              | 2195 +++++++++++
  drivers/tty/serial/ioc4_serial.c              | 2955 +++++++++++++++
- drivers/tty/serial/sn_console.c               | 1036 +++++
+ drivers/tty/serial/sn_console.c               | 1037 +++++
  include/linux/ioc4.h                          |  184 +
  include/linux/pci_ids.h                       |    1 +
- 93 files changed, 32080 insertions(+), 1 deletion(-)
+ 93 files changed, 32109 insertions(+), 1 deletion(-)
  create mode 100644 Documentation/driver-api/sgi-ioc4.rst
  create mode 100644 arch/ia64/include/asm/sn/acpi.h
  create mode 100644 arch/ia64/include/asm/sn/addrs.h
@@ -12708,10 +12708,10 @@ index 0000000..c31fe63
 +}
 diff --git a/arch/ia64/sn/kernel/io_common.c b/arch/ia64/sn/kernel/io_common.c
 new file mode 100644
-index 0000000..d468473
+index 0000000..be8279c
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/io_common.c
-@@ -0,0 +1,561 @@
+@@ -0,0 +1,562 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
@@ -12742,6 +12742,7 @@ index 0000000..d468473
 +#include <linux/acpi.h>
 +#include <asm/sn/sn2/sn_hwperf.h>
 +#include <asm/sn/acpi.h>
++#include <asm/machvec.h>
 +
 +extern void sn_init_cpei_timer(void);
 +extern void register_sn_procfs(void);
@@ -14292,10 +14293,10 @@ index 0000000..87682b4
 +}
 diff --git a/arch/ia64/sn/kernel/mca.c b/arch/ia64/sn/kernel/mca.c
 new file mode 100644
-index 0000000..bc3bd93
+index 0000000..0157e04
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/mca.c
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,145 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
@@ -14312,6 +14313,7 @@ index 0000000..bc3bd93
 +#include <asm/mca.h>
 +#include <asm/sal.h>
 +#include <asm/sn/sn_sal.h>
++#include <asm/machvec.h>
 +
 +/*
 + * Interval for calling SAL to poll for errors that do NOT cause error
@@ -14763,10 +14765,10 @@ index 0000000..3c7d48d
 +
 diff --git a/arch/ia64/sn/kernel/setup.c b/arch/ia64/sn/kernel/setup.c
 new file mode 100644
-index 0000000..e6a5049
+index 0000000..d31dc13
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/setup.c
-@@ -0,0 +1,786 @@
+@@ -0,0 +1,795 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
@@ -15257,6 +15259,15 @@ index 0000000..e6a5049
 +	sn_timer_init();
 +
 +	/*
++	 * Register SN2 DMA operations.  Must be done before any
++	 * drivers that use DMA are initialized.
++	 */
++	{
++		extern void sn_dma_init(void);
++		sn_dma_init();
++	}
++
++	/*
 +	 * set pm_power_off to a SAL call to allow
 +	 * sn machines to power off. The SAL call can be replaced
 +	 * by an ACPI interface call when ACPI is fully implemented
@@ -15728,10 +15739,10 @@ index 0000000..a12c058
 +#endif
 diff --git a/arch/ia64/sn/kernel/sn2/prominfo_proc.c b/arch/ia64/sn/kernel/sn2/prominfo_proc.c
 new file mode 100644
-index 0000000..e15457b
+index 0000000..104d594
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/sn2/prominfo_proc.c
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,208 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
@@ -15751,6 +15762,7 @@ index 0000000..e15457b
 +#include <asm/sn/sn_sal.h>
 +#include <asm/sn/sn_cpuid.h>
 +#include <asm/sn/addrs.h>
++#include <asm/machvec.h>
 +
 +MODULE_DESCRIPTION("PROM version reporting for /proc");
 +MODULE_AUTHOR("Chad Talbott");
@@ -16039,10 +16051,10 @@ index 0000000..bebbcc4
 +	.endp sn2_ptc_deadlock_recovery_core
 diff --git a/arch/ia64/sn/kernel/sn2/sn2_smp.c b/arch/ia64/sn/kernel/sn2/sn2_smp.c
 new file mode 100644
-index 0000000..b510f4f
+index 0000000..78aa45d
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/sn2/sn2_smp.c
-@@ -0,0 +1,577 @@
+@@ -0,0 +1,587 @@
 +/*
 + * SN2 Platform specific SMP Support
 + *
@@ -16074,6 +16086,7 @@ index 0000000..b510f4f
 +#include <asm/sal.h>
 +#include <asm/delay.h>
 +#include <asm/io.h>
++#include <asm/machvec.h>
 +#include <asm/smp.h>
 +#include <asm/tlb.h>
 +#include <asm/numa.h>
@@ -16620,12 +16633,21 @@ index 0000000..b510f4f
 +module_exit(sn2_ptc_exit);
 +#endif /* CONFIG_PROC_FS */
 +
++/*
++ * Override the weak default ia64_send_ipi with SN2's SHUB-based IPI.
++ * This avoids needing machvec dispatch for IPI sending.
++ */
++void ia64_send_ipi(int cpuid, int vector, int delivery_mode, int redirect)
++{
++	sn2_send_IPI(cpuid, vector, delivery_mode, redirect);
++}
++
 diff --git a/arch/ia64/sn/kernel/sn2/sn_hwperf.c b/arch/ia64/sn/kernel/sn2/sn_hwperf.c
 new file mode 100644
-index 0000000..55febd6
+index 0000000..abfd221
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/sn2/sn_hwperf.c
-@@ -0,0 +1,1004 @@
+@@ -0,0 +1,1005 @@
 +/* 
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
@@ -16673,6 +16695,7 @@ index 0000000..55febd6
 +#include <asm/sn/geo.h>
 +#include <asm/sn/sn2/sn_hwperf.h>
 +#include <asm/sn/addrs.h>
++#include <asm/machvec.h>
 +
 +static void *sn_hwperf_salheap = NULL;
 +static int sn_hwperf_obj_cnt = 0;
@@ -17840,10 +17863,10 @@ index 0000000..103d6ea
 +}
 diff --git a/arch/ia64/sn/kernel/tiocx.c b/arch/ia64/sn/kernel/tiocx.c
 new file mode 100644
-index 0000000..32d0380
+index 0000000..36b9953
 --- /dev/null
 +++ b/arch/ia64/sn/kernel/tiocx.c
-@@ -0,0 +1,569 @@
+@@ -0,0 +1,570 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
@@ -17869,6 +17892,7 @@ index 0000000..32d0380
 +#include <asm/sn/tiocx.h>
 +#include <asm/sn/l1.h>
 +#include <asm/sn/module.h>
++#include <asm/machvec.h>
 +#include "tio.h"
 +#include "xtalk/xwidgetdev.h"
 +#include "xtalk/hubdev.h"
@@ -22161,10 +22185,10 @@ index 0000000..e7d5bdc
 +MODULE_LICENSE("GPL and additional rights");
 diff --git a/drivers/char/mbcs.c b/drivers/char/mbcs.c
 new file mode 100644
-index 0000000..0a31b60
+index 0000000..a18788b
 --- /dev/null
 +++ b/drivers/char/mbcs.c
-@@ -0,0 +1,831 @@
+@@ -0,0 +1,832 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
@@ -22200,6 +22224,7 @@ index 0000000..0a31b60
 +#include <asm/sn/addrs.h>
 +#include <asm/sn/intr.h>
 +#include <asm/sn/tiocx.h>
++#include <asm/machvec.h>
 +#include "mbcs.h"
 +
 +#define MBCS_DEBUG 0
@@ -23557,10 +23582,10 @@ index 0000000..1a36884
 +#endif				// __MBCS_H__
 diff --git a/drivers/char/snsc.c b/drivers/char/snsc.c
 new file mode 100644
-index 0000000..5918ea7
+index 0000000..315ea04
 --- /dev/null
 +++ b/drivers/char/snsc.c
-@@ -0,0 +1,469 @@
+@@ -0,0 +1,470 @@
 +/*
 + * SN Platform system controller communication support
 + *
@@ -23590,6 +23615,7 @@ index 0000000..5918ea7
 +#include <asm/sn/module.h>
 +#include <asm/sn/geo.h>
 +#include <asm/sn/nodepda.h>
++#include <asm/machvec.h>
 +#include "snsc.h"
 +
 +#define SYSCTL_BASENAME	"snsc"
@@ -25620,10 +25646,10 @@ index 0000000..f0e809a
 +obj-$(CONFIG_SGI_IOC3) += ioc3.o
 diff --git a/drivers/sn/ioc3.c b/drivers/sn/ioc3.c
 new file mode 100644
-index 0000000..358025a
+index 0000000..08e532d
 --- /dev/null
 +++ b/drivers/sn/ioc3.c
-@@ -0,0 +1,844 @@
+@@ -0,0 +1,846 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * SGI IOC3 master driver and IRQ demuxer
@@ -25644,6 +25670,8 @@ index 0000000..358025a
 +#include <linux/ioc3.h>
 +#include <linux/rwsem.h>
 +#include <linux/slab.h>
++
++#include <asm/machvec.h>
 +
 +#define IOC3_PCI_SIZE 0x100000
 +
@@ -31632,10 +31660,10 @@ index 0000000..db5b979
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/tty/serial/sn_console.c b/drivers/tty/serial/sn_console.c
 new file mode 100644
-index 0000000..2834933
+index 0000000..718f3e6
 --- /dev/null
 +++ b/drivers/tty/serial/sn_console.c
-@@ -0,0 +1,1036 @@
+@@ -0,0 +1,1037 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * C-Brick Serial Port (and console) driver for SGI Altix machines.
@@ -31673,6 +31701,7 @@ index 0000000..2834933
 +#include <asm/io.h>
 +#include <asm/sn/simulator.h>
 +#include <asm/sn/sn_sal.h>
++#include <asm/machvec.h>
 +
 +/* number of characters we can transmit to the SAL console at a time */
 +#define SN_SAL_MAX_CHARS 120

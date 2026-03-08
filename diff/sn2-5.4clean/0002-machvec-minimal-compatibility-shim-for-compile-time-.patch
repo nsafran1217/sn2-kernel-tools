@@ -1,19 +1,19 @@
-From e28376a40e3db0f4bdeee295765acf8aeba3f2d4 Mon Sep 17 00:00:00 2001
+From c5665d9fd61b9553149ad5473cb14adf970cf74e Mon Sep 17 00:00:00 2001
 From: SN2 Dev <sn2@dev>
-Date: Sun, 8 Mar 2026 00:24:23 +0000
+Date: Sun, 8 Mar 2026 02:08:43 +0000
 Subject: [PATCH 2/6] machvec: minimal compatibility shim for compile-time SN2
 
 ---
- arch/ia64/include/asm/machvec.h | 35 +++++++++++++++++++++++++++++++++
- 1 file changed, 35 insertions(+)
+ arch/ia64/include/asm/machvec.h | 37 +++++++++++++++++++++++++++++++++
+ 1 file changed, 37 insertions(+)
  create mode 100644 arch/ia64/include/asm/machvec.h
 
 diff --git a/arch/ia64/include/asm/machvec.h b/arch/ia64/include/asm/machvec.h
 new file mode 100644
-index 0000000..3970f94
+index 0000000..c300ea0
 --- /dev/null
 +++ b/arch/ia64/include/asm/machvec.h
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,37 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Minimal machine vector compatibility shim for SN2 support.
@@ -36,6 +36,7 @@ index 0000000..3970f94
 +}
 +
 +#define ia64_platform_name	"sn2"
++#define ia64_platform_is	ia64_platform_is
 +
 +#else /* !CONFIG_IA64_SGI_SN2 */
 +
@@ -45,6 +46,7 @@ index 0000000..3970f94
 +}
 +
 +#define ia64_platform_name	"dig"
++#define ia64_platform_is	ia64_platform_is
 +
 +#endif /* CONFIG_IA64_SGI_SN2 */
 +

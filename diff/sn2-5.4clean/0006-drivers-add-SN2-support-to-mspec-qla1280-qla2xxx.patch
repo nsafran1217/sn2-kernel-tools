@@ -1,17 +1,17 @@
-From bdc5ee3c8b5f9ee5847f59f7128fb8aa76066875 Mon Sep 17 00:00:00 2001
+From e0c5153e6381af85c2f3ea43a41cc098888fc07c Mon Sep 17 00:00:00 2001
 From: SN2 Dev <sn2@dev>
-Date: Sun, 8 Mar 2026 00:33:24 +0000
+Date: Sun, 8 Mar 2026 02:08:44 +0000
 Subject: [PATCH 6/6] drivers: add SN2 support to mspec, qla1280, qla2xxx
 
 ---
- drivers/char/mspec.c            | 155 +++++++++++++++++++++++++++++---
+ drivers/char/mspec.c            | 156 +++++++++++++++++++++++++++++---
  drivers/scsi/qla1280.c          |  37 ++++++++
  drivers/scsi/qla1280.h          |   3 +
- drivers/scsi/qla2xxx/qla_init.c |  14 +++
- 4 files changed, 198 insertions(+), 11 deletions(-)
+ drivers/scsi/qla2xxx/qla_init.c |  18 ++++
+ 4 files changed, 203 insertions(+), 11 deletions(-)
 
 diff --git a/drivers/char/mspec.c b/drivers/char/mspec.c
-index a9d9f07..e75c9df 100644
+index a9d9f07..592bfa1 100644
 --- a/drivers/char/mspec.c
 +++ b/drivers/char/mspec.c
 @@ -9,8 +9,11 @@
@@ -28,7 +28,7 @@ index a9d9f07..e75c9df 100644
   *
   * Uncached are used for memory write combining feature of the ia64
   * cpu.
-@@ -43,8 +46,16 @@
+@@ -43,8 +46,17 @@
  #include <linux/atomic.h>
  #include <asm/tlbflush.h>
  #include <asm/uncached.h>
@@ -39,13 +39,14 @@ index a9d9f07..e75c9df 100644
 +#include <asm/sn/io.h>
 +#include <asm/sn/bte.h>
 +#include <asm/sn/shubio.h>
++#include <asm/machvec.h>
  
  
 +#define FETCHOP_ID	"SGI Fetchop,"
  #define CACHED_ID	"Cached,"
  #define UNCACHED_ID	"Uncached"
  #define REVISION	"4.0"
-@@ -54,10 +65,17 @@
+@@ -54,10 +66,17 @@
   * Page types allocated by the device.
   */
  enum mspec_page_type {
@@ -64,7 +65,7 @@ index a9d9f07..e75c9df 100644
  /*
   * One of these structures is allocated when an mspec region is mmaped. The
   * structure is pointed to by the vma->vm_private_data field in the vma struct.
-@@ -78,6 +96,39 @@ struct vma_data {
+@@ -78,6 +97,39 @@ struct vma_data {
  	unsigned long maddr[0];	/* Array of MSPEC addresses. */
  };
  
@@ -104,7 +105,7 @@ index a9d9f07..e75c9df 100644
  /*
   * mspec_open
   *
-@@ -122,8 +173,11 @@ mspec_close(struct vm_area_struct *vma)
+@@ -122,8 +174,11 @@ mspec_close(struct vm_area_struct *vma)
  		 */
  		my_page = vdata->maddr[index];
  		vdata->maddr[index] = 0;
@@ -118,7 +119,7 @@ index a9d9f07..e75c9df 100644
  	}
  
  	kvfree(vdata);
-@@ -159,7 +213,11 @@ mspec_fault(struct vm_fault *vmf)
+@@ -159,7 +214,11 @@ mspec_fault(struct vm_fault *vmf)
  		spin_unlock(&vdata->lock);
  	}
  
@@ -131,7 +132,7 @@ index a9d9f07..e75c9df 100644
  	pfn = paddr >> PAGE_SHIFT;
  
  	return vmf_insert_pfn(vmf->vma, vmf->address, pfn);
-@@ -211,13 +269,19 @@ mspec_mmap(struct file *file, struct vm_area_struct *vma,
+@@ -211,13 +270,19 @@ mspec_mmap(struct file *file, struct vm_area_struct *vma,
  	vma->vm_private_data = vdata;
  
  	vma->vm_flags |= VM_IO | VM_PFNMAP | VM_DONTEXPAND | VM_DONTDUMP;
@@ -152,7 +153,7 @@ index a9d9f07..e75c9df 100644
  static int
  cached_mmap(struct file *file, struct vm_area_struct *vma)
  {
-@@ -230,6 +294,18 @@ uncached_mmap(struct file *file, struct vm_area_struct *vma)
+@@ -230,6 +295,18 @@ uncached_mmap(struct file *file, struct vm_area_struct *vma)
  	return mspec_mmap(file, vma, MSPEC_UNCACHED);
  }
  
@@ -171,7 +172,7 @@ index a9d9f07..e75c9df 100644
  static const struct file_operations cached_fops = {
  	.owner = THIS_MODULE,
  	.mmap = cached_mmap,
-@@ -263,32 +339,89 @@ static int __init
+@@ -263,32 +340,89 @@ static int __init
  mspec_init(void)
  {
  	int ret;
@@ -266,7 +267,7 @@ index a9d9f07..e75c9df 100644
  
  module_init(mspec_init);
 diff --git a/drivers/scsi/qla1280.c b/drivers/scsi/qla1280.c
-index 832af42..e5760c4 100644
+index 832af42..6cabaa7 100644
 --- a/drivers/scsi/qla1280.c
 +++ b/drivers/scsi/qla1280.c
 @@ -357,6 +357,10 @@
@@ -285,7 +286,7 @@ index 832af42..e5760c4 100644
  #define NVRAM_DELAY()			udelay(500)	/* 2 microseconds */
  
 +#if defined(__ia64__) && !defined(ia64_platform_is)
-+#define ia64_platform_is(foo)		(!strcmp(x, platform_name))
++#include <asm/machvec.h>
 +#endif
 +
 +
@@ -363,10 +364,21 @@ index a1a8aef..b496206 100644
  
  	struct nvram nvram;
 diff --git a/drivers/scsi/qla2xxx/qla_init.c b/drivers/scsi/qla2xxx/qla_init.c
-index 1d04131..41ba140 100644
+index 1d04131..67df84d 100644
 --- a/drivers/scsi/qla2xxx/qla_init.c
 +++ b/drivers/scsi/qla2xxx/qla_init.c
-@@ -4538,6 +4538,20 @@ qla2x00_nvram_config(scsi_qla_host_t *vha)
+@@ -17,6 +17,10 @@
+ #include <asm/prom.h>
+ #endif
+ 
++#ifdef CONFIG_IA64
++#include <asm/machvec.h>
++#endif
++
+ #include <target/target_core_base.h>
+ #include "qla_target.h"
+ 
+@@ -4538,6 +4542,20 @@ qla2x00_nvram_config(scsi_qla_host_t *vha)
  		rval = 1;
  	}
  
