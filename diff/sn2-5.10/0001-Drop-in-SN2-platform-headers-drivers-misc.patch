@@ -32652,3 +32652,223 @@ diff -ruN --no-dereference a/Documentation/driver-api/sgi-ioc4.rst b/Documentati
 +This is the serial driver for IOC4.  There's not much to say about it
 +other than it hooks up to the ioc4 driver via the appropriate registration,
 +probe, and remove functions.
+--- a/arch/ia64/sn/kernel/io_init.c
++++ b/arch/ia64/sn/kernel/io_init.c
+@@ -150,6 +150,7 @@
+ sn_io_slot_fixup(struct pci_dev *dev)
+ {
+ 	int idx;
++	int ret;
+ 	struct resource *res;
+ 	unsigned long size;
+ 	struct pcidev_info *pcidev_info;
+@@ -198,10 +199,23 @@
+ 		/* Ensure resource is marked as assigned so parent lookups succeed */
+ 		res->flags &= ~IORESOURCE_UNSET;
+ 
+-		if (res->flags & IORESOURCE_IO)
+-			insert_resource(&ioport_resource, res);
+-		else
+-			insert_resource(&iomem_resource, res);
++		if (res->flags & IORESOURCE_IO) {
++			ret = insert_resource(&ioport_resource, res);
++			if (ret) {
++				dev_warn(&dev->dev,
++					 "SN: failed to insert IO resource %d %pR, forcing parent\n",
++					 idx, res);
++				res->parent = &ioport_resource;
++			}
++		} else {
++			ret = insert_resource(&iomem_resource, res);
++			if (ret) {
++				dev_warn(&dev->dev,
++					 "SN: failed to insert MEM resource %d %pR, forcing parent\n",
++					 idx, res);
++				res->parent = &iomem_resource;
++			}
++		}
+ 		/*
+ 		 * If ROM, mark as shadowed in PROM.
+ 		 */
+--- a/arch/ia64/sn/pci/pci_dma.c
++++ b/arch/ia64/sn/pci/pci_dma.c
+@@ -83,10 +83,16 @@
+ 	unsigned long phys_addr;
+ 	int node;
+ 	struct pci_dev *pdev = to_pci_dev(dev);
+-	struct sn_pcibus_provider *provider = SN_PCIDEV_BUSPROVIDER(pdev);
++	struct pcidev_info *pcidev_info;
++	struct sn_pcibus_provider *provider;
+ 
+ 	BUG_ON(!dev_is_pci(dev));
+ 
++	pcidev_info = SN_PCIDEV_INFO(pdev);
++	if (unlikely(!pcidev_info))
++		return NULL;
++	provider = pcidev_info->pdi_provider;
++
+ 	/*
+ 	 * Allocate the memory.
+ 	 */
+@@ -141,11 +147,16 @@
+ 				 dma_addr_t dma_handle, unsigned long attrs)
+ {
+ 	struct pci_dev *pdev = to_pci_dev(dev);
+-	struct sn_pcibus_provider *provider = SN_PCIDEV_BUSPROVIDER(pdev);
++	struct pcidev_info *pcidev_info;
++	struct sn_pcibus_provider *provider;
+ 
+ 	BUG_ON(!dev_is_pci(dev));
+ 
+-	provider->dma_unmap(pdev, dma_handle, 0);
++	pcidev_info = SN_PCIDEV_INFO(pdev);
++	if (likely(pcidev_info)) {
++		provider = pcidev_info->pdi_provider;
++		provider->dma_unmap(pdev, dma_handle, 0);
++	}
+ 	free_pages((unsigned long)cpu_addr, get_order(size));
+ }
+ 
+@@ -182,10 +193,16 @@
+ 	dma_addr_t dma_addr;
+ 	unsigned long phys_addr;
+ 	struct pci_dev *pdev = to_pci_dev(dev);
+-	struct sn_pcibus_provider *provider = SN_PCIDEV_BUSPROVIDER(pdev);
++	struct pcidev_info *pcidev_info;
++	struct sn_pcibus_provider *provider;
+ 
+ 	BUG_ON(!dev_is_pci(dev));
+ 
++	pcidev_info = SN_PCIDEV_INFO(pdev);
++	if (unlikely(!pcidev_info))
++		return DMA_MAPPING_ERROR;
++	provider = pcidev_info->pdi_provider;
++
+ 	phys_addr = __pa(cpu_addr);
+ 	if (attrs & DMA_ATTR_WRITE_BARRIER)
+ 		dma_addr = provider->dma_map_consistent(pdev, phys_addr,
+@@ -218,10 +235,16 @@
+ 			      unsigned long attrs)
+ {
+ 	struct pci_dev *pdev = to_pci_dev(dev);
+-	struct sn_pcibus_provider *provider = SN_PCIDEV_BUSPROVIDER(pdev);
++	struct pcidev_info *pcidev_info;
++	struct sn_pcibus_provider *provider;
+ 
+ 	BUG_ON(!dev_is_pci(dev));
+ 
++	pcidev_info = SN_PCIDEV_INFO(pdev);
++	if (unlikely(!pcidev_info))
++		return;
++	provider = pcidev_info->pdi_provider;
++
+ 	provider->dma_unmap(pdev, dma_addr, dir);
+ }
+ 
+@@ -241,11 +264,17 @@
+ {
+ 	int i;
+ 	struct pci_dev *pdev = to_pci_dev(dev);
+-	struct sn_pcibus_provider *provider = SN_PCIDEV_BUSPROVIDER(pdev);
++	struct pcidev_info *pcidev_info;
++	struct sn_pcibus_provider *provider;
+ 	struct scatterlist *sg;
+ 
+ 	BUG_ON(!dev_is_pci(dev));
+ 
++	pcidev_info = SN_PCIDEV_INFO(pdev);
++	if (unlikely(!pcidev_info))
++		return;
++	provider = pcidev_info->pdi_provider;
++
+ 	for_each_sg(sgl, sg, nhwentries, i) {
+ 		provider->dma_unmap(pdev, sg->dma_address, dir);
+ 		sg->dma_address = (dma_addr_t) NULL;
+@@ -275,11 +304,17 @@
+ 	unsigned long phys_addr;
+ 	struct scatterlist *saved_sg = sgl, *sg;
+ 	struct pci_dev *pdev = to_pci_dev(dev);
+-	struct sn_pcibus_provider *provider = SN_PCIDEV_BUSPROVIDER(pdev);
++	struct pcidev_info *pcidev_info;
++	struct sn_pcibus_provider *provider;
+ 	int i;
+ 
+ 	BUG_ON(!dev_is_pci(dev));
+ 
++	pcidev_info = SN_PCIDEV_INFO(pdev);
++	if (unlikely(!pcidev_info))
++		return 0;
++	provider = pcidev_info->pdi_provider;
++
+ 	/*
+ 	 * Setup a DMA address for each entry in the scatterlist.
+ 	 */
+--- a/arch/ia64/sn/pci/pcibr/pcibr_dma.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
+@@ -208,8 +208,12 @@
+ pcibr_dma_unmap(struct pci_dev *hwdev, dma_addr_t dma_handle, int direction)
+ {
+ 	struct pcidev_info *pcidev_info = SN_PCIDEV_INFO(hwdev);
+-	struct pcibus_info *pcibus_info =
+-	    (struct pcibus_info *)pcidev_info->pdi_pcibus_info;
++	struct pcibus_info *pcibus_info;
++
++	if (!pcidev_info)
++		return;
++
++	pcibus_info = (struct pcibus_info *)pcidev_info->pdi_pcibus_info;
+ 
+ 	if (IS_PCI32_MAPPED(dma_handle)) {
+ 		int ate_index;
+@@ -359,6 +363,9 @@
+ 	dma_addr_t dma_handle;
+ 	struct pcidev_info *pcidev_info = SN_PCIDEV_INFO(hwdev);
+ 
++	if (!pcidev_info)
++		return 0;
++
+ 	/* SN cannot support DMA addresses smaller than 32 bits. */
+ 	if (hwdev->dma_mask < 0x7fffffff) {
+ 		return 0;
+@@ -398,6 +405,9 @@
+ 	dma_addr_t dma_handle;
+ 	struct pcidev_info *pcidev_info = SN_PCIDEV_INFO(hwdev);
+ 
++	if (!pcidev_info)
++		return 0;
++
+ 	if (hwdev->dev.coherent_dma_mask == ~0UL) {
+ 		dma_handle = pcibr_dmatrans_direct64(pcidev_info, phys_addr,
+ 					    PCI64_ATTR_BAR, dma_flags);
+--- a/arch/ia64/sn/kernel/setup.c
++++ b/arch/ia64/sn/kernel/setup.c
+@@ -29,6 +29,7 @@
+ #include <linux/nodemask.h>
+ #include <linux/pm.h>
+ #include <linux/efi.h>
++#include <linux/vmalloc.h>
+ 
+ #include <asm/io.h>
+ #include <asm/sal.h>
+@@ -784,3 +785,21 @@
+ }
+ EXPORT_SYMBOL(sn_prom_feature_available);
+ 
++/*
++ * SN2-specific module_alloc: allocate executable vmalloc memory WITHOUT
++ * VM_FLUSH_RESET_PERMS.
++ *
++ * That flag is useless on ia64 (set_memory_nx, set_memory_rw, and
++ * set_direct_map_*_noflush are all no-ops).  But it causes
++ * vm_remove_mappings() to force immediate global TLB flushes during
++ * vfree.  On SN2, these extra SHUB PTC.GA broadcasts during module
++ * init section cleanup interfere with concurrent PIO/MMIO traffic.
++ *
++ * See commit 868b104d7379 ("vmalloc: New flag for flush reset").
++ */
++void *module_alloc(unsigned long size)
++{
++	return __vmalloc_node_range(size, 1, VMALLOC_START, VMALLOC_END,
++			GFP_KERNEL, PAGE_KERNEL, 0,
++			NUMA_NO_NODE, __builtin_return_address(0));
++}
