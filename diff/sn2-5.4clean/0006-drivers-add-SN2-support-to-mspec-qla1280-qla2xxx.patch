@@ -398,6 +398,17 @@ index 1d04131..67df84d 100644
 +
  	/* Reset Initialization control block */
  	memset(icb, 0, ha->init_cb_size);
+--- a/drivers/tty/serial/sn_console.c	2026-03-10 02:01:29.574046221 +0000
++++ b/drivers/tty/serial/sn_console.c	2026-03-10 02:07:36.770519083 +0000
+@@ -328,6 +328,8 @@
+  */
+ static void snp_start_tx(struct uart_port *port)
+ {
++	if (uart_circ_empty(&port->state->xmit))
++		return;
+ 	if (sal_console_port.sc_ops->sal_wakeup_transmit)
+ 		sal_console_port.sc_ops->sal_wakeup_transmit(&sal_console_port,
+ 							     TRANSMIT_BUFFERED);
  
 -- 
 2.43.0
