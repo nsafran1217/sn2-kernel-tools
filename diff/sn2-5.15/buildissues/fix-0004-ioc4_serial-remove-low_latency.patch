@@ -1,0 +1,17 @@
+Subject: [PATCH] serial: ioc4: remove tty_port.low_latency assignment
+
+tty_port.low_latency was removed in v5.12 (commit b3b576461c47).
+All tty ports are now low latency by default, so the assignment
+is both unnecessary and a build error.
+
+--- a/drivers/tty/serial/ioc4_serial.c	2026-03-10 02:59:46.000000000 +0000
++++ b/drivers/tty/serial/ioc4_serial.c	2026-03-10 03:10:27.121442019 +0000
+@@ -1743,8 +1743,6 @@
+ 
+ 	the_port->ignore_status_mask = N_ALL_INPUT;
+ 
+-	state->port.low_latency = 1;
+-
+ 	if (iflag & IGNPAR)
+ 		the_port->ignore_status_mask &= ~(N_PARITY_ERROR
+ 						| N_FRAMING_ERROR);

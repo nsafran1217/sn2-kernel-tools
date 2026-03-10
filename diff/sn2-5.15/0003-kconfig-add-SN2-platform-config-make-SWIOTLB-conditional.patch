@@ -1,0 +1,68 @@
+Subject: [PATCH 3/6] kconfig: add SN2 platform config, make SWIOTLB conditional
+
+Add CONFIG_IA64_SGI_SN2 and CONFIG_SGI_SN to arch/ia64/Kconfig.
+Make SWIOTLB and ZONE_DMA32 conditional on !IA64_SGI_SN2
+(SN2 uses its own DMA via SHUB, not SWIOTLB/DMA32).
+Add SN2 build path to arch/ia64/Kbuild.
+Source drivers/sn/Kconfig.
+
+---
+
+--- a/arch/ia64/Kconfig	2026-03-10 02:37:24.000000000 +0000
++++ b/arch/ia64/Kconfig	2026-03-10 02:46:09.000000000 +0000
+@@ -50,7 +50,7 @@
+ 	select ARCH_CLOCKSOURCE_DATA
+ 	select GENERIC_TIME_VSYSCALL
+ 	select LEGACY_TIMER_TICK
+-	select SWIOTLB
++	select SWIOTLB if !IA64_SGI_SN2
+ 	select SYSCTL_ARCH_UNALIGN_NO_WARN
+ 	select HAVE_MOD_ARCH_SPECIFIC
+ 	select MODULES_USE_ELF_RELA
+@@ -61,7 +61,7 @@
+ 	select NUMA if !FLATMEM
+ 	select PCI_MSI_ARCH_FALLBACKS if PCI_MSI
+ 	select SET_FS
+-	select ZONE_DMA32
++	select ZONE_DMA32 if !IA64_SGI_SN2
+ 	default y
+ 	help
+ 	  The Itanium Processor Family is Intel's 64-bit successor to
+@@ -181,6 +181,21 @@
+ 	default "7" if MCKINLEY
+ 	default "6" if ITANIUM
+ 
++config IA64_SGI_SN2
++	bool "SGI-SN2 (Altix) support"
++	select NUMA
++	select ACPI_NUMA
++	select IA64_UNCACHED_ALLOCATOR
++	help
++	  Selecting this option will add support for SGI Altix (SN2) systems.
++	  This builds a kernel with SN2 platform code including custom I/O,
++	  DMA, IRQ, and NUMA support for the SHUB interconnect.  If you have
++	  an SGI Altix system, say Y.  Otherwise, say N.
++
++config SGI_SN
++	def_bool y
++	depends on IA64_SGI_SN2
++
+ config IA64_SGI_UV
+ 	bool "SGI-UV support"
+ 	help
+@@ -364,6 +379,8 @@
+ 	  the "force" module parameter, e.g., with the "aml_nfw.force"
+ 	  kernel command line option.
+ 
++source "drivers/sn/Kconfig"
++
+ config KEXEC
+ 	bool "kexec system call"
+ 	depends on !SMP || HOTPLUG_CPU
+--- a/arch/ia64/Kbuild	2026-03-10 02:37:24.000000000 +0000
++++ b/arch/ia64/Kbuild	2026-03-10 02:46:15.000000000 +0000
+@@ -1,3 +1,4 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+ obj-y				+= kernel/ mm/
++obj-$(CONFIG_IA64_SGI_SN2)	+= sn/
+ obj-$(CONFIG_IA64_SGI_UV)	+= uv/

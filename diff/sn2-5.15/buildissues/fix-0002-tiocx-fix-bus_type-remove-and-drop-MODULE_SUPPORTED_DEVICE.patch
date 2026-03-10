@@ -1,0 +1,33 @@
+Subject: [PATCH] ia64/sn: fix tiocx bus_type remove signature and drop MODULE_SUPPORTED_DEVICE
+
+Two build fixes for tiocx.c against Linux 5.15:
+
+1. bus_type.remove changed from returning int to void in v5.15
+   (commit fc7a6209d571).  Update cx_driver_remove() accordingly.
+
+2. MODULE_SUPPORTED_DEVICE() was removed in v5.12
+   (commit 1d6272f3a455).  Drop the invocation.
+
+--- a/arch/ia64/sn/kernel/tiocx.c	2026-03-10 02:59:46.738636482 +0000
++++ b/arch/ia64/sn/kernel/tiocx.c	2026-03-10 02:59:29.454973107 +0000
+@@ -132,14 +132,13 @@
+  * cx_driver_remove - Remove driver from device struct.
+  * @dev: device
+  */
+-static int cx_driver_remove(struct device *dev)
++static void cx_driver_remove(struct device *dev)
+ {
+ 	struct cx_dev *cx_dev = to_cx_dev(dev);
+ 	struct cx_drv *cx_drv = cx_dev->driver;
+ 	if (cx_drv->remove)
+ 		cx_drv->remove(cx_dev);
+ 	cx_dev->driver = NULL;
+-	return 0;
+ }
+ 
+ struct bus_type tiocx_bus_type = {
+@@ -567,4 +566,3 @@
+ MODULE_LICENSE("GPL");
+ MODULE_AUTHOR("Bruce Losure <blosure@sgi.com>");
+ MODULE_DESCRIPTION("TIOCX module");
+-MODULE_SUPPORTED_DEVICE(DEVICE_NAME);
