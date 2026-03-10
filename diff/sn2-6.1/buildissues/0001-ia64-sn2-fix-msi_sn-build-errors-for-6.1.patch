@@ -1,0 +1,46 @@
+From: SN2 Port <sn2@port>
+Date: Tue, 10 Mar 2026 00:00:00 +0000
+Subject: [PATCH] ia64/sn2: fix msi_sn.c build errors for 6.1
+
+Fix two build errors in arch/ia64/sn/kernel/msi_sn.c:
+
+1. struct msi_desc reorganization (commit 645474e2e07d, "genirq/msi:
+   Rework MSI descriptor data", v5.17):
+   msi_attrib was moved into the pci-specific sub-union.
+     entry->msi_attrib.is_64  ->  entry->pci.msi_attrib.is_64
+
+2. irq_data_get_affinity_mask() made const (commit 4d60e8e3a7a3,
+   "genirq: Return a const cpumask from irq_data_get_affinity_mask",
+   v5.17):
+   The return type became const struct cpumask*, so writing through it
+   with cpumask_copy() is no longer valid. Replace with
+   irq_data_update_affinity() which is the correct API since v5.17,
+   and is already used by msi_ia64.c in the same kernel.
+
+Signed-off-by: SN2 Port <sn2@port>
+---
+ arch/ia64/sn/kernel/msi_sn.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/ia64/sn/kernel/msi_sn.c b/arch/ia64/sn/kernel/msi_sn.c
+index 1234567..abcdefg 100644
+--- a/arch/ia64/sn/kernel/msi_sn.c
++++ b/arch/ia64/sn/kernel/msi_sn.c
+@@ -75,7 +75,7 @@ int sn_setup_msi_irq(struct pci_dev *pdev, struct msi_desc *entry)
+ 	struct sn_pcibus_provider *provider = SN_PCIDEV_BUSPROVIDER(pdev);
+ 	int irq;
+ 
+-	if (!entry->msi_attrib.is_64)
++	if (!entry->pci.msi_attrib.is_64)
+ 		return -EINVAL;
+ 
+ 	if (bussoft == NULL)
+@@ -206,7 +206,7 @@ static int sn_set_msi_irq_affinity(struct irq_data *data,
+ 	msg.address_lo = (u32)(bus_addr & 0x00000000ffffffff);
+ 
+ 	pci_write_msi_msg(irq, &msg);
+-	cpumask_copy(irq_data_get_affinity_mask(data), cpu_mask);
++	irq_data_update_affinity(data, cpu_mask);
+ 
+ 	return 0;
+ }

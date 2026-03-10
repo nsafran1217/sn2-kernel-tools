@@ -1,14 +1,15 @@
-Lets work on re-adding SN2 support to linux 5.15. I have uploaded `5.15-clean.tar.xz` to this chat which contains the files that we need to patch. I also uploaded `5.10-sn2-patched.tar.xz` which is the patched version which works on SN2.
+Lets work on re-adding SN2 support to linux 6.6. I have uploaded `6.6-clean.tar.xz` to this chat which contains the files that we need to patch. I also uploaded `6.1-sn2-patched.tar.xz` which is the patched version which works on SN2.
 
-Apply the patches from `sn2-v5.10-complete.patch` that is in the project. PLAN.md was the original document describing the changes required to bring SN2 back into the kernel. Read it first to understand the theory of what we are doing. Update the document if needed.
+PLAN.md was the original document describing the changes required to bring SN2 back into the kernel. Read it first to understand the theory of what we are doing. Update the document if needed.
 
-There will be issues when apply the patch. After fixing and applying the patch to the clean tree, examine the resulting files for build issues.
-Changes should be applied to SN2 specific files.
+Apply the patches from `sn2-v6.1-complete.patch` that is in the project.  
+There will be issues when applying the patch. After fixing and applying the patch to the clean tree, examine the resulting files for build issues.  
+Changes should be applied to SN2 specific files.  
 
-Reference the previous chats named "Re-adding SN2 support to Linux 5.10" and "Re-adding SN2 support to Linux kernel 5.4" for context. They are located in this project.
+Reference the previous chats named "Re-adding SN2 support to Linux 6.1, "Re-adding SN2 support to Linux 5.10", "Re-adding SN2 support to Linux 5.15" and "Re-adding SN2 support to Linux kernel 5.4" for context. They are located in this project.  
 
 Document the changes required in fixes.md file. 
-Create a new patch with the changes required for 5.15. Confirm that the patch applies cleanly.
+Create a new patch with the changes required for 6.6. Confirm that the patch applies cleanly.
 
 
 
@@ -23,6 +24,8 @@ tar cJf ~/desktop/VERSION.tar.xz \
   --exclude='*.a' \
   --exclude='*.ko' \
   --exclude='.*.cmd' \
+  --exclude='*.bin' \
+  --exclude='*.gz' \
   arch/ia64 \
   drivers/Kconfig \
   drivers/Makefile \
@@ -62,7 +65,7 @@ Give me individual patches, at the end, we'll combine them into the complete pat
 first build issue:
 
 # After patch is done
-This is working well. Please add those build patches into the complete patch.  
+This is working well. Built and Boot successfully.. Please add those build patches into the complete patch.  
 Please create individual patch files in this format, similar to what was done in the chat `Re-adding SN2 support to Linux 5.10`  
 * 0001 - Drop-in: SN2 platform, headers, drivers, misc
 * 0002 - machvec: minimal compatibility shim
@@ -70,3 +73,6 @@ Please create individual patch files in this format, similar to what was done in
 * 0004 - ia64: add SN2 hooks to core code via ifdef
 * 0005 - drivers: add SN2 driver Kconfig and Makefile entries
 * 0006 - drivers: add SN2 support to mspec, qla1280, qla2xxx
+
+# Or if you just want one big patch
+This is working well. Built and Boot successfully. Please add those build patches into the complete patch. Confirm that the patch applies cleanly to the source tree
