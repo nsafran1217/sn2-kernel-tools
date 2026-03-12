@@ -1,0 +1,52 @@
+Subject: [PATCH 2/6] ia64: Add minimal machvec compatibility shim for compile-time SN2
+
+ia64: Add minimal machvec compatibility shim for compile-time SN2
+
+Provide a minimal asm/machvec.h that defines ia64_platform_is()
+as a compile-time check. This satisfies all SN2 code that calls
+ia64_platform_is("sn2") without bringing back the full machvec
+dispatch infrastructure.
+
+---
+
+diff -ruN clean/arch/ia64/include/asm/machvec.h work/arch/ia64/include/asm/machvec.h
+--- clean/arch/ia64/include/asm/machvec.h	1970-01-01 00:00:00.000000000 +0000
++++ work/arch/ia64/include/asm/machvec.h	2026-03-10 21:16:07.000000000 +0000
+@@ -0,0 +1,37 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Minimal machine vector compatibility shim for SN2 support.
++ *
++ * The full machvec dispatch infrastructure was removed in v5.4.
++ * This header provides compile-time platform identification so that
++ * SN2 platform code and drivers can use ia64_platform_is("sn2")
++ * without requiring the runtime dispatch system.
++ */
++#ifndef _ASM_IA64_MACHVEC_H
++#define _ASM_IA64_MACHVEC_H
++
++#include <linux/string.h>
++
++#ifdef CONFIG_IA64_SGI_SN2
++
++static inline int ia64_platform_is(const char *name)
++{
++	return strcmp(name, "sn2") == 0;
++}
++
++#define ia64_platform_name	"sn2"
++#define ia64_platform_is	ia64_platform_is
++
++#else /* !CONFIG_IA64_SGI_SN2 */
++
++static inline int ia64_platform_is(const char *name)
++{
++	return strcmp(name, "dig") == 0;
++}
++
++#define ia64_platform_name	"dig"
++#define ia64_platform_is	ia64_platform_is
++
++#endif /* CONFIG_IA64_SGI_SN2 */
++
++#endif /* _ASM_IA64_MACHVEC_H */

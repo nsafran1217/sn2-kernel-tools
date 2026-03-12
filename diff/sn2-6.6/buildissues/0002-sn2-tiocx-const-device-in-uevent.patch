@@ -1,0 +1,11 @@
+--- a/arch/ia64/sn/kernel/tiocx.c	2026-03-10 21:41:00.702248037 +0000
++++ b/arch/ia64/sn/kernel/tiocx.c	2026-03-10 21:41:00.709248037 +0000
+@@ -66,7 +66,7 @@
+ 
+ }
+ 
+-static int tiocx_uevent(struct device *dev, struct kobj_uevent_env *env)
++static int tiocx_uevent(const struct device *dev, struct kobj_uevent_env *env)
+ {
+ 	return -ENODEV;
+ }

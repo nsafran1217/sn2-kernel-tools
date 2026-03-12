@@ -1,0 +1,70 @@
+Subject: [PATCH 3/6] ia64: Add SN2 platform Kconfig and build system integration
+
+ia64: Add SN2 platform Kconfig and build system integration
+
+Add CONFIG_IA64_SGI_SN2, CONFIG_SGI_SN, make SWIOTLB and
+ZONE_DMA32 conditional on !IA64_SGI_SN2, add SN2 subdirectory
+to Kbuild, and source drivers/sn/Kconfig.
+
+---
+
+diff -ruN clean/arch/ia64/Kbuild work/arch/ia64/Kbuild
+--- clean/arch/ia64/Kbuild	2026-03-10 21:13:36.000000000 +0000
++++ work/arch/ia64/Kbuild	2026-03-10 21:16:07.000000000 +0000
+@@ -1,3 +1,4 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+ obj-y				+= kernel/ mm/
++obj-$(CONFIG_IA64_SGI_SN2)	+= sn/
+ obj-$(CONFIG_IA64_SGI_UV)	+= uv/
+diff -ruN clean/arch/ia64/Kconfig work/arch/ia64/Kconfig
+--- clean/arch/ia64/Kconfig	2026-03-10 21:13:36.000000000 +0000
++++ work/arch/ia64/Kconfig	2026-03-10 21:16:29.000000000 +0000
+@@ -55,7 +55,7 @@
+ 	select ARCH_CLOCKSOURCE_DATA
+ 	select GENERIC_TIME_VSYSCALL
+ 	select LEGACY_TIMER_TICK
+-	select SWIOTLB
++	select SWIOTLB if !IA64_SGI_SN2
+ 	select SYSCTL_ARCH_UNALIGN_NO_WARN
+ 	select HAVE_MOD_ARCH_SPECIFIC
+ 	select MODULES_USE_ELF_RELA
+@@ -65,7 +65,7 @@
+ 	select NEED_SG_DMA_LENGTH
+ 	select NUMA if !FLATMEM
+ 	select PCI_MSI_ARCH_FALLBACKS if PCI_MSI
+-	select ZONE_DMA32
++	select ZONE_DMA32 if !IA64_SGI_SN2
+ 	select FUNCTION_ALIGNMENT_32B
+ 	default y
+ 	help
+@@ -183,6 +183,21 @@
+ 	default "7" if MCKINLEY
+ 	default "6" if ITANIUM
+ 
++config IA64_SGI_SN2
++	bool "SGI-SN2 (Altix) support"
++	select NUMA
++	select ACPI_NUMA
++	select IA64_UNCACHED_ALLOCATOR
++	help
++	  Selecting this option will add support for SGI Altix (SN2) systems.
++	  This builds a kernel with SN2 platform code including custom I/O,
++	  DMA, IRQ, and NUMA support for the SHUB interconnect.  If you have
++	  an SGI Altix system, say Y.  Otherwise, say N.
++
++config SGI_SN
++	def_bool y
++	depends on IA64_SGI_SN2
++
+ config IA64_SGI_UV
+ 	bool "SGI-UV support"
+ 	help
+@@ -364,6 +379,8 @@
+ 
+ endmenu
+ 
++source "drivers/sn/Kconfig"
++
+ config ARCH_SUPPORTS_KEXEC
+ 	def_bool !SMP || HOTPLUG_CPU
+ 

@@ -1,0 +1,23 @@
+--- a/arch/ia64/sn/kernel/setup.c	2026-03-10 21:16:07.000000000 +0000
++++ b/arch/ia64/sn/kernel/setup.c	2026-03-10 21:34:44.851749171 +0000
+@@ -25,7 +25,6 @@
+ #include <linux/interrupt.h>
+ #include <linux/acpi.h>
+ #include <linux/compiler.h>
+-#include <linux/root_dev.h>
+ #include <linux/nodemask.h>
+ #include <linux/pm.h>
+ #include <linux/efi.h>
+@@ -463,12 +462,6 @@
+ 	printk("SGI SAL version %x.%02x\n", version >> 8, version & 0x00FF);
+ 
+ 	/*
+-	 * we set the default root device to /dev/hda
+-	 * to make simulation easy
+-	 */
+-	ROOT_DEV = Root_HDA1;
+-
+-	/*
+ 	 * Create the PDAs and NODEPDAs for all the cpus.
+ 	 */
+ 	sn_init_pdas(cmdline_p);
