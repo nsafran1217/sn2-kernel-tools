@@ -2,16 +2,6 @@ Subject: [PATCH 5/6] drivers: Add SN2 driver Kconfig and Makefile entries
 
 drivers: Add SN2 driver Kconfig and Makefile entries
 
-Add build system entries for SN2 drivers:
-  - drivers/Kconfig, drivers/Makefile: IOC4 and SN
-  - drivers/char/Kconfig, Makefile: SNSC, TIOCX, MBCS
-  - drivers/char/agp/Kconfig, Makefile: SGI TIOCA AGP
-  - drivers/misc/Kconfig, Makefile: IOC4
-  - drivers/tty/serial/Kconfig, Makefile: IOC4 serial, SN console
-  - drivers/iommu/Kconfig: IOMMU_HELPER dependency
-  - drivers/pci/hotplug/Kconfig, Makefile: SGI hotplug
-  - include/linux/pci_ids.h: SGI PCI IDs
-
 ---
 
 diff -ruN clean/drivers/Kconfig work/drivers/Kconfig
@@ -39,14 +29,14 @@ diff -ruN clean/drivers/Makefile work/drivers/Makefile
  obj-$(CONFIG_SUPERH)		+= sh/
 diff -ruN clean/drivers/char/Kconfig work/drivers/char/Kconfig
 --- clean/drivers/char/Kconfig	2026-03-10 21:13:37.000000000 +0000
-+++ work/drivers/char/Kconfig	2026-03-10 21:16:07.000000000 +0000
++++ work/drivers/char/Kconfig	2026-03-13 02:56:02.942145574 +0000
 @@ -422,4 +422,26 @@
  	  and SSM (Silicon Secured Memory).  Intended consumers of this
  	  driver include crash and makedumpfile.
  
 +config SGI_SNSC
 +	bool "SGI Altix system controller communication support"
-+	depends on (IA64_SGI_SN2 || IA64_GENERIC)
++	depends on (IA64_SGI_SN2)
 +	help
 +	  If you have an SGI Altix and you want to enable system
 +	  controller communication from user space (you want this!),
@@ -54,7 +44,7 @@ diff -ruN clean/drivers/char/Kconfig work/drivers/char/Kconfig
 +
 +config SGI_TIOCX
 +       bool "SGI TIO CX driver support"
-+       depends on (IA64_SGI_SN2 || IA64_GENERIC)
++       depends on (IA64_SGI_SN2)
 +       help
 +         If you have an SGI Altix and you have fpga devices attached
 +         to your TIO, say Y here, otherwise say N.
@@ -84,14 +74,14 @@ diff -ruN clean/drivers/char/Makefile work/drivers/char/Makefile
  
 diff -ruN clean/drivers/char/agp/Kconfig work/drivers/char/agp/Kconfig
 --- clean/drivers/char/agp/Kconfig	2026-03-10 21:13:37.000000000 +0000
-+++ work/drivers/char/agp/Kconfig	2026-03-10 21:16:07.000000000 +0000
++++ work/drivers/char/agp/Kconfig	2026-03-13 02:56:02.942145574 +0000
 @@ -150,6 +150,13 @@
  	  This option gives you AGP support for the Transmeta Efficeon
  	  series processors with integrated northbridges.
  
 +config AGP_SGI_TIOCA
 +        tristate "SGI TIO chipset AGP support"
-+        depends on AGP && (IA64_SGI_SN2 || IA64_GENERIC)
++        depends on AGP && (IA64_SGI_SN2)
 +        help
 +          This option gives you AGP GART support for the SGI TIO chipset
 +          for IA64 processors.

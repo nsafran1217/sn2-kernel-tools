@@ -6397,7 +6397,7 @@ diff -ruN clean/arch/ia64/include/asm/sn/shubio.h work/arch/ia64/include/asm/sn/
 +#endif				/* _ASM_IA64_SN_SHUBIO_H */
 diff -ruN clean/arch/ia64/include/asm/sn/simulator.h work/arch/ia64/include/asm/sn/simulator.h
 --- clean/arch/ia64/include/asm/sn/simulator.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/simulator.h	2026-03-10 21:16:07.000000000 +0000
++++ work/arch/ia64/include/asm/sn/simulator.h	2026-03-13 02:56:02.940145560 +0000
 @@ -0,0 +1,25 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -6409,7 +6409,7 @@ diff -ruN clean/arch/ia64/include/asm/sn/simulator.h work/arch/ia64/include/asm/
 +#ifndef _ASM_IA64_SN_SIMULATOR_H
 +#define _ASM_IA64_SN_SIMULATOR_H
 +
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2) || defined(CONFIG_IA64_SGI_UV)
++#if defined(CONFIG_IA64_SGI_SN2) || defined(CONFIG_IA64_SGI_UV)
 +#define SNMAGIC 0xaeeeeeee8badbeefL
 +#define IS_MEDUSA()			({long sn; asm("mov %0=cpuid[%1]" : "=r"(sn) : "r"(2)); sn == SNMAGIC;})
 +
@@ -10651,7 +10651,7 @@ diff -ruN clean/arch/ia64/sn/include/xtalk/xwidgetdev.h work/arch/ia64/sn/includ
 +#endif                          /* _ASM_IA64_SN_XTALK_XWIDGET_H */
 diff -ruN clean/arch/ia64/sn/kernel/Makefile work/arch/ia64/sn/kernel/Makefile
 --- clean/arch/ia64/sn/kernel/Makefile	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/Makefile	2026-03-10 21:16:07.000000000 +0000
++++ work/arch/ia64/sn/kernel/Makefile	2026-03-13 02:56:02.941145567 +0000
 @@ -0,0 +1,18 @@
 +# arch/ia64/sn/kernel/Makefile
 +#
@@ -10668,7 +10668,7 @@ diff -ruN clean/arch/ia64/sn/kernel/Makefile work/arch/ia64/sn/kernel/Makefile
 +				   huberror.o io_acpi_init.o io_common.o \
 +				   io_init.o iomv.o klconflib.o pio_phys.o \
 +				   sn2/
-+obj-$(CONFIG_IA64_GENERIC)      += machvec.o
++
 +obj-$(CONFIG_SGI_TIOCX)		+= tiocx.o
 +obj-$(CONFIG_PCI_MSI)		+= msi_sn.o
 diff -ruN clean/arch/ia64/sn/kernel/bte.c work/arch/ia64/sn/kernel/bte.c
@@ -14241,7 +14241,7 @@ diff -ruN clean/arch/ia64/sn/kernel/pio_phys.S work/arch/ia64/sn/kernel/pio_phys
 +
 diff -ruN clean/arch/ia64/sn/kernel/setup.c work/arch/ia64/sn/kernel/setup.c
 --- clean/arch/ia64/sn/kernel/setup.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/setup.c	2026-03-12 01:45:00.464842916 +0000
++++ work/arch/ia64/sn/kernel/setup.c	2026-03-12 01:45:00.000000000 +0000
 @@ -0,0 +1,833 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -15140,8 +15140,8 @@ diff -ruN clean/arch/ia64/sn/kernel/sn2/cache.c work/arch/ia64/sn/kernel/sn2/cac
 +EXPORT_SYMBOL(sn_flush_all_caches);
 diff -ruN clean/arch/ia64/sn/kernel/sn2/io.c work/arch/ia64/sn/kernel/sn2/io.c
 --- clean/arch/ia64/sn/kernel/sn2/io.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/sn2/io.c	2026-03-10 21:16:07.000000000 +0000
-@@ -0,0 +1,101 @@
++++ work/arch/ia64/sn/kernel/sn2/io.c	2026-03-13 02:56:02.941145567 +0000
+@@ -0,0 +1,99 @@
 +/* 
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
@@ -15155,7 +15155,6 @@ diff -ruN clean/arch/ia64/sn/kernel/sn2/io.c work/arch/ia64/sn/kernel/sn2/io.c
 +
 +#include <asm/sn/io.h>
 +
-+#ifdef CONFIG_IA64_GENERIC
 +
 +#undef __sn_inb
 +#undef __sn_inw
@@ -15242,7 +15241,6 @@ diff -ruN clean/arch/ia64/sn/kernel/sn2/io.c work/arch/ia64/sn/kernel/sn2/io.c
 +	return ___sn_readq_relaxed(addr);
 +}
 +
-+#endif
 diff -ruN clean/arch/ia64/sn/kernel/sn2/prominfo_proc.c work/arch/ia64/sn/kernel/sn2/prominfo_proc.c
 --- clean/arch/ia64/sn/kernel/sn2/prominfo_proc.c	1970-01-01 00:00:00.000000000 +0000
 +++ work/arch/ia64/sn/kernel/sn2/prominfo_proc.c	2026-03-10 21:16:07.000000000 +0000

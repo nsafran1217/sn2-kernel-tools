@@ -10,10 +10,14 @@ kernel code.  Includes all fixes from v5.10 forward-port:
   - pci_dma.c: NULL safety for pcidev_info
   - pcibr_dma.c: NULL safety for pcidev_info
   - setup.c: module_alloc without VM_FLUSH_RESET_PERMS
+  - setup.c: module_memfree clears VM_FLUSH_RESET_PERMS before vfree
   - sn_console.c: uart_circ_empty guard in snp_start_tx
   - tiocx.c: bus_type.remove void return (v5.15 API)
   - tiocx.c: MODULE_SUPPORTED_DEVICE removed (v5.12 API)
   - ioc4_serial.c: tty_port.low_latency removed (v5.12 API)
+  - sn2/io.c: CONFIG_IA64_GENERIC guard removed
+  - sn/kernel/Makefile: machvec.o build removed
+  - simulator.h: CONFIG_IA64_GENERIC removed from ifdef
 
 IOC3 driver dropped entirely (not used on SN2, only IOC4).
 IDE sgiioc4 driver dropped (IDE subsystem removed in v5.14).
@@ -6274,7 +6278,7 @@ IDE sgiioc4 driver dropped (IDE subsystem removed in v5.14).
 +
 +#endif				/* _ASM_IA64_SN_SHUBIO_H */
 --- a/arch/ia64/include/asm/sn/simulator.h	1970-01-01 00:00:00.000000000 +0000
-+++ b/arch/ia64/include/asm/sn/simulator.h	2026-03-10 02:44:56.000000000 +0000
++++ b/arch/ia64/include/asm/sn/simulator.h	2026-03-13 03:22:54.764395209 +0000
 @@ -0,0 +1,25 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -6286,7 +6290,7 @@ IDE sgiioc4 driver dropped (IDE subsystem removed in v5.14).
 +#ifndef _ASM_IA64_SN_SIMULATOR_H
 +#define _ASM_IA64_SN_SIMULATOR_H
 +
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2) || defined(CONFIG_IA64_SGI_UV)
++#if defined(CONFIG_IA64_SGI_SN2) || defined(CONFIG_IA64_SGI_UV)
 +#define SNMAGIC 0xaeeeeeee8badbeefL
 +#define IS_MEDUSA()			({long sn; asm("mov %0=cpuid[%1]" : "=r"(sn) : "r"(2)); sn == SNMAGIC;})
 +
@@ -9359,7 +9363,7 @@ IDE sgiioc4 driver dropped (IDE subsystem removed in v5.14).
 +
 +#endif                          /* _ASM_IA64_SN_XTALK_XWIDGET_H */
 --- a/arch/ia64/sn/kernel/Makefile	1970-01-01 00:00:00.000000000 +0000
-+++ b/arch/ia64/sn/kernel/Makefile	2026-03-10 02:44:56.000000000 +0000
++++ b/arch/ia64/sn/kernel/Makefile	2026-03-13 03:22:54.764395209 +0000
 @@ -0,0 +1,18 @@
 +# arch/ia64/sn/kernel/Makefile
 +#
@@ -9376,7 +9380,7 @@ IDE sgiioc4 driver dropped (IDE subsystem removed in v5.14).
 +				   huberror.o io_acpi_init.o io_common.o \
 +				   io_init.o iomv.o klconflib.o pio_phys.o \
 +				   sn2/
-+obj-$(CONFIG_IA64_GENERIC)      += machvec.o
++
 +obj-$(CONFIG_SGI_TIOCX)		+= tiocx.o
 +obj-$(CONFIG_PCI_MSI)		+= msi_sn.o
 --- a/arch/ia64/sn/kernel/bte.c	1970-01-01 00:00:00.000000000 +0000
@@ -12935,8 +12939,8 @@ IDE sgiioc4 driver dropped (IDE subsystem removed in v5.14).
 +
 +
 --- a/arch/ia64/sn/kernel/setup.c	1970-01-01 00:00:00.000000000 +0000
-+++ b/arch/ia64/sn/kernel/setup.c	2026-03-10 02:44:57.000000000 +0000
-@@ -0,0 +1,814 @@
++++ b/arch/ia64/sn/kernel/setup.c	2026-03-13 03:22:58.752394198 +0000
+@@ -0,0 +1,839 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
@@ -13751,6 +13755,32 @@ IDE sgiioc4 driver dropped (IDE subsystem removed in v5.14).
 +			GFP_KERNEL, PAGE_KERNEL, 0,
 +			NUMA_NO_NODE, __builtin_return_address(0));
 +}
++/*
++ * SN2-specific module_memfree: clear VM_FLUSH_RESET_PERMS before vfree.
++ *
++ * Since v6.4, module_enable_x() calls module_set_memory() which
++ * unconditionally adds VM_FLUSH_RESET_PERMS to all module text sections
++ * via set_vm_flush_reset_perms().  This bypasses our module_alloc()
++ * override above that deliberately omits the flag.
++ *
++ * Clear the flag before freeing so that vfree() takes the lazy TLB
++ * invalidation path (remove_vm_area) instead of the aggressive
++ * vm_reset_perms() -> flush_tlb_kernel_range() path, which on SN2
++ * triggers SHUB PTC.GA broadcasts that interfere with concurrent
++ * PIO/MMIO traffic.
++ */
++void module_memfree(void *module_region)
++{
++	struct vm_struct *vm;
++
++	if (!module_region)
++		return;
++	vm = find_vm_area(module_region);
++	if (vm)
++		vm->flags &= ~VM_FLUSH_RESET_PERMS;
++	vfree(module_region);
++}
+\ No newline at end of file
 --- a/arch/ia64/sn/kernel/sn2/Makefile	1970-01-01 00:00:00.000000000 +0000
 +++ b/arch/ia64/sn/kernel/sn2/Makefile	2026-03-10 02:44:56.000000000 +0000
 @@ -0,0 +1,13 @@
@@ -13812,8 +13842,8 @@ IDE sgiioc4 driver dropped (IDE subsystem removed in v5.14).
 +}
 +EXPORT_SYMBOL(sn_flush_all_caches);
 --- a/arch/ia64/sn/kernel/sn2/io.c	1970-01-01 00:00:00.000000000 +0000
-+++ b/arch/ia64/sn/kernel/sn2/io.c	2026-03-10 02:44:56.000000000 +0000
-@@ -0,0 +1,101 @@
++++ b/arch/ia64/sn/kernel/sn2/io.c	2026-03-13 03:22:54.765395209 +0000
+@@ -0,0 +1,99 @@
 +/* 
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
@@ -13827,7 +13857,6 @@ IDE sgiioc4 driver dropped (IDE subsystem removed in v5.14).
 +
 +#include <asm/sn/io.h>
 +
-+#ifdef CONFIG_IA64_GENERIC
 +
 +#undef __sn_inb
 +#undef __sn_inw
@@ -13914,7 +13943,6 @@ IDE sgiioc4 driver dropped (IDE subsystem removed in v5.14).
 +	return ___sn_readq_relaxed(addr);
 +}
 +
-+#endif
 --- a/arch/ia64/sn/kernel/sn2/prominfo_proc.c	1970-01-01 00:00:00.000000000 +0000
 +++ b/arch/ia64/sn/kernel/sn2/prominfo_proc.c	2026-03-10 02:44:56.000000000 +0000
 @@ -0,0 +1,208 @@

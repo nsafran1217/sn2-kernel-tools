@@ -1,0 +1,266 @@
+From 6aa182b8ad43cd9eeba68f7f5154b4e676dc3685 Mon Sep 17 00:00:00 2001
+From: Nathan <nsafran1217@gmail.com>
+Date: Thu, 12 Mar 2026 22:08:22 -0400
+Subject: [PATCH 1/2] Clean up configs, remove IA64_GENERIC where not needed
+
+---
+ arch/ia64/include/asm/sn/simulator.h |  2 +-
+ arch/ia64/sn/kernel/Makefile         |  2 +-
+ arch/ia64/sn/kernel/sn2/io.c         |  2 --
+ drivers/char/Kconfig                 |  4 +--
+ drivers/char/agp/Kconfig             |  2 +-
+ drivers/char/mspec.c                 | 49 +++++++++++++---------------
+ drivers/ide/Kconfig                  |  2 +-
+ drivers/scsi/qla1280.c               | 28 +++++++---------
+ drivers/scsi/qla2xxx/qla_init.c      | 10 +++---
+ 9 files changed, 45 insertions(+), 56 deletions(-)
+
+diff --git a/arch/ia64/include/asm/sn/simulator.h b/arch/ia64/include/asm/sn/simulator.h
+index c2611f6cfe33..a61048a1aa7b 100644
+--- a/arch/ia64/include/asm/sn/simulator.h
++++ b/arch/ia64/include/asm/sn/simulator.h
+@@ -8,7 +8,7 @@
+ #ifndef _ASM_IA64_SN_SIMULATOR_H
+ #define _ASM_IA64_SN_SIMULATOR_H
+ 
+-#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2) || defined(CONFIG_IA64_SGI_UV)
++#if defined(CONFIG_IA64_SGI_SN2) || defined(CONFIG_IA64_SGI_UV)
+ #define SNMAGIC 0xaeeeeeee8badbeefL
+ #define IS_MEDUSA()			({long sn; asm("mov %0=cpuid[%1]" : "=r"(sn) : "r"(2)); sn == SNMAGIC;})
+ 
+diff --git a/arch/ia64/sn/kernel/Makefile b/arch/ia64/sn/kernel/Makefile
+index 9c349dd23265..9d5ab9124e3b 100644
+--- a/arch/ia64/sn/kernel/Makefile
++++ b/arch/ia64/sn/kernel/Makefile
+@@ -13,6 +13,6 @@ obj-y				+= setup.o bte.o bte_error.o irq.o mca.o idle.o \
+ 				   huberror.o io_acpi_init.o io_common.o \
+ 				   io_init.o iomv.o klconflib.o pio_phys.o \
+ 				   sn2/
+-obj-$(CONFIG_IA64_GENERIC)      += machvec.o
++
+ obj-$(CONFIG_SGI_TIOCX)		+= tiocx.o
+ obj-$(CONFIG_PCI_MSI)		+= msi_sn.o
+diff --git a/arch/ia64/sn/kernel/sn2/io.c b/arch/ia64/sn/kernel/sn2/io.c
+index a12c0586de38..b85db7f799c3 100644
+--- a/arch/ia64/sn/kernel/sn2/io.c
++++ b/arch/ia64/sn/kernel/sn2/io.c
+@@ -11,7 +11,6 @@
+ 
+ #include <asm/sn/io.h>
+ 
+-#ifdef CONFIG_IA64_GENERIC
+ 
+ #undef __sn_inb
+ #undef __sn_inw
+@@ -98,4 +97,3 @@ unsigned long __sn_readq_relaxed(void __iomem *addr)
+ 	return ___sn_readq_relaxed(addr);
+ }
+ 
+-#endif
+diff --git a/drivers/char/Kconfig b/drivers/char/Kconfig
+index 3a11dc2b6254..c7072549ad1b 100644
+--- a/drivers/char/Kconfig
++++ b/drivers/char/Kconfig
+@@ -473,7 +473,7 @@ config ADI
+ 
+ config SGI_SNSC
+ 	bool "SGI Altix system controller communication support"
+-	depends on (IA64_SGI_SN2 || IA64_GENERIC)
++	depends on (IA64_SGI_SN2)
+ 	help
+ 	  If you have an SGI Altix and you want to enable system
+ 	  controller communication from user space (you want this!),
+@@ -481,7 +481,7 @@ config SGI_SNSC
+ 
+ config SGI_TIOCX
+        bool "SGI TIO CX driver support"
+-       depends on (IA64_SGI_SN2 || IA64_GENERIC)
++       depends on (IA64_SGI_SN2)
+        help
+          If you have an SGI Altix and you have fpga devices attached
+          to your TIO, say Y here, otherwise say N.
+diff --git a/drivers/char/agp/Kconfig b/drivers/char/agp/Kconfig
+index 1ad81a1430ec..ef0bf9127e9e 100644
+--- a/drivers/char/agp/Kconfig
++++ b/drivers/char/agp/Kconfig
+@@ -152,7 +152,7 @@ config AGP_EFFICEON
+ 
+ config AGP_SGI_TIOCA
+         tristate "SGI TIO chipset AGP support"
+-        depends on AGP && (IA64_SGI_SN2 || IA64_GENERIC)
++        depends on AGP && (IA64_SGI_SN2)
+         help
+           This option gives you AGP GART support for the SGI TIO chipset
+           for IA64 processors.
+diff --git a/drivers/char/mspec.c b/drivers/char/mspec.c
+index 24b6ead165c9..88d0a07f617e 100644
+--- a/drivers/char/mspec.c
++++ b/drivers/char/mspec.c
+@@ -343,34 +343,31 @@ mspec_init(void)
+ 	 * memory drivers should both be valid on all ia64 hardware
+ 	 */
+ #ifdef CONFIG_SGI_SN
+-	if (ia64_platform_is("sn2")) {
+-		is_sn2 = 1;
+-		if (is_shub2()) {
+-			ret = -ENOMEM;
+-			for_each_node_state(nid, N_ONLINE) {
+-				int actual_nid;
+-				int nasid;
+-				unsigned long phys;
+-
+-				scratch_page[nid] = uncached_alloc_page(nid, 1);
+-				if (scratch_page[nid] == 0)
+-					goto free_scratch_pages;
+-				phys = __pa(scratch_page[nid]);
+-				nasid = get_node_number(phys);
+-				actual_nid = nasid_to_cnodeid(nasid);
+-				if (actual_nid != nid)
+-					goto free_scratch_pages;
+-			}
+-		}
+-
+-		ret = misc_register(&fetchop_miscdev);
+-		if (ret) {
+-			printk(KERN_ERR
+-			       "%s: failed to register device %i\n",
+-			       FETCHOP_ID, ret);
+-			goto free_scratch_pages;
++	is_sn2 = 1;
++	if (is_shub2()) {
++		ret = -ENOMEM;
++		for_each_node_state(nid, N_ONLINE) {
++			int actual_nid;
++			int nasid;
++			unsigned long phys;
++			scratch_page[nid] = uncached_alloc_page(nid, 1);
++			if (scratch_page[nid] == 0)
++				goto free_scratch_pages;
++			phys = __pa(scratch_page[nid]);
++			nasid = get_node_number(phys);
++			actual_nid = nasid_to_cnodeid(nasid);
++			if (actual_nid != nid)
++				goto free_scratch_pages;
+ 		}
+ 	}
++	ret = misc_register(&fetchop_miscdev);
++	if (ret) {
++		printk(KERN_ERR
++		       "%s: failed to register device %i\n",
++		       FETCHOP_ID, ret);
++		goto free_scratch_pages;
++	}
++
+ #endif
+ 	ret = misc_register(&cached_miscdev);
+ 	if (ret) {
+diff --git a/drivers/ide/Kconfig b/drivers/ide/Kconfig
+index 917be60e9d63..97de15a3ba1b 100644
+--- a/drivers/ide/Kconfig
++++ b/drivers/ide/Kconfig
+@@ -569,7 +569,7 @@ config BLK_DEV_SVWKS
+ 
+ config BLK_DEV_SGIIOC4
+ 	tristate "Silicon Graphics IOC4 chipset ATA/ATAPI support"
+-	depends on (IA64_SGI_SN2 || IA64_GENERIC) && SGI_IOC4
++	depends on IA64_SGI_SN2 && SGI_IOC4
+ 	select BLK_DEV_IDEDMA_PCI
+ 	help
+ 	  This driver adds PIO & MultiMode DMA-2 support for the SGI IOC4
+diff --git a/drivers/scsi/qla1280.c b/drivers/scsi/qla1280.c
+index c1a9fc3ccd2b..d650c18daf48 100644
+--- a/drivers/scsi/qla1280.c
++++ b/drivers/scsi/qla1280.c
+@@ -357,7 +357,7 @@
+ #include <scsi/scsi_host.h>
+ #include <scsi/scsi_tcq.h>
+ 
+-#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++#if defined(CONFIG_IA64_SGI_SN2)
+ #include <asm/sn/io.h>
+ #endif
+ 
+@@ -1426,13 +1426,11 @@ qla1280_initialize_adapter(struct scsi_qla_host *ha)
+ 	ha->flags.reset_active = 0;
+ 	ha->flags.abort_isp_active = 0;
+ 
+-#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
+-	if (ia64_platform_is("sn2")) {
+-		printk(KERN_INFO "scsi(%li): Enabling SN2 PCI DMA "
+-		       "dual channel lockup workaround\n", ha->host_no);
+-		ha->flags.use_pci_vchannel = 1;
+-		driver_setup.no_nvram = 1;
+-	}
++#if defined(CONFIG_IA64_SGI_SN2)
++	printk(KERN_INFO "scsi(%li): Enabling SN2 PCI DMA "
++	       "dual channel lockup workaround\n", ha->host_no);
++	ha->flags.use_pci_vchannel = 1;
++	driver_setup.no_nvram = 1;
+ #endif
+ 
+ 	/* TODO: implement support for the 1040 nvram format */
+@@ -2257,12 +2255,10 @@ qla1280_nvram_config(struct scsi_qla_host *ha)
+ 	mb[1] = nv->firmware_feature.f.enable_fast_posting;
+ 	mb[1] |= nv->firmware_feature.f.report_lvd_bus_transition << 1;
+ 	mb[1] |= nv->firmware_feature.f.disable_synchronous_backoff << 5;
+-#if defined(CONFIG_IA64_GENERIC) || defined (CONFIG_IA64_SGI_SN2)
+-	if (ia64_platform_is("sn2")) {
+-		printk(KERN_INFO "scsi(%li): Enabling SN2 PCI DMA "
+-		       "workaround\n", ha->host_no);
+-		mb[1] |= nv->firmware_feature.f.unused_9 << 9; /* XXX */
+-	}
++#if defined (CONFIG_IA64_SGI_SN2)
++	printk(KERN_INFO "scsi(%li): Enabling SN2 PCI DMA "
++	       "workaround\n", ha->host_no);
++	mb[1] |= nv->firmware_feature.f.unused_9 << 9; /* XXX */	
+ #endif
+ 	status |= qla1280_mailbox_command(ha, BIT_1 | BIT_0, mb);
+ 
+@@ -2893,7 +2889,7 @@ qla1280_64bit_start_scsi(struct scsi_qla_host *ha, struct srb * sp)
+ 				break;
+ 
+ 			dma_handle = sg_dma_address(s);
+-#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++#if defined(CONFIG_IA64_SGI_SN2)
+ 			if (ha->flags.use_pci_vchannel)
+ 				sn_pci_set_vchan(ha->pdev,
+ 						 (unsigned long *)&dma_handle,
+@@ -2955,7 +2951,7 @@ qla1280_64bit_start_scsi(struct scsi_qla_host *ha, struct srb * sp)
+ 				if (cnt == 5)
+ 					break;
+ 				dma_handle = sg_dma_address(s);
+-#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++#if defined(CONFIG_IA64_SGI_SN2)
+ 				if (ha->flags.use_pci_vchannel)
+ 					sn_pci_set_vchan(ha->pdev,
+ 							 (unsigned long *)&dma_handle,
+diff --git a/drivers/scsi/qla2xxx/qla_init.c b/drivers/scsi/qla2xxx/qla_init.c
+index 8d829fec8b54..857da9fa6227 100644
+--- a/drivers/scsi/qla2xxx/qla_init.c
++++ b/drivers/scsi/qla2xxx/qla_init.c
+@@ -4682,18 +4682,16 @@ qla2x00_nvram_config(scsi_qla_host_t *vha)
+ 		rval = 1;
+ 	}
+ 
+-#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++#if defined(CONFIG_IA64_SGI_SN2)
+ 	/*
+ 	 * The SN2 does not provide BIOS emulation which means you can't change
+ 	 * potentially bogus BIOS settings. Force the use of default settings
+ 	 * for link rate and frame size.  Hope that the rest of the settings
+ 	 * are valid.
+ 	 */
+-	if (ia64_platform_is("sn2")) {
+-		nv->frame_payload_size = 2048;
+-		if (IS_QLA23XX(ha))
+-			nv->special_options[1] = BIT_7;
+-	}
++	nv->frame_payload_size = 2048;
++	if (IS_QLA23XX(ha))
++		nv->special_options[1] = BIT_7;
+ #endif
+ 
+ 	/* Reset Initialization control block */
+-- 
+2.43.0
+

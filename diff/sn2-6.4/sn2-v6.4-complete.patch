@@ -4,32 +4,39 @@ Forward-port of sn2-v6.3-complete.patch to Linux 6.4.
 
 Changes from v6.3:
   - drivers/char/snsc.c: class_create() API changed in 6.4 — removed
-    THIS_MODULE parameter. Changed class_create(THIS_MODULE, name)
-    to class_create(name).
+    THIS_MODULE parameter. class_create(THIS_MODULE, name) →
+    class_create(name).
 
-Upstream non-breaking changes (context shifts only, no SN2 fixes):
-  - arch/ia64/Kconfig: HAS_IOPORT select added, MAX_ORDER defaults changed
-  - drivers/char/Kconfig: PCMCIA source line removed
-  - drivers/tty/serial/Kconfig: serial entries reorganized
-  - include/linux/pci_ids.h: new vendor IDs added
+Config cleanup (remove IA64_GENERIC, simplify platform checks):
+  - arch/ia64/include/asm/sn/simulator.h: remove IA64_GENERIC from
+    preprocessor guard
+  - arch/ia64/sn/kernel/Makefile: remove machvec.o build rule
+  - arch/ia64/sn/kernel/sn2/io.c: remove CONFIG_IA64_GENERIC guard —
+    I/O wrappers now compile unconditionally for SN2
+  - drivers/char/Kconfig: SGI_SNSC, SGI_TIOCX depend on IA64_SGI_SN2
+    only (not IA64_GENERIC)
+  - drivers/char/agp/Kconfig: AGP_SGI_TIOCA depends on IA64_SGI_SN2
+    only
+  - drivers/char/mspec.c: remove ia64_platform_is("sn2") runtime check,
+    execute SN2 path unconditionally under CONFIG_SGI_SN
+  - drivers/scsi/qla1280.c: replace IA64_GENERIC||IA64_SGI_SN2 with
+    IA64_SGI_SN2, remove ia64_platform_is() runtime checks
+  - drivers/scsi/qla2xxx/qla_init.c: same cleanup as qla1280
+
+Upstream non-breaking changes (context shifts only):
+  - arch/ia64/Kconfig: HAS_IOPORT added, MAX_ORDER defaults changed
+  - drivers/char/Kconfig: PCMCIA source removed
+  - drivers/tty/serial/Kconfig: entries reorganized
+  - include/linux/pci_ids.h: new vendor IDs
   - drivers/scsi/qla1280.c: scsi_host_template made const
   - drivers/misc/sgi-xp/xpc_main.c: sysctl API updated (upstream file)
-
-Carried forward from v6.3: mspec vm_flags_set, tiocx_uevent const device
-Carried forward from v6.2: Kconfig FUNCTION_ALIGNMENT_32B context
-Carried forward from v5.15: ZONE_DMA32 guards, tiocx void remove,
-  IOC3/IDE dropped, Kbuild migration
-Carried forward from v5.5: const sn_dma_ops, DMA_ATTR_WRITE_BARRIER,
-  SWIOTLB/ZONE_DMA32 conditionals
-Carried forward from v5.4: io_init.c error handling, pci_dma.c/
-  pcibr_dma.c NULL safety, sn_console.c uart_circ_empty guard
 
 120 files changed
 ---
 
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/Documentation/driver-api/sgi-ioc4.rst work/Documentation/driver-api/sgi-ioc4.rst
 --- clean/Documentation/driver-api/sgi-ioc4.rst	1970-01-01 00:00:00.000000000 +0000
-+++ work/Documentation/driver-api/sgi-ioc4.rst	2026-03-11 22:47:19.459987733 +0000
++++ work/Documentation/driver-api/sgi-ioc4.rst	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,49 @@
 +====================================
 +SGI IOC4 PCI (multi function) device
@@ -82,7 +89,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/Documentat
 +probe, and remove functions.
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/Kbuild work/arch/ia64/Kbuild
 --- clean/arch/ia64/Kbuild	2026-03-11 14:57:55.000000000 +0000
-+++ work/arch/ia64/Kbuild	2026-03-11 22:47:19.239987734 +0000
++++ work/arch/ia64/Kbuild	2026-03-11 22:47:19.000000000 +0000
 @@ -1,3 +1,4 @@
  # SPDX-License-Identifier: GPL-2.0-only
  obj-y				+= kernel/ mm/
@@ -90,7 +97,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  obj-$(CONFIG_IA64_SGI_UV)	+= uv/
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/Kconfig work/arch/ia64/Kconfig
 --- clean/arch/ia64/Kconfig	2026-03-11 14:58:09.000000000 +0000
-+++ work/arch/ia64/Kconfig	2026-03-11 22:47:19.241987734 +0000
++++ work/arch/ia64/Kconfig	2026-03-11 22:47:19.000000000 +0000
 @@ -53,7 +53,7 @@
  	select ARCH_CLOCKSOURCE_DATA
  	select GENERIC_TIME_VSYSCALL
@@ -142,7 +149,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  	depends on !SMP || HOTPLUG_CPU
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/hw_irq.h work/arch/ia64/include/asm/hw_irq.h
 --- clean/arch/ia64/include/asm/hw_irq.h	2026-03-11 14:57:55.000000000 +0000
-+++ work/arch/ia64/include/asm/hw_irq.h	2026-03-11 22:47:19.242987734 +0000
++++ work/arch/ia64/include/asm/hw_irq.h	2026-03-11 22:47:19.000000000 +0000
 @@ -150,7 +150,11 @@
  static inline ia64_vector
  irq_to_vector (int irq)
@@ -169,7 +176,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  #endif /* _ASM_IA64_HW_IRQ_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/io.h work/arch/ia64/include/asm/io.h
 --- clean/arch/ia64/include/asm/io.h	2026-03-11 14:57:55.000000000 +0000
-+++ work/arch/ia64/include/asm/io.h	2026-03-11 22:47:19.243987734 +0000
++++ work/arch/ia64/include/asm/io.h	2026-03-11 22:47:19.000000000 +0000
 @@ -265,6 +265,59 @@
  #define memcpy_fromio memcpy_fromio
  #define memcpy_toio memcpy_toio
@@ -232,7 +239,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  #undef PCI_IOBASE
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/machvec.h work/arch/ia64/include/asm/machvec.h
 --- clean/arch/ia64/include/asm/machvec.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/machvec.h	2026-03-11 22:47:19.244987734 +0000
++++ work/arch/ia64/include/asm/machvec.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,37 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
@@ -273,7 +280,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_MACHVEC_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/mmiowb.h work/arch/ia64/include/asm/mmiowb.h
 --- clean/arch/ia64/include/asm/mmiowb.h	2026-03-11 14:57:55.000000000 +0000
-+++ work/arch/ia64/include/asm/mmiowb.h	2026-03-11 22:47:19.245987734 +0000
++++ work/arch/ia64/include/asm/mmiowb.h	2026-03-11 22:47:19.000000000 +0000
 @@ -10,7 +10,12 @@
   * following the barrier will arrive after all previous writes.  For most
   * ia64 platforms, this is a simple 'mf.a' instruction.
@@ -289,7 +296,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/acpi.h work/arch/ia64/include/asm/sn/acpi.h
 --- clean/arch/ia64/include/asm/sn/acpi.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/acpi.h	2026-03-11 22:47:19.246987734 +0000
++++ work/arch/ia64/include/asm/sn/acpi.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,15 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -308,7 +315,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_ACPI_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/addrs.h work/arch/ia64/include/asm/sn/addrs.h
 --- clean/arch/ia64/include/asm/sn/addrs.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/addrs.h	2026-03-11 22:47:19.247987734 +0000
++++ work/arch/ia64/include/asm/sn/addrs.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,299 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -611,7 +618,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_ADDRS_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/arch.h work/arch/ia64/include/asm/sn/arch.h
 --- clean/arch/ia64/include/asm/sn/arch.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/arch.h	2026-03-11 22:47:19.248987734 +0000
++++ work/arch/ia64/include/asm/sn/arch.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,86 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -701,7 +708,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_ARCH_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/bte.h work/arch/ia64/include/asm/sn/bte.h
 --- clean/arch/ia64/include/asm/sn/bte.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/bte.h	2026-03-11 22:47:19.249987734 +0000
++++ work/arch/ia64/include/asm/sn/bte.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,236 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -941,7 +948,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif	/* _ASM_IA64_SN_BTE_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/clksupport.h work/arch/ia64/include/asm/sn/clksupport.h
 --- clean/arch/ia64/include/asm/sn/clksupport.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/clksupport.h	2026-03-11 22:47:19.250987734 +0000
++++ work/arch/ia64/include/asm/sn/clksupport.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,28 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -973,7 +980,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_CLKSUPPORT_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/geo.h work/arch/ia64/include/asm/sn/geo.h
 --- clean/arch/ia64/include/asm/sn/geo.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/geo.h	2026-03-11 22:47:19.251987734 +0000
++++ work/arch/ia64/include/asm/sn/geo.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,132 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -1109,7 +1116,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_GEO_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/intr.h work/arch/ia64/include/asm/sn/intr.h
 --- clean/arch/ia64/include/asm/sn/intr.h	2026-03-11 14:57:55.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/intr.h	2026-03-11 22:47:19.252987734 +0000
++++ work/arch/ia64/include/asm/sn/intr.h	2026-03-11 22:47:19.000000000 +0000
 @@ -9,7 +9,60 @@
  #ifndef _ASM_IA64_SN_INTR_H
  #define _ASM_IA64_SN_INTR_H
@@ -1173,7 +1180,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  #endif /* _ASM_IA64_SN_INTR_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/io.h work/arch/ia64/include/asm/sn/io.h
 --- clean/arch/ia64/include/asm/sn/io.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/io.h	2026-03-11 22:47:19.253987734 +0000
++++ work/arch/ia64/include/asm/sn/io.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,274 @@
 +/* 
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -1451,7 +1458,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif	/* _ASM_SN_IO_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/klconfig.h work/arch/ia64/include/asm/sn/klconfig.h
 --- clean/arch/ia64/include/asm/sn/klconfig.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/klconfig.h	2026-03-11 22:47:19.254987734 +0000
++++ work/arch/ia64/include/asm/sn/klconfig.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,246 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -1701,7 +1708,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_KLCONFIG_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/l1.h work/arch/ia64/include/asm/sn/l1.h
 --- clean/arch/ia64/include/asm/sn/l1.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/l1.h	2026-03-11 22:47:19.254987734 +0000
++++ work/arch/ia64/include/asm/sn/l1.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,51 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -1756,7 +1763,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_L1_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/leds.h work/arch/ia64/include/asm/sn/leds.h
 --- clean/arch/ia64/include/asm/sn/leds.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/leds.h	2026-03-11 22:47:19.255987734 +0000
++++ work/arch/ia64/include/asm/sn/leds.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,33 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -1793,7 +1800,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/module.h work/arch/ia64/include/asm/sn/module.h
 --- clean/arch/ia64/include/asm/sn/module.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/module.h	2026-03-11 22:47:19.256987734 +0000
++++ work/arch/ia64/include/asm/sn/module.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,127 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -1924,7 +1931,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_MODULE_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/mspec.h work/arch/ia64/include/asm/sn/mspec.h
 --- clean/arch/ia64/include/asm/sn/mspec.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/mspec.h	2026-03-11 22:47:19.257987734 +0000
++++ work/arch/ia64/include/asm/sn/mspec.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,59 @@
 +/*
 + *
@@ -1987,7 +1994,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_MSPEC_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/nodepda.h work/arch/ia64/include/asm/sn/nodepda.h
 --- clean/arch/ia64/include/asm/sn/nodepda.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/nodepda.h	2026-03-11 22:47:19.259987734 +0000
++++ work/arch/ia64/include/asm/sn/nodepda.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,82 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -2073,7 +2080,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_NODEPDA_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/pcibr_provider.h work/arch/ia64/include/asm/sn/pcibr_provider.h
 --- clean/arch/ia64/include/asm/sn/pcibr_provider.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/pcibr_provider.h	2026-03-11 22:47:19.260987734 +0000
++++ work/arch/ia64/include/asm/sn/pcibr_provider.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,152 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -2229,7 +2236,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/pcibus_provider_defs.h work/arch/ia64/include/asm/sn/pcibus_provider_defs.h
 --- clean/arch/ia64/include/asm/sn/pcibus_provider_defs.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/pcibus_provider_defs.h	2026-03-11 22:47:19.262987734 +0000
++++ work/arch/ia64/include/asm/sn/pcibus_provider_defs.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,68 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -2301,7 +2308,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif				/* _ASM_IA64_SN_PCI_PCIBUS_PROVIDER_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/pcidev.h work/arch/ia64/include/asm/sn/pcidev.h
 --- clean/arch/ia64/include/asm/sn/pcidev.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/pcidev.h	2026-03-11 22:47:19.262987734 +0000
++++ work/arch/ia64/include/asm/sn/pcidev.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,85 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -2390,7 +2397,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif				/* _ASM_IA64_SN_PCI_PCIDEV_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/pda.h work/arch/ia64/include/asm/sn/pda.h
 --- clean/arch/ia64/include/asm/sn/pda.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/pda.h	2026-03-11 22:47:19.262987734 +0000
++++ work/arch/ia64/include/asm/sn/pda.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,68 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -2462,7 +2469,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_PDA_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/pic.h work/arch/ia64/include/asm/sn/pic.h
 --- clean/arch/ia64/include/asm/sn/pic.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/pic.h	2026-03-11 22:47:19.263987734 +0000
++++ work/arch/ia64/include/asm/sn/pic.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,261 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -2727,7 +2734,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif                          /* _ASM_IA64_SN_PCI_PIC_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/rw_mmr.h work/arch/ia64/include/asm/sn/rw_mmr.h
 --- clean/arch/ia64/include/asm/sn/rw_mmr.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/rw_mmr.h	2026-03-11 22:47:19.264987734 +0000
++++ work/arch/ia64/include/asm/sn/rw_mmr.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,28 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -2759,7 +2766,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_RW_MMR_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/shub_mmr.h work/arch/ia64/include/asm/sn/shub_mmr.h
 --- clean/arch/ia64/include/asm/sn/shub_mmr.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/shub_mmr.h	2026-03-11 22:47:19.265987734 +0000
++++ work/arch/ia64/include/asm/sn/shub_mmr.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,502 @@
 +/*
 + *
@@ -3265,7 +3272,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_SHUB_MMR_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/shubio.h work/arch/ia64/include/asm/sn/shubio.h
 --- clean/arch/ia64/include/asm/sn/shubio.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/shubio.h	2026-03-11 22:47:19.310987734 +0000
++++ work/arch/ia64/include/asm/sn/shubio.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,3358 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -6627,7 +6634,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif				/* _ASM_IA64_SN_SHUBIO_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/simulator.h work/arch/ia64/include/asm/sn/simulator.h
 --- clean/arch/ia64/include/asm/sn/simulator.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/simulator.h	2026-03-11 22:47:19.312987734 +0000
++++ work/arch/ia64/include/asm/sn/simulator.h	2026-03-13 03:01:21.722014577 +0000
 @@ -0,0 +1,25 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -6639,7 +6646,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#ifndef _ASM_IA64_SN_SIMULATOR_H
 +#define _ASM_IA64_SN_SIMULATOR_H
 +
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2) || defined(CONFIG_IA64_SGI_UV)
++#if defined(CONFIG_IA64_SGI_SN2) || defined(CONFIG_IA64_SGI_UV)
 +#define SNMAGIC 0xaeeeeeee8badbeefL
 +#define IS_MEDUSA()			({long sn; asm("mov %0=cpuid[%1]" : "=r"(sn) : "r"(2)); sn == SNMAGIC;})
 +
@@ -6656,7 +6663,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_SIMULATOR_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/sn2/sn_hwperf.h work/arch/ia64/include/asm/sn/sn2/sn_hwperf.h
 --- clean/arch/ia64/include/asm/sn/sn2/sn_hwperf.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/sn2/sn_hwperf.h	2026-03-11 22:47:19.312987734 +0000
++++ work/arch/ia64/include/asm/sn/sn2/sn_hwperf.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,242 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -6902,7 +6909,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif				/* SN_HWPERF_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/sn_cpuid.h work/arch/ia64/include/asm/sn/sn_cpuid.h
 --- clean/arch/ia64/include/asm/sn/sn_cpuid.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/sn_cpuid.h	2026-03-11 22:47:19.313987734 +0000
++++ work/arch/ia64/include/asm/sn/sn_cpuid.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,132 @@
 +/* 
 + *
@@ -7038,7 +7045,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/sn_feature_sets.h work/arch/ia64/include/asm/sn/sn_feature_sets.h
 --- clean/arch/ia64/include/asm/sn/sn_feature_sets.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/sn_feature_sets.h	2026-03-11 22:47:19.314987734 +0000
++++ work/arch/ia64/include/asm/sn/sn_feature_sets.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,58 @@
 +#ifndef _ASM_IA64_SN_FEATURE_SETS_H
 +#define _ASM_IA64_SN_FEATURE_SETS_H
@@ -7100,7 +7107,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_FEATURE_SETS_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/sn_sal.h work/arch/ia64/include/asm/sn/sn_sal.h
 --- clean/arch/ia64/include/asm/sn/sn_sal.h	2026-03-11 14:57:55.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/sn_sal.h	2026-03-11 22:47:19.315987734 +0000
++++ work/arch/ia64/include/asm/sn/sn_sal.h	2026-03-11 22:47:19.000000000 +0000
 @@ -11,17 +11,140 @@
   * Copyright (c) 2000-2006 Silicon Graphics, Inc.  All rights reserved.
   */
@@ -8252,7 +8259,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  	struct {
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/tioca.h work/arch/ia64/include/asm/sn/tioca.h
 --- clean/arch/ia64/include/asm/sn/tioca.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/tioca.h	2026-03-11 22:47:19.317987734 +0000
++++ work/arch/ia64/include/asm/sn/tioca.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,596 @@
 +#ifndef _ASM_IA64_SN_TIO_TIOCA_H
 +#define _ASM_IA64_SN_TIO_TIOCA_H
@@ -8852,7 +8859,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif  /* _ASM_IA64_SN_TIO_TIOCA_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/tioca_provider.h work/arch/ia64/include/asm/sn/tioca_provider.h
 --- clean/arch/ia64/include/asm/sn/tioca_provider.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/tioca_provider.h	2026-03-11 22:47:19.318987734 +0000
++++ work/arch/ia64/include/asm/sn/tioca_provider.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,207 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -9063,7 +9070,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_TIO_CA_AGP_PROVIDER_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/tioce.h work/arch/ia64/include/asm/sn/tioce.h
 --- clean/arch/ia64/include/asm/sn/tioce.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/tioce.h	2026-03-11 22:47:19.319987734 +0000
++++ work/arch/ia64/include/asm/sn/tioce.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,760 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -9827,7 +9834,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* __ASM_IA64_SN_TIOCE_H__ */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/tioce_provider.h work/arch/ia64/include/asm/sn/tioce_provider.h
 --- clean/arch/ia64/include/asm/sn/tioce_provider.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/tioce_provider.h	2026-03-11 22:47:19.319987734 +0000
++++ work/arch/ia64/include/asm/sn/tioce_provider.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,63 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -9894,7 +9901,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif  /* __ASM_IA64_SN_CE_PROVIDER_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/tiocp.h work/arch/ia64/include/asm/sn/tiocp.h
 --- clean/arch/ia64/include/asm/sn/tiocp.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/tiocp.h	2026-03-11 22:47:19.320987733 +0000
++++ work/arch/ia64/include/asm/sn/tiocp.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,257 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -10155,7 +10162,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif 	/* _ASM_IA64_SN_PCI_TIOCP_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/tiocx.h work/arch/ia64/include/asm/sn/tiocx.h
 --- clean/arch/ia64/include/asm/sn/tiocx.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/tiocx.h	2026-03-11 22:47:19.321987734 +0000
++++ work/arch/ia64/include/asm/sn/tiocx.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,72 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -10231,7 +10238,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif				// _ASM_IA64_SN_TIO_TIOCX__
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/include/asm/sn/types.h work/arch/ia64/include/asm/sn/types.h
 --- clean/arch/ia64/include/asm/sn/types.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/include/asm/sn/types.h	2026-03-11 22:47:19.322987733 +0000
++++ work/arch/ia64/include/asm/sn/types.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,26 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -10261,7 +10268,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_TYPES_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/kernel/acpi.c work/arch/ia64/kernel/acpi.c
 --- clean/arch/ia64/kernel/acpi.c	2026-03-11 14:57:55.000000000 +0000
-+++ work/arch/ia64/kernel/acpi.c	2026-03-11 22:47:19.323987734 +0000
++++ work/arch/ia64/kernel/acpi.c	2026-03-11 22:47:19.000000000 +0000
 @@ -31,6 +31,7 @@
  #include <acpi/processor.h>
  #include <asm/io.h>
@@ -10302,7 +10309,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  	/* System-Level Interrupt Routing */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/kernel/irq_ia64.c work/arch/ia64/kernel/irq_ia64.c
 --- clean/arch/ia64/kernel/irq_ia64.c	2026-03-11 14:57:55.000000000 +0000
-+++ work/arch/ia64/kernel/irq_ia64.c	2026-03-11 22:47:19.324987734 +0000
++++ work/arch/ia64/kernel/irq_ia64.c	2026-03-11 22:47:19.000000000 +0000
 @@ -623,9 +623,15 @@
  				    "irq_move");
  	}
@@ -10322,7 +10329,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  	void __iomem *ipi_addr;
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/kernel/msi_ia64.c work/arch/ia64/kernel/msi_ia64.c
 --- clean/arch/ia64/kernel/msi_ia64.c	2026-03-11 14:57:55.000000000 +0000
-+++ work/arch/ia64/kernel/msi_ia64.c	2026-03-11 22:47:19.325987733 +0000
++++ work/arch/ia64/kernel/msi_ia64.c	2026-03-11 22:47:19.000000000 +0000
 @@ -49,6 +49,13 @@
  	unsigned long	dest_phys_id;
  	int	irq, vector;
@@ -10353,7 +10360,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/kernel/sal.c work/arch/ia64/kernel/sal.c
 --- clean/arch/ia64/kernel/sal.c	2026-03-11 14:57:55.000000000 +0000
-+++ work/arch/ia64/kernel/sal.c	2026-03-11 22:47:19.326987734 +0000
++++ work/arch/ia64/kernel/sal.c	2026-03-11 22:47:19.000000000 +0000
 @@ -15,6 +15,7 @@
  #include <linux/string.h>
  
@@ -10378,7 +10385,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  static void __init
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/kernel/setup.c work/arch/ia64/kernel/setup.c
 --- clean/arch/ia64/kernel/setup.c	2026-03-11 14:57:55.000000000 +0000
-+++ work/arch/ia64/kernel/setup.c	2026-03-11 22:47:19.327987733 +0000
++++ work/arch/ia64/kernel/setup.c	2026-03-11 22:47:19.000000000 +0000
 @@ -261,11 +261,11 @@
   * in kdump case. See the comment in sba_init() in sba_iommu.c.
   *
@@ -10454,7 +10461,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  void __init
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/kernel/smpboot.c work/arch/ia64/kernel/smpboot.c
 --- clean/arch/ia64/kernel/smpboot.c	2026-03-11 14:57:55.000000000 +0000
-+++ work/arch/ia64/kernel/smpboot.c	2026-03-11 22:47:19.328987734 +0000
++++ work/arch/ia64/kernel/smpboot.c	2026-03-11 22:47:19.000000000 +0000
 @@ -642,6 +642,14 @@
  		return (-EBUSY);
  	}
@@ -10472,7 +10479,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  	if (migrate_platform_irqs(cpu)) {
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/kernel/uncached.c work/arch/ia64/kernel/uncached.c
 --- clean/arch/ia64/kernel/uncached.c	2026-03-11 14:57:55.000000000 +0000
-+++ work/arch/ia64/kernel/uncached.c	2026-03-11 22:47:19.328987734 +0000
++++ work/arch/ia64/kernel/uncached.c	2026-03-11 22:47:19.000000000 +0000
 @@ -22,6 +22,7 @@
  #include <linux/pgtable.h>
  #include <asm/efi.h>
@@ -10498,7 +10505,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  	local_flush_tlb_all();
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/mm/contig.c work/arch/ia64/mm/contig.c
 --- clean/arch/ia64/mm/contig.c	2026-03-11 14:58:09.000000000 +0000
-+++ work/arch/ia64/mm/contig.c	2026-03-11 22:47:19.329987734 +0000
++++ work/arch/ia64/mm/contig.c	2026-03-11 22:47:19.000000000 +0000
 @@ -193,12 +193,12 @@
  void __init
  paging_init (void)
@@ -10517,7 +10524,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  	verify_gap_absence();
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/mm/discontig.c work/arch/ia64/mm/discontig.c
 --- clean/arch/ia64/mm/discontig.c	2026-03-11 14:57:55.000000000 +0000
-+++ work/arch/ia64/mm/discontig.c	2026-03-11 22:47:19.330987733 +0000
++++ work/arch/ia64/mm/discontig.c	2026-03-11 22:47:19.000000000 +0000
 @@ -593,15 +593,14 @@
   */
  void __init paging_init(void)
@@ -10539,7 +10546,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/mm/tlb.c work/arch/ia64/mm/tlb.c
 --- clean/arch/ia64/mm/tlb.c	2026-03-11 14:57:55.000000000 +0000
-+++ work/arch/ia64/mm/tlb.c	2026-03-11 22:47:19.331987734 +0000
++++ work/arch/ia64/mm/tlb.c	2026-03-11 22:47:19.000000000 +0000
 @@ -245,6 +245,7 @@
  }
  
@@ -10572,7 +10579,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  	}
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/pci/pci.c work/arch/ia64/pci/pci.c
 --- clean/arch/ia64/pci/pci.c	2026-03-11 14:58:09.000000000 +0000
-+++ work/arch/ia64/pci/pci.c	2026-03-11 22:47:19.332987733 +0000
++++ work/arch/ia64/pci/pci.c	2026-03-11 22:47:19.000000000 +0000
 @@ -371,6 +371,12 @@
  	}
  	list_for_each_entry(dev, &b->devices, bus_list)
@@ -10588,7 +10595,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
  void pcibios_add_bus(struct pci_bus *bus)
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/Makefile work/arch/ia64/sn/Makefile
 --- clean/arch/ia64/sn/Makefile	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/Makefile	2026-03-11 22:47:19.333987734 +0000
++++ work/arch/ia64/sn/Makefile	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,12 @@
 +# arch/ia64/sn/Makefile
 +#
@@ -10604,7 +10611,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +obj-y += kernel/ pci/
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/include/ioerror.h work/arch/ia64/sn/include/ioerror.h
 --- clean/arch/ia64/sn/include/ioerror.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/include/ioerror.h	2026-03-11 22:47:19.334987733 +0000
++++ work/arch/ia64/sn/include/ioerror.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,81 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -10689,7 +10696,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_IOERROR_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/include/tio.h work/arch/ia64/sn/include/tio.h
 --- clean/arch/ia64/sn/include/tio.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/include/tio.h	2026-03-11 22:47:19.336987734 +0000
++++ work/arch/ia64/sn/include/tio.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,41 @@
 +/* 
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -10734,7 +10741,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /*  _ASM_IA64_SN_TIO_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/include/xtalk/hubdev.h work/arch/ia64/sn/include/xtalk/hubdev.h
 --- clean/arch/ia64/sn/include/xtalk/hubdev.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/include/xtalk/hubdev.h	2026-03-11 22:47:19.336987734 +0000
++++ work/arch/ia64/sn/include/xtalk/hubdev.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,91 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -10829,7 +10836,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_XTALK_HUBDEV_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/include/xtalk/xbow.h work/arch/ia64/sn/include/xtalk/xbow.h
 --- clean/arch/ia64/sn/include/xtalk/xbow.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/include/xtalk/xbow.h	2026-03-11 22:47:19.337987733 +0000
++++ work/arch/ia64/sn/include/xtalk/xbow.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,301 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -11134,7 +11141,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* _ASM_IA64_SN_XTALK_XBOW_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/include/xtalk/xwidgetdev.h work/arch/ia64/sn/include/xtalk/xwidgetdev.h
 --- clean/arch/ia64/sn/include/xtalk/xwidgetdev.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/include/xtalk/xwidgetdev.h	2026-03-11 22:47:19.339987733 +0000
++++ work/arch/ia64/sn/include/xtalk/xwidgetdev.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,70 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -11208,7 +11215,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif                          /* _ASM_IA64_SN_XTALK_XWIDGET_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/Makefile work/arch/ia64/sn/kernel/Makefile
 --- clean/arch/ia64/sn/kernel/Makefile	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/Makefile	2026-03-11 22:47:19.339987733 +0000
++++ work/arch/ia64/sn/kernel/Makefile	2026-03-13 03:01:21.722014577 +0000
 @@ -0,0 +1,18 @@
 +# arch/ia64/sn/kernel/Makefile
 +#
@@ -11225,12 +11232,12 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +				   huberror.o io_acpi_init.o io_common.o \
 +				   io_init.o iomv.o klconflib.o pio_phys.o \
 +				   sn2/
-+obj-$(CONFIG_IA64_GENERIC)      += machvec.o
++
 +obj-$(CONFIG_SGI_TIOCX)		+= tiocx.o
 +obj-$(CONFIG_PCI_MSI)		+= msi_sn.o
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/bte.c work/arch/ia64/sn/kernel/bte.c
 --- clean/arch/ia64/sn/kernel/bte.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/bte.c	2026-03-11 22:47:19.340987734 +0000
++++ work/arch/ia64/sn/kernel/bte.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,475 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -11709,7 +11716,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +}
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/bte_error.c work/arch/ia64/sn/kernel/bte_error.c
 --- clean/arch/ia64/sn/kernel/bte_error.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/bte_error.c	2026-03-11 22:47:19.341987733 +0000
++++ work/arch/ia64/sn/kernel/bte_error.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,255 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -11968,7 +11975,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/huberror.c work/arch/ia64/sn/kernel/huberror.c
 --- clean/arch/ia64/sn/kernel/huberror.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/huberror.c	2026-03-11 22:47:19.342987733 +0000
++++ work/arch/ia64/sn/kernel/huberror.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,220 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -12192,7 +12199,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/idle.c work/arch/ia64/sn/kernel/idle.c
 --- clean/arch/ia64/sn/kernel/idle.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/idle.c	2026-03-11 22:47:19.343987733 +0000
++++ work/arch/ia64/sn/kernel/idle.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,30 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -12226,7 +12233,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +}
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/io_acpi_init.c work/arch/ia64/sn/kernel/io_acpi_init.c
 --- clean/arch/ia64/sn/kernel/io_acpi_init.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/io_acpi_init.c	2026-03-11 22:47:19.344987733 +0000
++++ work/arch/ia64/sn/kernel/io_acpi_init.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,513 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -12743,7 +12750,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +}
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/io_common.c work/arch/ia64/sn/kernel/io_common.c
 --- clean/arch/ia64/sn/kernel/io_common.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/io_common.c	2026-03-11 22:47:19.345987734 +0000
++++ work/arch/ia64/sn/kernel/io_common.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,562 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -13309,7 +13316,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/io_init.c work/arch/ia64/sn/kernel/io_init.c
 --- clean/arch/ia64/sn/kernel/io_init.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/io_init.c	2026-03-11 22:47:19.346987733 +0000
++++ work/arch/ia64/sn/kernel/io_init.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,325 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -13638,7 +13645,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +}
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/iomv.c work/arch/ia64/sn/kernel/iomv.c
 --- clean/arch/ia64/sn/kernel/iomv.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/iomv.c	2026-03-11 22:47:19.347987733 +0000
++++ work/arch/ia64/sn/kernel/iomv.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,86 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -13728,7 +13735,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +EXPORT_SYMBOL(__sn_mmiowb);
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/irq.c work/arch/ia64/sn/kernel/irq.c
 --- clean/arch/ia64/sn/kernel/irq.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/irq.c	2026-03-11 22:47:19.347987733 +0000
++++ work/arch/ia64/sn/kernel/irq.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,489 @@
 +/*
 + * Platform dependent support for SGI SN
@@ -14221,7 +14228,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +}
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/klconflib.c work/arch/ia64/sn/kernel/klconflib.c
 --- clean/arch/ia64/sn/kernel/klconflib.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/klconflib.c	2026-03-11 22:47:19.348987733 +0000
++++ work/arch/ia64/sn/kernel/klconflib.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,107 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -14332,7 +14339,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +}
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/mca.c work/arch/ia64/sn/kernel/mca.c
 --- clean/arch/ia64/sn/kernel/mca.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/mca.c	2026-03-11 22:47:19.350987733 +0000
++++ work/arch/ia64/sn/kernel/mca.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,145 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -14481,7 +14488,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +device_initcall(sn_salinfo_init);
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/msi_sn.c work/arch/ia64/sn/kernel/msi_sn.c
 --- clean/arch/ia64/sn/kernel/msi_sn.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/msi_sn.c	2026-03-11 22:47:19.351987733 +0000
++++ work/arch/ia64/sn/kernel/msi_sn.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,238 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -14723,7 +14730,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +};
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/pio_phys.S work/arch/ia64/sn/kernel/pio_phys.S
 --- clean/arch/ia64/sn/kernel/pio_phys.S	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/pio_phys.S	2026-03-11 22:47:19.351987733 +0000
++++ work/arch/ia64/sn/kernel/pio_phys.S	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,71 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -14798,7 +14805,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/setup.c work/arch/ia64/sn/kernel/setup.c
 --- clean/arch/ia64/sn/kernel/setup.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/setup.c	2026-03-11 22:47:19.352987733 +0000
++++ work/arch/ia64/sn/kernel/setup.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,814 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -15616,7 +15623,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +}
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/sn2/Makefile work/arch/ia64/sn/kernel/sn2/Makefile
 --- clean/arch/ia64/sn/kernel/sn2/Makefile	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/sn2/Makefile	2026-03-11 22:47:19.354987733 +0000
++++ work/arch/ia64/sn/kernel/sn2/Makefile	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,13 @@
 +# arch/ia64/sn/kernel/sn2/Makefile
 +#
@@ -15633,7 +15640,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +	 prominfo_proc.o timer.o timer_interrupt.o sn_hwperf.o
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/sn2/cache.c work/arch/ia64/sn/kernel/sn2/cache.c
 --- clean/arch/ia64/sn/kernel/sn2/cache.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/sn2/cache.c	2026-03-11 22:47:19.354987733 +0000
++++ work/arch/ia64/sn/kernel/sn2/cache.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,41 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -15678,8 +15685,8 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +EXPORT_SYMBOL(sn_flush_all_caches);
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/sn2/io.c work/arch/ia64/sn/kernel/sn2/io.c
 --- clean/arch/ia64/sn/kernel/sn2/io.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/sn2/io.c	2026-03-11 22:47:19.355987733 +0000
-@@ -0,0 +1,101 @@
++++ work/arch/ia64/sn/kernel/sn2/io.c	2026-03-13 03:01:21.723014577 +0000
+@@ -0,0 +1,99 @@
 +/* 
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
@@ -15693,7 +15700,6 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +
 +#include <asm/sn/io.h>
 +
-+#ifdef CONFIG_IA64_GENERIC
 +
 +#undef __sn_inb
 +#undef __sn_inw
@@ -15780,10 +15786,9 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +	return ___sn_readq_relaxed(addr);
 +}
 +
-+#endif
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/sn2/prominfo_proc.c work/arch/ia64/sn/kernel/sn2/prominfo_proc.c
 --- clean/arch/ia64/sn/kernel/sn2/prominfo_proc.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/sn2/prominfo_proc.c	2026-03-11 22:47:19.356987733 +0000
++++ work/arch/ia64/sn/kernel/sn2/prominfo_proc.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,208 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -15995,7 +16000,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +}
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/sn2/ptc_deadlock.S work/arch/ia64/sn/kernel/sn2/ptc_deadlock.S
 --- clean/arch/ia64/sn/kernel/sn2/ptc_deadlock.S	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/sn2/ptc_deadlock.S	2026-03-11 22:47:19.357987733 +0000
++++ work/arch/ia64/sn/kernel/sn2/ptc_deadlock.S	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,92 @@
 +/* 
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -16091,7 +16096,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +	.endp sn2_ptc_deadlock_recovery_core
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/sn2/sn2_smp.c work/arch/ia64/sn/kernel/sn2/sn2_smp.c
 --- clean/arch/ia64/sn/kernel/sn2/sn2_smp.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/sn2/sn2_smp.c	2026-03-11 22:47:19.358987733 +0000
++++ work/arch/ia64/sn/kernel/sn2/sn2_smp.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,587 @@
 +/*
 + * SN2 Platform specific SMP Support
@@ -16682,7 +16687,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/sn2/sn_hwperf.c work/arch/ia64/sn/kernel/sn2/sn_hwperf.c
 --- clean/arch/ia64/sn/kernel/sn2/sn_hwperf.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/sn2/sn_hwperf.c	2026-03-11 22:47:19.359987733 +0000
++++ work/arch/ia64/sn/kernel/sn2/sn_hwperf.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,1005 @@
 +/* 
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -17691,7 +17696,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +EXPORT_SYMBOL(sn_hwperf_get_nearest_node);
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/sn2/sn_proc_fs.c work/arch/ia64/sn/kernel/sn2/sn_proc_fs.c
 --- clean/arch/ia64/sn/kernel/sn2/sn_proc_fs.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/sn2/sn_proc_fs.c	2026-03-11 22:47:19.359987733 +0000
++++ work/arch/ia64/sn/kernel/sn2/sn_proc_fs.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,69 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -17764,7 +17769,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +#endif /* CONFIG_PROC_FS */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/sn2/timer.c work/arch/ia64/sn/kernel/sn2/timer.c
 --- clean/arch/ia64/sn/kernel/sn2/timer.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/sn2/timer.c	2026-03-11 22:47:19.360987733 +0000
++++ work/arch/ia64/sn/kernel/sn2/timer.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,61 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
@@ -17829,7 +17834,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +}
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/sn2/timer_interrupt.c work/arch/ia64/sn/kernel/sn2/timer_interrupt.c
 --- clean/arch/ia64/sn/kernel/sn2/timer_interrupt.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/sn2/timer_interrupt.c	2026-03-11 22:47:19.361987733 +0000
++++ work/arch/ia64/sn/kernel/sn2/timer_interrupt.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,60 @@
 +/*
 + *
@@ -17893,7 +17898,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +}
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/kernel/tiocx.c work/arch/ia64/sn/kernel/tiocx.c
 --- clean/arch/ia64/sn/kernel/tiocx.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/kernel/tiocx.c	2026-03-11 22:47:19.362987733 +0000
++++ work/arch/ia64/sn/kernel/tiocx.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,568 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -18465,7 +18470,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +MODULE_DESCRIPTION("TIOCX module");
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/pci/Makefile work/arch/ia64/sn/pci/Makefile
 --- clean/arch/ia64/sn/pci/Makefile	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/pci/Makefile	2026-03-11 22:47:19.363987733 +0000
++++ work/arch/ia64/sn/pci/Makefile	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,10 @@
 +#
 +# This file is subject to the terms and conditions of the GNU General Public
@@ -18479,7 +18484,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +obj-y := pci_dma.o tioca_provider.o tioce_provider.o pcibr/
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/pci/pci_dma.c work/arch/ia64/sn/pci/pci_dma.c
 --- clean/arch/ia64/sn/pci/pci_dma.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/pci/pci_dma.c	2026-03-11 22:47:19.364987733 +0000
++++ work/arch/ia64/sn/pci/pci_dma.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,499 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -18982,7 +18987,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +}
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/pci/pcibr/Makefile work/arch/ia64/sn/pci/pcibr/Makefile
 --- clean/arch/ia64/sn/pci/pcibr/Makefile	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/pci/pcibr/Makefile	2026-03-11 22:47:19.365987733 +0000
++++ work/arch/ia64/sn/pci/pcibr/Makefile	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,13 @@
 +#
 +# This file is subject to the terms and conditions of the GNU General Public
@@ -18999,7 +19004,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +				    pcibr_ate.o pcibr_provider.o
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/pci/pcibr/pcibr_ate.c work/arch/ia64/sn/pci/pcibr/pcibr_ate.c
 --- clean/arch/ia64/sn/pci/pcibr/pcibr_ate.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/pci/pcibr/pcibr_ate.c	2026-03-11 22:47:19.366987733 +0000
++++ work/arch/ia64/sn/pci/pcibr/pcibr_ate.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,177 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -19180,7 +19185,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +}
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/pci/pcibr/pcibr_dma.c work/arch/ia64/sn/pci/pcibr/pcibr_dma.c
 --- clean/arch/ia64/sn/pci/pcibr/pcibr_dma.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/pci/pcibr/pcibr_dma.c	2026-03-11 22:47:19.410987733 +0000
++++ work/arch/ia64/sn/pci/pcibr/pcibr_dma.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,423 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -19607,7 +19612,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +EXPORT_SYMBOL(sn_dma_flush);
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/pci/pcibr/pcibr_provider.c work/arch/ia64/sn/pci/pcibr/pcibr_provider.c
 --- clean/arch/ia64/sn/pci/pcibr/pcibr_provider.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/pci/pcibr/pcibr_provider.c	2026-03-11 22:47:19.411987733 +0000
++++ work/arch/ia64/sn/pci/pcibr/pcibr_provider.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,265 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -19876,7 +19881,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +EXPORT_SYMBOL_GPL(sn_ioboard_to_pci_bus);
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/pci/pcibr/pcibr_reg.c work/arch/ia64/sn/pci/pcibr/pcibr_reg.c
 --- clean/arch/ia64/sn/pci/pcibr/pcibr_reg.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/pci/pcibr/pcibr_reg.c	2026-03-11 22:47:19.412987733 +0000
++++ work/arch/ia64/sn/pci/pcibr/pcibr_reg.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,285 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -20165,7 +20170,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +}
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/pci/tioca_provider.c work/arch/ia64/sn/pci/tioca_provider.c
 --- clean/arch/ia64/sn/pci/tioca_provider.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/pci/tioca_provider.c	2026-03-11 22:47:19.413987733 +0000
++++ work/arch/ia64/sn/pci/tioca_provider.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,677 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -20846,7 +20851,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +}
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/sn/pci/tioce_provider.c work/arch/ia64/sn/pci/tioce_provider.c
 --- clean/arch/ia64/sn/pci/tioce_provider.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/arch/ia64/sn/pci/tioce_provider.c	2026-03-11 22:47:19.415987733 +0000
++++ work/arch/ia64/sn/pci/tioce_provider.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,1062 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -21912,7 +21917,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/arch/ia64/
 +}
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/Kconfig work/drivers/Kconfig
 --- clean/drivers/Kconfig	2026-03-11 14:58:09.000000000 +0000
-+++ work/drivers/Kconfig	2026-03-11 22:47:19.416987733 +0000
++++ work/drivers/Kconfig	2026-03-11 22:47:19.000000000 +0000
 @@ -33,6 +33,8 @@
  
  source "drivers/nvme/Kconfig"
@@ -21924,7 +21929,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/Kc
  source "drivers/scsi/Kconfig"
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/Makefile work/drivers/Makefile
 --- clean/drivers/Makefile	2026-03-11 14:58:09.000000000 +0000
-+++ work/drivers/Makefile	2026-03-11 22:47:19.417987733 +0000
++++ work/drivers/Makefile	2026-03-11 22:47:19.000000000 +0000
 @@ -136,6 +136,7 @@
  obj-$(CONFIG_MEMSTICK)		+= memstick/
  obj-$(CONFIG_NEW_LEDS)		+= leds/
@@ -21935,14 +21940,14 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/Ma
  obj-$(CONFIG_SUPERH)		+= sh/
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/char/Kconfig work/drivers/char/Kconfig
 --- clean/drivers/char/Kconfig	2026-03-11 14:58:09.000000000 +0000
-+++ work/drivers/char/Kconfig	2026-03-11 22:47:19.418987733 +0000
++++ work/drivers/char/Kconfig	2026-03-13 03:01:21.723014577 +0000
 @@ -421,4 +421,26 @@
  	  and SSM (Silicon Secured Memory).  Intended consumers of this
  	  driver include crash and makedumpfile.
  
 +config SGI_SNSC
 +	bool "SGI Altix system controller communication support"
-+	depends on (IA64_SGI_SN2 || IA64_GENERIC)
++	depends on (IA64_SGI_SN2)
 +	help
 +	  If you have an SGI Altix and you want to enable system
 +	  controller communication from user space (you want this!),
@@ -21950,7 +21955,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/ch
 +
 +config SGI_TIOCX
 +       bool "SGI TIO CX driver support"
-+       depends on (IA64_SGI_SN2 || IA64_GENERIC)
++       depends on (IA64_SGI_SN2)
 +       help
 +         If you have an SGI Altix and you have fpga devices attached
 +         to your TIO, say Y here, otherwise say N.
@@ -21965,7 +21970,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/ch
  endmenu
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/char/Makefile work/drivers/char/Makefile
 --- clean/drivers/char/Makefile	2026-03-11 14:58:09.000000000 +0000
-+++ work/drivers/char/Makefile	2026-03-11 22:47:19.420987733 +0000
++++ work/drivers/char/Makefile	2026-03-11 22:47:19.000000000 +0000
 @@ -8,9 +8,11 @@
  obj-y				+= misc.o
  obj-$(CONFIG_ATARI_DSP56K)	+= dsp56k.o
@@ -21980,14 +21985,14 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/ch
  
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/char/agp/Kconfig work/drivers/char/agp/Kconfig
 --- clean/drivers/char/agp/Kconfig	2026-03-11 14:57:55.000000000 +0000
-+++ work/drivers/char/agp/Kconfig	2026-03-11 22:47:19.421987733 +0000
++++ work/drivers/char/agp/Kconfig	2026-03-13 03:01:21.724014577 +0000
 @@ -150,6 +150,13 @@
  	  This option gives you AGP support for the Transmeta Efficeon
  	  series processors with integrated northbridges.
  
 +config AGP_SGI_TIOCA
 +        tristate "SGI TIO chipset AGP support"
-+        depends on AGP && (IA64_SGI_SN2 || IA64_GENERIC)
++        depends on AGP && (IA64_SGI_SN2)
 +        help
 +          This option gives you AGP GART support for the SGI TIO chipset
 +          for IA64 processors.
@@ -21997,7 +22002,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/ch
  	depends on X86 && PCI
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/char/agp/Makefile work/drivers/char/agp/Makefile
 --- clean/drivers/char/agp/Makefile	2026-03-11 14:57:55.000000000 +0000
-+++ work/drivers/char/agp/Makefile	2026-03-11 22:47:19.421987733 +0000
++++ work/drivers/char/agp/Makefile	2026-03-11 22:47:19.000000000 +0000
 @@ -20,6 +20,7 @@
  obj-$(CONFIG_AGP_INTEL)		+= intel-agp.o
  obj-$(CONFIG_INTEL_GTT)		+= intel-gtt.o
@@ -22008,7 +22013,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/ch
  obj-$(CONFIG_AGP_UNINORTH)	+= uninorth-agp.o
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/char/agp/sgi-agp.c work/drivers/char/agp/sgi-agp.c
 --- clean/drivers/char/agp/sgi-agp.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/drivers/char/agp/sgi-agp.c	2026-03-11 22:47:19.422987733 +0000
++++ work/drivers/char/agp/sgi-agp.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,338 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -22350,7 +22355,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/ch
 +MODULE_LICENSE("GPL and additional rights");
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/char/mbcs.c work/drivers/char/mbcs.c
 --- clean/drivers/char/mbcs.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/drivers/char/mbcs.c	2026-03-11 22:47:19.423987733 +0000
++++ work/drivers/char/mbcs.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,832 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -23186,7 +23191,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/ch
 +MODULE_LICENSE("GPL");
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/char/mbcs.h work/drivers/char/mbcs.h
 --- clean/drivers/char/mbcs.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/drivers/char/mbcs.h	2026-03-11 22:47:19.424987733 +0000
++++ work/drivers/char/mbcs.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,553 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -23743,7 +23748,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/ch
 +#endif				// __MBCS_H__
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/char/mspec.c work/drivers/char/mspec.c
 --- clean/drivers/char/mspec.c	2026-03-11 14:57:55.000000000 +0000
-+++ work/drivers/char/mspec.c	2026-03-11 22:47:19.425987733 +0000
++++ work/drivers/char/mspec.c	2026-03-13 03:01:21.724014577 +0000
 @@ -9,8 +9,11 @@
   *
   * This driver exports the SN special memory (mspec) facility to user
@@ -23903,7 +23908,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/ch
  static const struct file_operations cached_fops = {
  	.owner = THIS_MODULE,
  	.mmap = cached_mmap,
-@@ -259,32 +336,89 @@
+@@ -259,32 +336,86 @@
  mspec_init(void)
  {
  	int ret;
@@ -23914,34 +23919,31 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/ch
 +	 * memory drivers should both be valid on all ia64 hardware
 +	 */
 +#ifdef CONFIG_SGI_SN
-+	if (ia64_platform_is("sn2")) {
-+		is_sn2 = 1;
-+		if (is_shub2()) {
-+			ret = -ENOMEM;
-+			for_each_node_state(nid, N_ONLINE) {
-+				int actual_nid;
-+				int nasid;
-+				unsigned long phys;
-+
-+				scratch_page[nid] = uncached_alloc_page(nid, 1);
-+				if (scratch_page[nid] == 0)
-+					goto free_scratch_pages;
-+				phys = __pa(scratch_page[nid]);
-+				nasid = get_node_number(phys);
-+				actual_nid = nasid_to_cnodeid(nasid);
-+				if (actual_nid != nid)
-+					goto free_scratch_pages;
-+			}
-+		}
- 
-+		ret = misc_register(&fetchop_miscdev);
-+		if (ret) {
-+			printk(KERN_ERR
-+			       "%s: failed to register device %i\n",
-+			       FETCHOP_ID, ret);
-+			goto free_scratch_pages;
++	is_sn2 = 1;
++	if (is_shub2()) {
++		ret = -ENOMEM;
++		for_each_node_state(nid, N_ONLINE) {
++			int actual_nid;
++			int nasid;
++			unsigned long phys;
++			scratch_page[nid] = uncached_alloc_page(nid, 1);
++			if (scratch_page[nid] == 0)
++				goto free_scratch_pages;
++			phys = __pa(scratch_page[nid]);
++			nasid = get_node_number(phys);
++			actual_nid = nasid_to_cnodeid(nasid);
++			if (actual_nid != nid)
++				goto free_scratch_pages;
 +		}
 +	}
++	ret = misc_register(&fetchop_miscdev);
++	if (ret) {
++		printk(KERN_ERR
++		       "%s: failed to register device %i\n",
++		       FETCHOP_ID, ret);
++		goto free_scratch_pages;
++	}
+ 
 +#endif
  	ret = misc_register(&cached_miscdev);
  	if (ret) {
@@ -23999,7 +24001,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/ch
  module_init(mspec_init);
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/char/snsc.c work/drivers/char/snsc.c
 --- clean/drivers/char/snsc.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/drivers/char/snsc.c	2026-03-11 22:49:33.949986715 +0000
++++ work/drivers/char/snsc.c	2026-03-11 22:49:33.000000000 +0000
 @@ -0,0 +1,470 @@
 +/*
 + * SN Platform system controller communication support
@@ -24473,7 +24475,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/ch
 +device_initcall(scdrv_init);
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/char/snsc.h work/drivers/char/snsc.h
 --- clean/drivers/char/snsc.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/drivers/char/snsc.h	2026-03-11 22:47:19.427987733 +0000
++++ work/drivers/char/snsc.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,92 @@
 +/*
 + * SN Platform system controller communication support
@@ -24569,7 +24571,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/ch
 +#endif /* _SN_SYSCTL_H_ */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/char/snsc_event.c work/drivers/char/snsc_event.c
 --- clean/drivers/char/snsc_event.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/drivers/char/snsc_event.c	2026-03-11 22:47:19.428987733 +0000
++++ work/drivers/char/snsc_event.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,303 @@
 +/*
 + * SN Platform system controller communication support
@@ -24876,7 +24878,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/ch
 +}
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/misc/Kconfig work/drivers/misc/Kconfig
 --- clean/drivers/misc/Kconfig	2026-03-11 14:57:55.000000000 +0000
-+++ work/drivers/misc/Kconfig	2026-03-11 22:47:19.431987733 +0000
++++ work/drivers/misc/Kconfig	2026-03-11 22:47:19.000000000 +0000
 @@ -104,6 +104,18 @@
  	  If you choose to build module, its name will be phantom. If unsure,
  	  say N here.
@@ -24898,7 +24900,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/mi
  	depends on PCI
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/misc/Makefile work/drivers/misc/Makefile
 --- clean/drivers/misc/Makefile	2026-03-11 14:57:55.000000000 +0000
-+++ work/drivers/misc/Makefile	2026-03-11 22:47:19.431987733 +0000
++++ work/drivers/misc/Makefile	2026-03-11 22:47:19.000000000 +0000
 @@ -19,6 +19,7 @@
  obj-$(CONFIG_QCOM_FASTRPC)	+= fastrpc.o
  obj-$(CONFIG_SENSORS_BH1770)	+= bh1770glc.o
@@ -24909,7 +24911,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/mi
  obj-$(CONFIG_SGI_XP)		+= sgi-xp/
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/misc/ioc4.c work/drivers/misc/ioc4.c
 --- clean/drivers/misc/ioc4.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/drivers/misc/ioc4.c	2026-03-11 22:47:19.432987733 +0000
++++ work/drivers/misc/ioc4.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,498 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -25411,12 +25413,12 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/mi
 +EXPORT_SYMBOL(ioc4_unregister_submodule);
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/scsi/qla1280.c work/drivers/scsi/qla1280.c
 --- clean/drivers/scsi/qla1280.c	2026-03-11 14:58:10.000000000 +0000
-+++ work/drivers/scsi/qla1280.c	2026-03-11 22:47:19.434987733 +0000
++++ work/drivers/scsi/qla1280.c	2026-03-13 03:01:21.727014576 +0000
 @@ -357,6 +357,10 @@
  #include <scsi/scsi_host.h>
  #include <scsi/scsi_tcq.h>
  
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++#if defined(CONFIG_IA64_SGI_SN2)
 +#include <asm/sn/io.h>
 +#endif
 +
@@ -25435,41 +25437,37 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/sc
  #define IS_ISP1040(ha) (ha->pdev->device == PCI_DEVICE_ID_QLOGIC_ISP1020)
  #define IS_ISP1x40(ha) (ha->pdev->device == PCI_DEVICE_ID_QLOGIC_ISP1020 || \
  			ha->pdev->device == PCI_DEVICE_ID_QLOGIC_ISP1240)
-@@ -1407,6 +1416,15 @@
+@@ -1407,6 +1416,13 @@
  	ha->flags.reset_active = 0;
  	ha->flags.abort_isp_active = 0;
  
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
-+	if (ia64_platform_is("sn2")) {
-+		printk(KERN_INFO "scsi(%li): Enabling SN2 PCI DMA "
-+		       "dual channel lockup workaround\n", ha->host_no);
-+		ha->flags.use_pci_vchannel = 1;
-+		driver_setup.no_nvram = 1;
-+	}
++#if defined(CONFIG_IA64_SGI_SN2)
++	printk(KERN_INFO "scsi(%li): Enabling SN2 PCI DMA "
++	       "dual channel lockup workaround\n", ha->host_no);
++	ha->flags.use_pci_vchannel = 1;
++	driver_setup.no_nvram = 1;
 +#endif
 +
  	/* TODO: implement support for the 1040 nvram format */
  	if (IS_ISP1040(ha))
  		driver_setup.no_nvram = 1;
-@@ -2229,6 +2247,13 @@
+@@ -2229,6 +2245,11 @@
  	mb[1] = nv->firmware_feature.f.enable_fast_posting;
  	mb[1] |= nv->firmware_feature.f.report_lvd_bus_transition << 1;
  	mb[1] |= nv->firmware_feature.f.disable_synchronous_backoff << 5;
-+#if defined(CONFIG_IA64_GENERIC) || defined (CONFIG_IA64_SGI_SN2)
-+	if (ia64_platform_is("sn2")) {
-+		printk(KERN_INFO "scsi(%li): Enabling SN2 PCI DMA "
-+		       "workaround\n", ha->host_no);
-+		mb[1] |= nv->firmware_feature.f.unused_9 << 9; /* XXX */
-+	}
++#if defined (CONFIG_IA64_SGI_SN2)
++	printk(KERN_INFO "scsi(%li): Enabling SN2 PCI DMA "
++	       "workaround\n", ha->host_no);
++	mb[1] |= nv->firmware_feature.f.unused_9 << 9; /* XXX */	
 +#endif
  	status |= qla1280_mailbox_command(ha, BIT_1 | BIT_0, mb);
  
  	/* Retry count and delay. */
-@@ -2858,6 +2883,12 @@
+@@ -2858,6 +2879,12 @@
  				break;
  
  			dma_handle = sg_dma_address(s);
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++#if defined(CONFIG_IA64_SGI_SN2)
 +			if (ha->flags.use_pci_vchannel)
 +				sn_pci_set_vchan(ha->pdev,
 +						 (unsigned long *)&dma_handle,
@@ -25478,11 +25476,11 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/sc
  			*dword_ptr++ =
  				cpu_to_le32(lower_32_bits(dma_handle));
  			*dword_ptr++ =
-@@ -2914,6 +2945,12 @@
+@@ -2914,6 +2941,12 @@
  				if (cnt == 5)
  					break;
  				dma_handle = sg_dma_address(s);
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++#if defined(CONFIG_IA64_SGI_SN2)
 +				if (ha->flags.use_pci_vchannel)
 +					sn_pci_set_vchan(ha->pdev,
 +							 (unsigned long *)&dma_handle,
@@ -25493,7 +25491,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/sc
  				*dword_ptr++ =
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/scsi/qla1280.h work/drivers/scsi/qla1280.h
 --- clean/drivers/scsi/qla1280.h	2026-03-11 14:57:55.000000000 +0000
-+++ work/drivers/scsi/qla1280.h	2026-03-11 22:47:19.435987733 +0000
++++ work/drivers/scsi/qla1280.h	2026-03-11 22:47:19.000000000 +0000
 @@ -1056,6 +1056,9 @@
  		uint32_t reset_active:1;		/* 3 */
  		uint32_t abort_isp_active:1;		/* 4 */
@@ -25506,7 +25504,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/sc
  	struct nvram nvram;
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/scsi/qla2xxx/qla_init.c work/drivers/scsi/qla2xxx/qla_init.c
 --- clean/drivers/scsi/qla2xxx/qla_init.c	2026-03-11 14:58:10.000000000 +0000
-+++ work/drivers/scsi/qla2xxx/qla_init.c	2026-03-11 22:47:19.438987733 +0000
++++ work/drivers/scsi/qla2xxx/qla_init.c	2026-03-13 03:01:21.729014575 +0000
 @@ -16,6 +16,10 @@
  #include <asm/prom.h>
  #endif
@@ -25526,28 +25524,26 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/sc
  }
  
  /*
-@@ -5013,6 +5018,20 @@
+@@ -5013,6 +5018,18 @@
  		rval = 1;
  	}
  
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++#if defined(CONFIG_IA64_SGI_SN2)
 +	/*
 +	 * The SN2 does not provide BIOS emulation which means you can't change
 +	 * potentially bogus BIOS settings. Force the use of default settings
 +	 * for link rate and frame size.  Hope that the rest of the settings
 +	 * are valid.
 +	 */
-+	if (ia64_platform_is("sn2")) {
-+		nv->frame_payload_size = 2048;
-+		if (IS_QLA23XX(ha))
-+			nv->special_options[1] = BIT_7;
-+	}
++	nv->frame_payload_size = 2048;
++	if (IS_QLA23XX(ha))
++		nv->special_options[1] = BIT_7;
 +#endif
 +
  	/* Reset Initialization control block */
  	memset(icb, 0, ha->init_cb_size);
  
-@@ -7565,6 +7584,7 @@
+@@ -7565,6 +7582,7 @@
  	if (val && len >= WWN_SIZE)
  		memcpy(nv->node_name, val, WWN_SIZE);
  #endif
@@ -25557,7 +25553,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/sc
  int
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/sn/Kconfig work/drivers/sn/Kconfig
 --- clean/drivers/sn/Kconfig	1970-01-01 00:00:00.000000000 +0000
-+++ work/drivers/sn/Kconfig	2026-03-11 22:47:19.440987733 +0000
++++ work/drivers/sn/Kconfig	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,9 @@
 +# SPDX-License-Identifier: GPL-2.0-only
 +#
@@ -25570,7 +25566,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/sn
 +endmenu
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/sn/Makefile work/drivers/sn/Makefile
 --- clean/drivers/sn/Makefile	1970-01-01 00:00:00.000000000 +0000
-+++ work/drivers/sn/Makefile	2026-03-11 22:47:19.441987733 +0000
++++ work/drivers/sn/Makefile	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,5 @@
 +# SPDX-License-Identifier: GPL-2.0-only
 +#
@@ -25579,7 +25575,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/sn
 +#
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/tty/serial/Kconfig work/drivers/tty/serial/Kconfig
 --- clean/drivers/tty/serial/Kconfig	2026-03-11 14:58:10.000000000 +0000
-+++ work/drivers/tty/serial/Kconfig	2026-03-11 22:47:19.443987733 +0000
++++ work/drivers/tty/serial/Kconfig	2026-03-11 22:47:19.000000000 +0000
 @@ -784,6 +784,16 @@
  	  your boot loader (lilo or loadlin) about how to pass options to the
  	  kernel at boot time.)
@@ -25615,7 +25611,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/tt
  	depends on ARCH_QCOM || COMPILE_TEST
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/tty/serial/Makefile work/drivers/tty/serial/Makefile
 --- clean/drivers/tty/serial/Makefile	2026-03-11 14:57:55.000000000 +0000
-+++ work/drivers/tty/serial/Makefile	2026-03-11 22:47:19.444987733 +0000
++++ work/drivers/tty/serial/Makefile	2026-03-11 22:47:19.000000000 +0000
 @@ -40,6 +40,7 @@
  obj-$(CONFIG_SERIAL_DZ) += dz.o
  obj-$(CONFIG_SERIAL_ZS) += zs.o
@@ -25634,7 +25630,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/tt
  obj-$(CONFIG_SERIAL_MSM) += msm_serial.o
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/tty/serial/ioc4_serial.c work/drivers/tty/serial/ioc4_serial.c
 --- clean/drivers/tty/serial/ioc4_serial.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/drivers/tty/serial/ioc4_serial.c	2026-03-11 22:47:19.446987733 +0000
++++ work/drivers/tty/serial/ioc4_serial.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,2951 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
@@ -28589,7 +28585,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/tt
 +MODULE_LICENSE("GPL");
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/tty/serial/sn_console.c work/drivers/tty/serial/sn_console.c
 --- clean/drivers/tty/serial/sn_console.c	1970-01-01 00:00:00.000000000 +0000
-+++ work/drivers/tty/serial/sn_console.c	2026-03-11 22:47:19.448987733 +0000
++++ work/drivers/tty/serial/sn_console.c	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,1039 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
@@ -29632,7 +29628,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/drivers/tt
 +console_initcall(sn_sal_serial_console_init);
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/include/linux/ioc4.h work/include/linux/ioc4.h
 --- clean/include/linux/ioc4.h	1970-01-01 00:00:00.000000000 +0000
-+++ work/include/linux/ioc4.h	2026-03-11 22:47:19.449987733 +0000
++++ work/include/linux/ioc4.h	2026-03-11 22:47:19.000000000 +0000
 @@ -0,0 +1,184 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -29820,7 +29816,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/include/li
 +#endif				/* _LINUX_IOC4_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' clean/include/linux/pci_ids.h work/include/linux/pci_ids.h
 --- clean/include/linux/pci_ids.h	2026-03-11 14:58:11.000000000 +0000
-+++ work/include/linux/pci_ids.h	2026-03-11 22:47:19.450987733 +0000
++++ work/include/linux/pci_ids.h	2026-03-11 22:47:19.000000000 +0000
 @@ -1093,6 +1093,7 @@
  #define PCI_VENDOR_ID_SGI		0x10a9
  #define PCI_DEVICE_ID_SGI_IOC3		0x0003

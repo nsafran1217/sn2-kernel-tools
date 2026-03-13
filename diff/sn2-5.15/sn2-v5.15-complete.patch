@@ -12,12 +12,20 @@ Changes from v5.10:
   - arch/ia64/mm/contig.c, discontig.c: guard ZONE_DMA32 with ifdef
   - arch/ia64/sn/kernel/tiocx.c: bus_type.remove returns void (v5.15),
     MODULE_SUPPORTED_DEVICE removed (v5.12)
+  - arch/ia64/sn/kernel/setup.c: module_memfree added to clear
+    VM_FLUSH_RESET_PERMS before vfree (v6.4 module_enable_x fix)
   - drivers/char/Makefile: CONFIG_RAW_DRIVER removed upstream (v5.14);
     SGI_SNSC/SGI_MBCS reanchored
   - drivers/tty/serial/ioc4_serial.c: tty_port.low_latency removed (v5.12)
   - drivers/ide/: IDE subsystem removed upstream in v5.14; sgiioc4
     IDE driver dropped entirely
   - IOC3 driver dropped entirely (not used on SN2, only IOC4)
+  - CONFIG_IA64_GENERIC removed from all depends/ifdef guards
+    (compile-time SN2 selection only, no machvec runtime dispatch)
+  - sn2/io.c: CONFIG_IA64_GENERIC guard removed (always compiled)
+  - sn/kernel/Makefile: machvec.o build line removed
+  - mspec.c, qla1280.c, qla2xxx: ia64_platform_is() runtime checks
+    replaced with compile-time CONFIG_IA64_SGI_SN2 guards
 
  120 files changed
 ---
@@ -6622,7 +6630,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
 +#endif				/* _ASM_IA64_SN_SHUBIO_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modules.order' a/arch/ia64/include/asm/sn/simulator.h b/arch/ia64/include/asm/sn/simulator.h
 --- a/arch/ia64/include/asm/sn/simulator.h	1970-01-01 00:00:00.000000000 +0000
-+++ b/arch/ia64/include/asm/sn/simulator.h	2026-03-10 02:44:56.000000000 +0000
++++ b/arch/ia64/include/asm/sn/simulator.h	2026-03-13 03:22:54.764395209 +0000
 @@ -0,0 +1,25 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
@@ -6634,7 +6642,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
 +#ifndef _ASM_IA64_SN_SIMULATOR_H
 +#define _ASM_IA64_SN_SIMULATOR_H
 +
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2) || defined(CONFIG_IA64_SGI_UV)
++#if defined(CONFIG_IA64_SGI_SN2) || defined(CONFIG_IA64_SGI_UV)
 +#define SNMAGIC 0xaeeeeeee8badbeefL
 +#define IS_MEDUSA()			({long sn; asm("mov %0=cpuid[%1]" : "=r"(sn) : "r"(2)); sn == SNMAGIC;})
 +
@@ -11203,7 +11211,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
 +#endif                          /* _ASM_IA64_SN_XTALK_XWIDGET_H */
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modules.order' a/arch/ia64/sn/kernel/Makefile b/arch/ia64/sn/kernel/Makefile
 --- a/arch/ia64/sn/kernel/Makefile	1970-01-01 00:00:00.000000000 +0000
-+++ b/arch/ia64/sn/kernel/Makefile	2026-03-10 02:44:56.000000000 +0000
++++ b/arch/ia64/sn/kernel/Makefile	2026-03-13 03:22:54.764395209 +0000
 @@ -0,0 +1,18 @@
 +# arch/ia64/sn/kernel/Makefile
 +#
@@ -11220,7 +11228,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
 +				   huberror.o io_acpi_init.o io_common.o \
 +				   io_init.o iomv.o klconflib.o pio_phys.o \
 +				   sn2/
-+obj-$(CONFIG_IA64_GENERIC)      += machvec.o
++
 +obj-$(CONFIG_SGI_TIOCX)		+= tiocx.o
 +obj-$(CONFIG_PCI_MSI)		+= msi_sn.o
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modules.order' a/arch/ia64/sn/kernel/bte.c b/arch/ia64/sn/kernel/bte.c
@@ -14793,8 +14801,8 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
 +
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modules.order' a/arch/ia64/sn/kernel/setup.c b/arch/ia64/sn/kernel/setup.c
 --- a/arch/ia64/sn/kernel/setup.c	1970-01-01 00:00:00.000000000 +0000
-+++ b/arch/ia64/sn/kernel/setup.c	2026-03-10 02:44:57.000000000 +0000
-@@ -0,0 +1,814 @@
++++ b/arch/ia64/sn/kernel/setup.c	2026-03-13 03:22:58.752394198 +0000
+@@ -0,0 +1,839 @@
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
@@ -15609,6 +15617,32 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
 +			GFP_KERNEL, PAGE_KERNEL, 0,
 +			NUMA_NO_NODE, __builtin_return_address(0));
 +}
++/*
++ * SN2-specific module_memfree: clear VM_FLUSH_RESET_PERMS before vfree.
++ *
++ * Since v6.4, module_enable_x() calls module_set_memory() which
++ * unconditionally adds VM_FLUSH_RESET_PERMS to all module text sections
++ * via set_vm_flush_reset_perms().  This bypasses our module_alloc()
++ * override above that deliberately omits the flag.
++ *
++ * Clear the flag before freeing so that vfree() takes the lazy TLB
++ * invalidation path (remove_vm_area) instead of the aggressive
++ * vm_reset_perms() -> flush_tlb_kernel_range() path, which on SN2
++ * triggers SHUB PTC.GA broadcasts that interfere with concurrent
++ * PIO/MMIO traffic.
++ */
++void module_memfree(void *module_region)
++{
++	struct vm_struct *vm;
++
++	if (!module_region)
++		return;
++	vm = find_vm_area(module_region);
++	if (vm)
++		vm->flags &= ~VM_FLUSH_RESET_PERMS;
++	vfree(module_region);
++}
+\ No newline at end of file
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modules.order' a/arch/ia64/sn/kernel/sn2/Makefile b/arch/ia64/sn/kernel/sn2/Makefile
 --- a/arch/ia64/sn/kernel/sn2/Makefile	1970-01-01 00:00:00.000000000 +0000
 +++ b/arch/ia64/sn/kernel/sn2/Makefile	2026-03-10 02:44:56.000000000 +0000
@@ -15673,8 +15707,8 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
 +EXPORT_SYMBOL(sn_flush_all_caches);
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modules.order' a/arch/ia64/sn/kernel/sn2/io.c b/arch/ia64/sn/kernel/sn2/io.c
 --- a/arch/ia64/sn/kernel/sn2/io.c	1970-01-01 00:00:00.000000000 +0000
-+++ b/arch/ia64/sn/kernel/sn2/io.c	2026-03-10 02:44:56.000000000 +0000
-@@ -0,0 +1,101 @@
++++ b/arch/ia64/sn/kernel/sn2/io.c	2026-03-13 03:22:54.765395209 +0000
+@@ -0,0 +1,99 @@
 +/* 
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
@@ -15688,7 +15722,6 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
 +
 +#include <asm/sn/io.h>
 +
-+#ifdef CONFIG_IA64_GENERIC
 +
 +#undef __sn_inb
 +#undef __sn_inw
@@ -15775,7 +15808,6 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
 +	return ___sn_readq_relaxed(addr);
 +}
 +
-+#endif
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modules.order' a/arch/ia64/sn/kernel/sn2/prominfo_proc.c b/arch/ia64/sn/kernel/sn2/prominfo_proc.c
 --- a/arch/ia64/sn/kernel/sn2/prominfo_proc.c	1970-01-01 00:00:00.000000000 +0000
 +++ b/arch/ia64/sn/kernel/sn2/prominfo_proc.c	2026-03-10 02:44:56.000000000 +0000
@@ -21930,14 +21962,14 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
  obj-$(CONFIG_SUPERH)		+= sh/
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modules.order' a/drivers/char/Kconfig b/drivers/char/Kconfig
 --- a/drivers/char/Kconfig	2026-03-10 02:37:24.000000000 +0000
-+++ b/drivers/char/Kconfig	2026-03-10 02:44:57.000000000 +0000
++++ b/drivers/char/Kconfig	2026-03-13 03:22:54.766395209 +0000
 @@ -451,4 +451,26 @@
  	pool. Otherwise, say N here so it will be regarded as device input that
  	only mixes the entropy pool.
  
 +config SGI_SNSC
 +	bool "SGI Altix system controller communication support"
-+	depends on (IA64_SGI_SN2 || IA64_GENERIC)
++	depends on (IA64_SGI_SN2)
 +	help
 +	  If you have an SGI Altix and you want to enable system
 +	  controller communication from user space (you want this!),
@@ -21945,7 +21977,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
 +
 +config SGI_TIOCX
 +       bool "SGI TIO CX driver support"
-+       depends on (IA64_SGI_SN2 || IA64_GENERIC)
++       depends on (IA64_SGI_SN2)
 +       help
 +         If you have an SGI Altix and you have fpga devices attached
 +         to your TIO, say Y here, otherwise say N.
@@ -21975,14 +22007,14 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
  
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modules.order' a/drivers/char/agp/Kconfig b/drivers/char/agp/Kconfig
 --- a/drivers/char/agp/Kconfig	2026-03-10 02:37:24.000000000 +0000
-+++ b/drivers/char/agp/Kconfig	2026-03-10 02:44:57.000000000 +0000
++++ b/drivers/char/agp/Kconfig	2026-03-13 03:22:54.766395209 +0000
 @@ -150,6 +150,13 @@
  	  This option gives you AGP support for the Transmeta Efficeon
  	  series processors with integrated northbridges.
  
 +config AGP_SGI_TIOCA
 +        tristate "SGI TIO chipset AGP support"
-+        depends on AGP && (IA64_SGI_SN2 || IA64_GENERIC)
++        depends on AGP && (IA64_SGI_SN2)
 +        help
 +          This option gives you AGP GART support for the SGI TIO chipset
 +          for IA64 processors.
@@ -23738,7 +23770,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
 +#endif				// __MBCS_H__
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modules.order' a/drivers/char/mspec.c b/drivers/char/mspec.c
 --- a/drivers/char/mspec.c	2026-03-10 02:37:24.000000000 +0000
-+++ b/drivers/char/mspec.c	2026-03-10 02:44:57.000000000 +0000
++++ b/drivers/char/mspec.c	2026-03-13 03:22:54.767395209 +0000
 @@ -9,8 +9,11 @@
   *
   * This driver exports the SN special memory (mspec) facility to user
@@ -23898,7 +23930,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
  static const struct file_operations cached_fops = {
  	.owner = THIS_MODULE,
  	.mmap = cached_mmap,
-@@ -259,32 +336,89 @@
+@@ -259,32 +336,86 @@
  mspec_init(void)
  {
  	int ret;
@@ -23909,34 +23941,31 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
 +	 * memory drivers should both be valid on all ia64 hardware
 +	 */
 +#ifdef CONFIG_SGI_SN
-+	if (ia64_platform_is("sn2")) {
-+		is_sn2 = 1;
-+		if (is_shub2()) {
-+			ret = -ENOMEM;
-+			for_each_node_state(nid, N_ONLINE) {
-+				int actual_nid;
-+				int nasid;
-+				unsigned long phys;
-+
-+				scratch_page[nid] = uncached_alloc_page(nid, 1);
-+				if (scratch_page[nid] == 0)
-+					goto free_scratch_pages;
-+				phys = __pa(scratch_page[nid]);
-+				nasid = get_node_number(phys);
-+				actual_nid = nasid_to_cnodeid(nasid);
-+				if (actual_nid != nid)
-+					goto free_scratch_pages;
-+			}
-+		}
- 
-+		ret = misc_register(&fetchop_miscdev);
-+		if (ret) {
-+			printk(KERN_ERR
-+			       "%s: failed to register device %i\n",
-+			       FETCHOP_ID, ret);
-+			goto free_scratch_pages;
++	is_sn2 = 1;
++	if (is_shub2()) {
++		ret = -ENOMEM;
++		for_each_node_state(nid, N_ONLINE) {
++			int actual_nid;
++			int nasid;
++			unsigned long phys;
++			scratch_page[nid] = uncached_alloc_page(nid, 1);
++			if (scratch_page[nid] == 0)
++				goto free_scratch_pages;
++			phys = __pa(scratch_page[nid]);
++			nasid = get_node_number(phys);
++			actual_nid = nasid_to_cnodeid(nasid);
++			if (actual_nid != nid)
++				goto free_scratch_pages;
 +		}
 +	}
++	ret = misc_register(&fetchop_miscdev);
++	if (ret) {
++		printk(KERN_ERR
++		       "%s: failed to register device %i\n",
++		       FETCHOP_ID, ret);
++		goto free_scratch_pages;
++	}
+ 
 +#endif
  	ret = misc_register(&cached_miscdev);
  	if (ret) {
@@ -25406,12 +25435,12 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
 +EXPORT_SYMBOL(ioc4_unregister_submodule);
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modules.order' a/drivers/scsi/qla1280.c b/drivers/scsi/qla1280.c
 --- a/drivers/scsi/qla1280.c	2026-03-10 02:37:27.000000000 +0000
-+++ b/drivers/scsi/qla1280.c	2026-03-10 02:44:57.000000000 +0000
++++ b/drivers/scsi/qla1280.c	2026-03-13 03:22:54.769395208 +0000
 @@ -357,6 +357,10 @@
  #include <scsi/scsi_host.h>
  #include <scsi/scsi_tcq.h>
  
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++#if defined(CONFIG_IA64_SGI_SN2)
 +#include <asm/sn/io.h>
 +#endif
 +
@@ -25430,41 +25459,37 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
  #define IS_ISP1040(ha) (ha->pdev->device == PCI_DEVICE_ID_QLOGIC_ISP1020)
  #define IS_ISP1x40(ha) (ha->pdev->device == PCI_DEVICE_ID_QLOGIC_ISP1020 || \
  			ha->pdev->device == PCI_DEVICE_ID_QLOGIC_ISP1240)
-@@ -1416,6 +1425,15 @@
+@@ -1416,6 +1425,13 @@
  	ha->flags.reset_active = 0;
  	ha->flags.abort_isp_active = 0;
  
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
-+	if (ia64_platform_is("sn2")) {
-+		printk(KERN_INFO "scsi(%li): Enabling SN2 PCI DMA "
-+		       "dual channel lockup workaround\n", ha->host_no);
-+		ha->flags.use_pci_vchannel = 1;
-+		driver_setup.no_nvram = 1;
-+	}
++#if defined(CONFIG_IA64_SGI_SN2)
++	printk(KERN_INFO "scsi(%li): Enabling SN2 PCI DMA "
++	       "dual channel lockup workaround\n", ha->host_no);
++	ha->flags.use_pci_vchannel = 1;
++	driver_setup.no_nvram = 1;
 +#endif
 +
  	/* TODO: implement support for the 1040 nvram format */
  	if (IS_ISP1040(ha))
  		driver_setup.no_nvram = 1;
-@@ -2238,6 +2256,13 @@
+@@ -2238,6 +2254,11 @@
  	mb[1] = nv->firmware_feature.f.enable_fast_posting;
  	mb[1] |= nv->firmware_feature.f.report_lvd_bus_transition << 1;
  	mb[1] |= nv->firmware_feature.f.disable_synchronous_backoff << 5;
-+#if defined(CONFIG_IA64_GENERIC) || defined (CONFIG_IA64_SGI_SN2)
-+	if (ia64_platform_is("sn2")) {
-+		printk(KERN_INFO "scsi(%li): Enabling SN2 PCI DMA "
-+		       "workaround\n", ha->host_no);
-+		mb[1] |= nv->firmware_feature.f.unused_9 << 9; /* XXX */
-+	}
++#if defined (CONFIG_IA64_SGI_SN2)
++	printk(KERN_INFO "scsi(%li): Enabling SN2 PCI DMA "
++	       "workaround\n", ha->host_no);
++	mb[1] |= nv->firmware_feature.f.unused_9 << 9; /* XXX */	
 +#endif
  	status |= qla1280_mailbox_command(ha, BIT_1 | BIT_0, mb);
  
  	/* Retry count and delay. */
-@@ -2867,6 +2892,12 @@
+@@ -2867,6 +2888,12 @@
  				break;
  
  			dma_handle = sg_dma_address(s);
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++#if defined(CONFIG_IA64_SGI_SN2)
 +			if (ha->flags.use_pci_vchannel)
 +				sn_pci_set_vchan(ha->pdev,
 +						 (unsigned long *)&dma_handle,
@@ -25473,11 +25498,11 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
  			*dword_ptr++ =
  				cpu_to_le32(lower_32_bits(dma_handle));
  			*dword_ptr++ =
-@@ -2923,6 +2954,12 @@
+@@ -2923,6 +2950,12 @@
  				if (cnt == 5)
  					break;
  				dma_handle = sg_dma_address(s);
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++#if defined(CONFIG_IA64_SGI_SN2)
 +				if (ha->flags.use_pci_vchannel)
 +					sn_pci_set_vchan(ha->pdev,
 +							 (unsigned long *)&dma_handle,
@@ -25501,7 +25526,7 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
  	struct nvram nvram;
 diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modules.order' a/drivers/scsi/qla2xxx/qla_init.c b/drivers/scsi/qla2xxx/qla_init.c
 --- a/drivers/scsi/qla2xxx/qla_init.c	2026-03-10 02:37:27.000000000 +0000
-+++ b/drivers/scsi/qla2xxx/qla_init.c	2026-03-10 02:44:57.000000000 +0000
++++ b/drivers/scsi/qla2xxx/qla_init.c	2026-03-13 03:22:54.771395208 +0000
 @@ -16,6 +16,10 @@
  #include <asm/prom.h>
  #endif
@@ -25521,28 +25546,26 @@ diff -ruN --no-dereference '--exclude=*.rej' '--exclude=*.orig' '--exclude=modul
  }
  
  /*
-@@ -4884,6 +4889,20 @@
+@@ -4884,6 +4889,18 @@
  		rval = 1;
  	}
  
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++#if defined(CONFIG_IA64_SGI_SN2)
 +	/*
 +	 * The SN2 does not provide BIOS emulation which means you can't change
 +	 * potentially bogus BIOS settings. Force the use of default settings
 +	 * for link rate and frame size.  Hope that the rest of the settings
 +	 * are valid.
 +	 */
-+	if (ia64_platform_is("sn2")) {
-+		nv->frame_payload_size = 2048;
-+		if (IS_QLA23XX(ha))
-+			nv->special_options[1] = BIT_7;
-+	}
++	nv->frame_payload_size = 2048;
++	if (IS_QLA23XX(ha))
++		nv->special_options[1] = BIT_7;
 +#endif
 +
  	/* Reset Initialization control block */
  	memset(icb, 0, ha->init_cb_size);
  
-@@ -7476,6 +7495,7 @@
+@@ -7476,6 +7493,7 @@
  	if (val && len >= WWN_SIZE)
  		memcpy(nv->node_name, val, WWN_SIZE);
  #endif

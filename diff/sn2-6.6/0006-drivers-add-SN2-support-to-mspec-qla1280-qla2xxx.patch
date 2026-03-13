@@ -2,17 +2,11 @@ Subject: [PATCH 6/6] drivers: Add SN2 support to mspec, qla1280, qla2xxx
 
 drivers: Add SN2 support to mspec, qla1280, qla2xxx
 
-Modify existing driver source files for SN2 support:
-  - drivers/char/mspec.c: SN2 fetchop and BTE zero support
-  - drivers/scsi/qla1280.c, qla1280.h: SN2 PCI vchan support
-  - drivers/scsi/qla2xxx/qla_init.c: SN2 platform check
-  - drivers/misc/sgi-xp/: SN2 cross-partition support
-
 ---
 
 diff -ruN clean/drivers/char/mspec.c work/drivers/char/mspec.c
 --- clean/drivers/char/mspec.c	2026-03-10 21:13:37.000000000 +0000
-+++ work/drivers/char/mspec.c	2026-03-10 21:16:35.000000000 +0000
++++ work/drivers/char/mspec.c	2026-03-13 02:56:02.943145580 +0000
 @@ -9,8 +9,11 @@
   *
   * This driver exports the SN special memory (mspec) facility to user
@@ -172,7 +166,7 @@ diff -ruN clean/drivers/char/mspec.c work/drivers/char/mspec.c
  static const struct file_operations cached_fops = {
  	.owner = THIS_MODULE,
  	.mmap = cached_mmap,
-@@ -259,32 +336,89 @@
+@@ -259,32 +336,86 @@
  mspec_init(void)
  {
  	int ret;
@@ -183,34 +177,31 @@ diff -ruN clean/drivers/char/mspec.c work/drivers/char/mspec.c
 +	 * memory drivers should both be valid on all ia64 hardware
 +	 */
 +#ifdef CONFIG_SGI_SN
-+	if (ia64_platform_is("sn2")) {
-+		is_sn2 = 1;
-+		if (is_shub2()) {
-+			ret = -ENOMEM;
-+			for_each_node_state(nid, N_ONLINE) {
-+				int actual_nid;
-+				int nasid;
-+				unsigned long phys;
-+
-+				scratch_page[nid] = uncached_alloc_page(nid, 1);
-+				if (scratch_page[nid] == 0)
-+					goto free_scratch_pages;
-+				phys = __pa(scratch_page[nid]);
-+				nasid = get_node_number(phys);
-+				actual_nid = nasid_to_cnodeid(nasid);
-+				if (actual_nid != nid)
-+					goto free_scratch_pages;
-+			}
-+		}
- 
-+		ret = misc_register(&fetchop_miscdev);
-+		if (ret) {
-+			printk(KERN_ERR
-+			       "%s: failed to register device %i\n",
-+			       FETCHOP_ID, ret);
-+			goto free_scratch_pages;
++	is_sn2 = 1;
++	if (is_shub2()) {
++		ret = -ENOMEM;
++		for_each_node_state(nid, N_ONLINE) {
++			int actual_nid;
++			int nasid;
++			unsigned long phys;
++			scratch_page[nid] = uncached_alloc_page(nid, 1);
++			if (scratch_page[nid] == 0)
++				goto free_scratch_pages;
++			phys = __pa(scratch_page[nid]);
++			nasid = get_node_number(phys);
++			actual_nid = nasid_to_cnodeid(nasid);
++			if (actual_nid != nid)
++				goto free_scratch_pages;
 +		}
 +	}
++	ret = misc_register(&fetchop_miscdev);
++	if (ret) {
++		printk(KERN_ERR
++		       "%s: failed to register device %i\n",
++		       FETCHOP_ID, ret);
++		goto free_scratch_pages;
++	}
+ 
 +#endif
  	ret = misc_register(&cached_miscdev);
  	if (ret) {
@@ -268,12 +259,12 @@ diff -ruN clean/drivers/char/mspec.c work/drivers/char/mspec.c
  module_init(mspec_init);
 diff -ruN clean/drivers/scsi/qla1280.c work/drivers/scsi/qla1280.c
 --- clean/drivers/scsi/qla1280.c	2026-03-10 21:13:40.000000000 +0000
-+++ work/drivers/scsi/qla1280.c	2026-03-10 21:16:07.000000000 +0000
++++ work/drivers/scsi/qla1280.c	2026-03-13 02:56:02.945145594 +0000
 @@ -357,6 +357,10 @@
  #include <scsi/scsi_host.h>
  #include <scsi/scsi_tcq.h>
  
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++#if defined(CONFIG_IA64_SGI_SN2)
 +#include <asm/sn/io.h>
 +#endif
 +
@@ -292,41 +283,37 @@ diff -ruN clean/drivers/scsi/qla1280.c work/drivers/scsi/qla1280.c
  #define IS_ISP1040(ha) (ha->pdev->device == PCI_DEVICE_ID_QLOGIC_ISP1020)
  #define IS_ISP1x40(ha) (ha->pdev->device == PCI_DEVICE_ID_QLOGIC_ISP1020 || \
  			ha->pdev->device == PCI_DEVICE_ID_QLOGIC_ISP1240)
-@@ -1407,6 +1416,15 @@
+@@ -1407,6 +1416,13 @@
  	ha->flags.reset_active = 0;
  	ha->flags.abort_isp_active = 0;
  
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
-+	if (ia64_platform_is("sn2")) {
-+		printk(KERN_INFO "scsi(%li): Enabling SN2 PCI DMA "
-+		       "dual channel lockup workaround\n", ha->host_no);
-+		ha->flags.use_pci_vchannel = 1;
-+		driver_setup.no_nvram = 1;
-+	}
++#if defined(CONFIG_IA64_SGI_SN2)
++	printk(KERN_INFO "scsi(%li): Enabling SN2 PCI DMA "
++	       "dual channel lockup workaround\n", ha->host_no);
++	ha->flags.use_pci_vchannel = 1;
++	driver_setup.no_nvram = 1;
 +#endif
 +
  	/* TODO: implement support for the 1040 nvram format */
  	if (IS_ISP1040(ha))
  		driver_setup.no_nvram = 1;
-@@ -2229,6 +2247,13 @@
+@@ -2229,6 +2245,11 @@
  	mb[1] = nv->firmware_feature.f.enable_fast_posting;
  	mb[1] |= nv->firmware_feature.f.report_lvd_bus_transition << 1;
  	mb[1] |= nv->firmware_feature.f.disable_synchronous_backoff << 5;
-+#if defined(CONFIG_IA64_GENERIC) || defined (CONFIG_IA64_SGI_SN2)
-+	if (ia64_platform_is("sn2")) {
-+		printk(KERN_INFO "scsi(%li): Enabling SN2 PCI DMA "
-+		       "workaround\n", ha->host_no);
-+		mb[1] |= nv->firmware_feature.f.unused_9 << 9; /* XXX */
-+	}
++#if defined (CONFIG_IA64_SGI_SN2)
++	printk(KERN_INFO "scsi(%li): Enabling SN2 PCI DMA "
++	       "workaround\n", ha->host_no);
++	mb[1] |= nv->firmware_feature.f.unused_9 << 9; /* XXX */	
 +#endif
  	status |= qla1280_mailbox_command(ha, BIT_1 | BIT_0, mb);
  
  	/* Retry count and delay. */
-@@ -2858,6 +2883,12 @@
+@@ -2858,6 +2879,12 @@
  				break;
  
  			dma_handle = sg_dma_address(s);
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++#if defined(CONFIG_IA64_SGI_SN2)
 +			if (ha->flags.use_pci_vchannel)
 +				sn_pci_set_vchan(ha->pdev,
 +						 (unsigned long *)&dma_handle,
@@ -335,11 +322,11 @@ diff -ruN clean/drivers/scsi/qla1280.c work/drivers/scsi/qla1280.c
  			*dword_ptr++ =
  				cpu_to_le32(lower_32_bits(dma_handle));
  			*dword_ptr++ =
-@@ -2914,6 +2945,12 @@
+@@ -2914,6 +2941,12 @@
  				if (cnt == 5)
  					break;
  				dma_handle = sg_dma_address(s);
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++#if defined(CONFIG_IA64_SGI_SN2)
 +				if (ha->flags.use_pci_vchannel)
 +					sn_pci_set_vchan(ha->pdev,
 +							 (unsigned long *)&dma_handle,
@@ -363,7 +350,7 @@ diff -ruN clean/drivers/scsi/qla1280.h work/drivers/scsi/qla1280.h
  	struct nvram nvram;
 diff -ruN clean/drivers/scsi/qla2xxx/qla_init.c work/drivers/scsi/qla2xxx/qla_init.c
 --- clean/drivers/scsi/qla2xxx/qla_init.c	2026-03-10 21:13:40.000000000 +0000
-+++ work/drivers/scsi/qla2xxx/qla_init.c	2026-03-10 21:16:07.000000000 +0000
++++ work/drivers/scsi/qla2xxx/qla_init.c	2026-03-13 02:56:02.947145607 +0000
 @@ -16,6 +16,10 @@
  #include <asm/prom.h>
  #endif
@@ -383,28 +370,26 @@ diff -ruN clean/drivers/scsi/qla2xxx/qla_init.c work/drivers/scsi/qla2xxx/qla_in
  }
  
  /*
-@@ -5286,6 +5291,20 @@
+@@ -5286,6 +5291,18 @@
  		rval = 1;
  	}
  
-+#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++#if defined(CONFIG_IA64_SGI_SN2)
 +	/*
 +	 * The SN2 does not provide BIOS emulation which means you can't change
 +	 * potentially bogus BIOS settings. Force the use of default settings
 +	 * for link rate and frame size.  Hope that the rest of the settings
 +	 * are valid.
 +	 */
-+	if (ia64_platform_is("sn2")) {
-+		nv->frame_payload_size = 2048;
-+		if (IS_QLA23XX(ha))
-+			nv->special_options[1] = BIT_7;
-+	}
++	nv->frame_payload_size = 2048;
++	if (IS_QLA23XX(ha))
++		nv->special_options[1] = BIT_7;
 +#endif
 +
  	/* Reset Initialization control block */
  	memset(icb, 0, ha->init_cb_size);
  
-@@ -7845,6 +7864,7 @@
+@@ -7845,6 +7862,7 @@
  	if (val && len >= WWN_SIZE)
  		memcpy(nv->node_name, val, WWN_SIZE);
  #endif

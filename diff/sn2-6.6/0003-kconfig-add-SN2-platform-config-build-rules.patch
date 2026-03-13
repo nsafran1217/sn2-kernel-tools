@@ -2,10 +2,6 @@ Subject: [PATCH 3/6] ia64: Add SN2 platform Kconfig and build system integration
 
 ia64: Add SN2 platform Kconfig and build system integration
 
-Add CONFIG_IA64_SGI_SN2, CONFIG_SGI_SN, make SWIOTLB and
-ZONE_DMA32 conditional on !IA64_SGI_SN2, add SN2 subdirectory
-to Kbuild, and source drivers/sn/Kconfig.
-
 ---
 
 diff -ruN clean/arch/ia64/Kbuild work/arch/ia64/Kbuild

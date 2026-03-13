@@ -2,11 +2,6 @@ Subject: [PATCH 2/6] ia64: Add minimal machvec compatibility shim for compile-ti
 
 ia64: Add minimal machvec compatibility shim for compile-time SN2
 
-Provide a minimal asm/machvec.h that defines ia64_platform_is()
-as a compile-time check. This satisfies all SN2 code that calls
-ia64_platform_is("sn2") without bringing back the full machvec
-dispatch infrastructure.
-
 ---
 
 diff -ruN clean/arch/ia64/include/asm/machvec.h work/arch/ia64/include/asm/machvec.h

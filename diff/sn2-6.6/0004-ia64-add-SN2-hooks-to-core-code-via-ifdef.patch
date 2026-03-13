@@ -2,21 +2,6 @@ Subject: [PATCH 4/6] ia64: Add SN2 hooks to core ia64 code via #ifdef CONFIG_IA6
 
 ia64: Add SN2 hooks to core ia64 code via #ifdef CONFIG_IA64_SGI_SN2
 
-Targeted modifications to existing ia64 files:
-  - asm/io.h: SN2 I/O function overrides
-  - asm/mmiowb.h: SN2 MMIO write barrier
-  - asm/hw_irq.h: SN2 IRQ definitions
-  - kernel/setup.c: SN2 setup hooks
-  - kernel/irq_ia64.c: weak symbol for ia64_send_ipi
-  - kernel/acpi.c: SN2 ACPI node mapping
-  - kernel/msi_ia64.c: SN2 MSI delegation
-  - kernel/sal.c: SN2 SAL additions
-  - kernel/smpboot.c: SN2 CPU calibration bypass
-  - kernel/uncached.c: SN2 uncached allocator
-  - mm/tlb.c: SN2 global TLB purge override
-  - mm/contig.c, mm/discontig.c: ZONE_DMA32 guards
-  - pci/pci.c: SN2 PCI hooks
-
 ---
 
 diff -ruN clean/arch/ia64/include/asm/hw_irq.h work/arch/ia64/include/asm/hw_irq.h
