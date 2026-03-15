@@ -1,0 +1,53 @@
+Subject: [PATCH 0003] ia64/sn2: bte.c + msi_sn.c — from_timer rename + missing prototypes
+
+Three fixes:
+
+1. bte.c: from_timer() was renamed to timer_container_of() in 6.12
+   (commit 7d243645a784).  Update the call in bte_recovery_timeout().
+
+2. bte.c: bte_init_node() is called from setup.c via its own extern
+   but had no prototype visible in bte.c.  Add forward declaration.
+
+3. msi_sn.c: sn_teardown_msi_irq() and sn_setup_msi_irq() are
+   called from msi_ia64.c via block-scoped externs but had no
+   prototype visible in msi_sn.c.  Add forward declarations.
+
+---
+ arch/ia64/sn/kernel/bte.c    | 5 ++++-
+ arch/ia64/sn/kernel/msi_sn.c | 4 ++++
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+
+--- a/arch/ia64/sn/kernel/bte.c	2026-03-14 16:34:26.000000000 +0000
++++ b/arch/ia64/sn/kernel/bte.c	2026-03-14 17:26:58.225533286 +0000
+@@ -23,6 +23,9 @@
+ 
+ #include <asm/sn/bte.h>
+ 
++/* Called from setup.c */
++void bte_init_node(nodepda_t *, cnodeid_t);
++
+ #ifndef L1_CACHE_MASK
+ #define L1_CACHE_MASK (L1_CACHE_BYTES - 1)
+ #endif
+@@ -416,7 +419,7 @@
+  ***********************************************************************/
+ static void bte_recovery_timeout(struct timer_list *t)
+ {
+-	struct nodepda_s *nodepda = from_timer(nodepda, t, bte_recovery_timer);
++	struct nodepda_s *nodepda = timer_container_of(nodepda, t, bte_recovery_timer);
+ 
+ 	bte_error_handler(nodepda);
+ }
+--- a/arch/ia64/sn/kernel/msi_sn.c	2026-03-14 16:34:26.000000000 +0000
++++ b/arch/ia64/sn/kernel/msi_sn.c	2026-03-14 17:27:07.666380615 +0000
+@@ -28,6 +28,10 @@
+ 
+ static struct irq_chip sn_msi_chip;
+ 
++/* Called from msi_ia64.c */
++void sn_teardown_msi_irq(unsigned int irq);
++int sn_setup_msi_irq(struct pci_dev *pdev, struct msi_desc *entry);
++
+ void sn_teardown_msi_irq(unsigned int irq)
+ {
+ 	nasid_t nasid;

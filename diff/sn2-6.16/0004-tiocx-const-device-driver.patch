@@ -1,0 +1,30 @@
+Subject: [PATCH 0004] ia64/sn2: tiocx.c — const device_driver in bus match callback
+
+The bus_type .match callback signature was constified in 6.16:
+  int (*match)(struct device *dev, const struct device_driver *drv)
+
+Update tiocx_match() to take const struct device_driver *, and
+propagate const to the local cx_drv pointer since it's derived
+from the now-const driver via container_of.
+
+No other SN2 driver files define bus_type .match callbacks.
+
+---
+ arch/ia64/sn/kernel/tiocx.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/arch/ia64/sn/kernel/tiocx.c	2026-03-14 16:34:26.000000000 +0000
++++ b/arch/ia64/sn/kernel/tiocx.c	2026-03-14 17:30:46.100985422 +0000
+@@ -48,10 +48,10 @@
+  *
+  * Returns 1 if match, 0 otherwise.
+  */
+-static int tiocx_match(struct device *dev, struct device_driver *drv)
++static int tiocx_match(struct device *dev, const struct device_driver *drv)
+ {
+ 	struct cx_dev *cx_dev = to_cx_dev(dev);
+-	struct cx_drv *cx_drv = to_cx_driver(drv);
++	const struct cx_drv *cx_drv = to_cx_driver(drv);
+ 	const struct cx_device_id *ids = cx_drv->id_table;
+ 
+ 	if (!ids)

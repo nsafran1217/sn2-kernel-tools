@@ -1,15 +1,16 @@
-Lets work on re-adding SN2 support to linux 6.4. I have uploaded `6.4-clean.tar.xz` to this chat which contains the files that we need to patch. I also uploaded `6.3-sn2-patched.tar.xz` which is the patched version which works on SN2.
+Lets work on re-adding SN2 support to linux 6.16. I have uploaded `6.16-clean.tar.xz` to this chat which contains the files that we need to patch. I also uploaded `6.6-sn2-patched.tar.xz` which is the patched version which works on SN2.
+This may be more difficult than previous work because ia64 support was removed in version 6.7. The version I uploaded in 6.16-clean.tar.xz has already had ia64 support added back in. All you need to do is add SN2 support back in.
 
 PLAN.md was the original document describing the changes required to bring SN2 back into the kernel. Read it first to understand the theory of what we are doing. Update the document if needed.
 
-Apply the patches from `sn2-v6.3-complete.patch` that is in the project.  
+Apply the patches from `sn2-v6.6-complete.patch` that is in the project.  
 There will be issues when applying the patch. After fixing and applying the patch to the clean tree, examine the resulting files for build issues.  
 Changes should be applied to SN2 specific files.  
 
-Reference the previous chats named "Re-adding SN2 support to Linux 6.3", "Re-adding SN2 support to Linux 6.2, "Re-adding SN2 support to Linux 6.1", "Re-adding SN2 support to Linux 5.15" and "Re-adding SN2 support to Linux kernel 5.4" for context. They are located in this project.  
+Reference the previous chats named "Re-adding SN2 support to Linux 6.6", "Re-adding SN2 support to Linux 6.2, "Re-adding SN2 support to Linux 6.1", "Re-adding SN2 support to Linux 5.15" and "Re-adding SN2 support to Linux kernel 5.4" for context. They are located in this project.  
 
-Document the changes required in fixes.md file. 
-Create a new patch with the changes required for 6.4. Confirm that the patch applies cleanly.
+Document the changes required in v6.16-fixes.md file. 
+Create a new patch with the changes required for 6.16. Confirm that the patch applies cleanly.
 
 
 
@@ -27,6 +28,9 @@ tar cJf ~/desktop/VERSION.tar.xz \
   --exclude='*.bin' \
   --exclude='*.gz' \
   arch/ia64 \
+  mm \
+  include \
+  kernel \
   drivers/Kconfig \
   drivers/Makefile \
   drivers/acpi/Kconfig \
@@ -35,8 +39,6 @@ tar cJf ~/desktop/VERSION.tar.xz \
   drivers/char/mspec.c \
   drivers/char/agp/Kconfig \
   drivers/char/agp/Makefile \
-  drivers/ide/Kconfig \
-  drivers/ide/Makefile \
   drivers/iommu/Kconfig \
   drivers/misc/Kconfig \
   drivers/misc/Makefile \
@@ -49,13 +51,9 @@ tar cJf ~/desktop/VERSION.tar.xz \
   drivers/sn/ \
   drivers/tty/serial/Kconfig \
   drivers/tty/serial/Makefile \
-  drivers/tty/serial/sn_console.c \
-  include/linux/pci_ids.h \
-  kernel/fork.c \
-  kernel/irq/proc.c \
-  mm \ 
-  include \ 
-  kernel
+  drivers/tty/serial/sn_console.c 
+
+
 
 
 

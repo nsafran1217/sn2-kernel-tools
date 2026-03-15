@@ -1,0 +1,376 @@
+Subject: [PATCH 0010] DEBUG: instrument exec + binfmt_elf + mmap — round 5
+
+Round 4 showed: vm_mmap(addr=0, len=0x70000, prot=5, type=MAP_PRIVATE,
+off=0) returns -EINVAL for the interpreter.  The main binary loads fine
+with MAP_FIXED_NOREPLACE at region 4/6.
+
+Round 5 instruments __get_unmapped_area() to show exactly which check
+returns -EINVAL: arch_mmap_check, get_area callback, mm_get_unmapped_area,
+addr>TASK_SIZE, offset_in_page, or security_mmap_addr.
+
+Also instruments do_mmap to distinguish __get_unmapped_area vs
+mmap_region failures.
+
+---
+
+--- a/fs/binfmt_elf.c	2026-03-14 20:10:27.000000000 +0000
++++ b/fs/binfmt_elf.c	2026-03-14 20:31:19.000000000 +0000
+@@ -378,10 +378,15 @@
+ 	if (total_size) {
+ 		total_size = ELF_PAGEALIGN(total_size);
+ 		map_addr = vm_mmap(filep, addr, total_size, prot, type, off);
++		pr_err("ELF_DEBUG: elf_map: vm_mmap(addr=%lx, len=%lx, prot=%x, type=%x, off=%lx) = %lx [total_size path]\n",
++		       addr, total_size, prot, type, off, map_addr);
+ 		if (!BAD_ADDR(map_addr))
+ 			vm_munmap(map_addr+size, total_size-size);
+-	} else
++	} else {
+ 		map_addr = vm_mmap(filep, addr, size, prot, type, off);
++		pr_err("ELF_DEBUG: elf_map: vm_mmap(addr=%lx, len=%lx, prot=%x, type=%x, off=%lx) = %lx [size path]\n",
++		       addr, size, prot, type, off, map_addr);
++	}
+ 
+ 	if ((type & MAP_FIXED_NOREPLACE) &&
+ 	    PTR_ERR((void *)map_addr) == -EEXIST)
+@@ -671,12 +676,18 @@
+ 			else if (no_base && interp_elf_ex->e_type == ET_DYN)
+ 				load_addr = -vaddr;
+ 
++			pr_err("ELF_DEBUG: load_elf_interp: i=%d vaddr=%lx load_addr=%lx no_base=%lx elf_type=%x load_addr_set=%d\n",
++			       i, vaddr, load_addr, no_base, elf_type, load_addr_set);
++
+ 			map_addr = elf_load(interpreter, load_addr + vaddr,
+ 					eppnt, elf_prot, elf_type, total_size);
+ 			total_size = 0;
+ 			error = map_addr;
+-			if (BAD_ADDR(map_addr))
++			if (BAD_ADDR(map_addr)) {
++				pr_err("ELF_DEBUG: load_elf_interp: elf_load BAD_ADDR map_addr=%lx load_addr=%lx vaddr=%lx elf_type=%x\n",
++				       map_addr, load_addr, vaddr, elf_type);
+ 				goto out;
++			}
+ 
+ 			if (!load_addr_set &&
+ 			    interp_elf_ex->e_type == ET_DYN) {
+@@ -694,6 +705,11 @@
+ 			    eppnt->p_filesz > eppnt->p_memsz ||
+ 			    eppnt->p_memsz > TASK_SIZE ||
+ 			    TASK_SIZE - eppnt->p_memsz < k) {
++				pr_err("ELF_DEBUG: load_elf_interp: ENOMEM overflow k=%lx load_addr=%lx p_vaddr=%lx p_memsz=%lx p_filesz=%lx TASK_SIZE=%lx\n",
++				       k, load_addr, (unsigned long)eppnt->p_vaddr,
++				       (unsigned long)eppnt->p_memsz,
++				       (unsigned long)eppnt->p_filesz,
++				       (unsigned long)TASK_SIZE);
+ 				error = -ENOMEM;
+ 				goto out;
+ 			}
+@@ -993,8 +1009,10 @@
+ 
+ 	/* Flush all traces of the currently running executable */
+ 	retval = begin_new_exec(bprm);
+-	if (retval)
++	if (retval) {
++		pr_err("ELF_DEBUG: begin_new_exec failed retval=%d\n", retval);
+ 		goto out_free_dentry;
++	}
+ 
+ 	/* Do this immediately, since STACK_TOP as used in setup_arg_pages
+ 	   may depend on the personality.  */
+@@ -1012,8 +1030,10 @@
+ 	   change some of these later */
+ 	retval = setup_arg_pages(bprm, randomize_stack_top(STACK_TOP),
+ 				 executable_stack);
+-	if (retval < 0)
++	if (retval < 0) {
++		pr_err("ELF_DEBUG: setup_arg_pages failed retval=%d\n", retval);
+ 		goto out_free_dentry;
++	}
+ 
+ 	elf_brk = 0;
+ 
+@@ -1175,6 +1195,8 @@
+ 		if (BAD_ADDR(error)) {
+ 			retval = IS_ERR_VALUE(error) ?
+ 				PTR_ERR((void*)error) : -EINVAL;
++			pr_err("ELF_DEBUG: elf_load failed error=%lx retval=%d vaddr=%lx load_bias=%lx\n",
++			       error, retval, vaddr, load_bias);
+ 			goto out_free_dentry;
+ 		}
+ 
+@@ -1251,6 +1273,8 @@
+ 		if (BAD_ADDR(elf_entry)) {
+ 			retval = IS_ERR_VALUE(elf_entry) ?
+ 					(int)elf_entry : -EINVAL;
++			pr_err("ELF_DEBUG: load_elf_interp failed elf_entry=%lx retval=%d\n",
++			       elf_entry, retval);
+ 			goto out_free_dentry;
+ 		}
+ 		reloc_func_desc = interp_load_addr;
+@@ -1280,8 +1304,10 @@
+ 
+ 	retval = create_elf_tables(bprm, elf_ex, interp_load_addr,
+ 				   e_entry, phdr_addr);
+-	if (retval < 0)
++	if (retval < 0) {
++		pr_err("ELF_DEBUG: create_elf_tables failed retval=%d\n", retval);
+ 		goto out;
++	}
+ 
+ 	mm = current->mm;
+ 	mm->end_code = end_code;
+@@ -1362,10 +1388,13 @@
+ 	START_THREAD(elf_ex, regs, elf_entry, bprm->p);
+ 	retval = 0;
+ out:
++	if (retval < 0)
++		pr_err("ELF_DEBUG: load_elf_binary returning retval=%d\n", retval);
+ 	return retval;
+ 
+ 	/* error cleanup */
+ out_free_dentry:
++	pr_err("ELF_DEBUG: load_elf_binary out_free_dentry retval=%d\n", retval);
+ 	kfree(interp_elf_ex);
+ 	kfree(interp_elf_phdata);
+ out_free_file:
+--- a/fs/exec.c	2026-03-14 19:54:41.000000000 +0000
++++ b/fs/exec.c	2026-03-14 20:12:42.000000000 +0000
+@@ -153,8 +153,11 @@
+ 	 * does not work for STACK_GROWSUP anyway), and just do it
+ 	 * ahead of time.
+ 	 */
+-	if (!mmap_read_lock_maybe_expand(mm, vma, pos, write))
++	if (!mmap_read_lock_maybe_expand(mm, vma, pos, write)) {
++		pr_err("EXEC_DEBUG: get_arg_page: mmap_read_lock_maybe_expand failed pos=%lx write=%d vm_start=%lx vm_end=%lx vm_flags=%lx\n",
++		       pos, write, vma->vm_start, vma->vm_end, vma->vm_flags);
+ 		return NULL;
++	}
+ 
+ 	/*
+ 	 * We are doing an exec().  'current' is the process
+@@ -164,8 +167,11 @@
+ 			write ? FOLL_WRITE : 0,
+ 			&page, NULL);
+ 	mmap_read_unlock(mm);
+-	if (ret <= 0)
++	if (ret <= 0) {
++		pr_err("EXEC_DEBUG: get_arg_page: get_user_pages_remote failed ret=%d pos=%lx\n",
++		       ret, pos);
+ 		return NULL;
++	}
+ 
+ 	if (write)
+ 		acct_arg_size(bprm, vma_pages(vma));
+@@ -623,8 +629,11 @@
+ 		stack_base += (STACK_RND_MASK << PAGE_SHIFT);
+ 
+ 	/* Make sure we didn't let the argument array grow too large. */
+-	if (vma->vm_end - vma->vm_start > stack_base)
++	if (vma->vm_end - vma->vm_start > stack_base) {
++		pr_err("EXEC_DEBUG: setup_arg_pages: arg array too large vm_size=%lx stack_base=%lx stack_top=%lx\n",
++		       vma->vm_end - vma->vm_start, stack_base, stack_top);
+ 		return -ENOMEM;
++	}
+ 
+ 	stack_base = PAGE_ALIGN(stack_top - stack_base);
+ 
+@@ -636,8 +645,11 @@
+ 	stack_top = PAGE_ALIGN(stack_top);
+ 
+ 	if (unlikely(stack_top < mmap_min_addr) ||
+-	    unlikely(vma->vm_end - vma->vm_start >= stack_top - mmap_min_addr))
++	    unlikely(vma->vm_end - vma->vm_start >= stack_top - mmap_min_addr)) {
++		pr_err("EXEC_DEBUG: setup_arg_pages: stack_top check failed stack_top=%lx mmap_min_addr=%lx vm_start=%lx vm_end=%lx\n",
++		       stack_top, mmap_min_addr, vma->vm_start, vma->vm_end);
+ 		return -ENOMEM;
++	}
+ 
+ 	stack_shift = vma->vm_end - stack_top;
+ 
+@@ -671,8 +683,10 @@
+ 			vm_flags);
+ 	tlb_finish_mmu(&tlb);
+ 
+-	if (ret)
++	if (ret) {
++		pr_err("EXEC_DEBUG: setup_arg_pages: mprotect_fixup failed ret=%ld\n", ret);
+ 		goto out_unlock;
++	}
+ 	BUG_ON(prev != vma);
+ 
+ 	if (unlikely(vm_flags & VM_EXEC)) {
+@@ -688,8 +702,11 @@
+ 		 * its final location.
+ 		 */
+ 		ret = relocate_vma_down(vma, stack_shift);
+-		if (ret)
++		if (ret) {
++			pr_err("EXEC_DEBUG: setup_arg_pages: relocate_vma_down failed ret=%ld stack_shift=%lx\n",
++			       ret, stack_shift);
+ 			goto out_unlock;
++		}
+ 	}
+ 
+ 	/* mprotect_fixup is overkill to remove the temporary stack flags */
+@@ -712,8 +729,11 @@
+ #endif
+ 	current->mm->start_stack = bprm->p;
+ 	ret = expand_stack_locked(vma, stack_base);
+-	if (ret)
++	if (ret) {
++		pr_err("EXEC_DEBUG: setup_arg_pages: expand_stack_locked failed ret=%ld stack_base=%lx vm_start=%lx vm_end=%lx\n",
++		       ret, stack_base, vma->vm_start, vma->vm_end);
+ 		ret = -EFAULT;
++	}
+ 
+ out_unlock:
+ 	mmap_write_unlock(mm);
+@@ -1295,6 +1315,8 @@
+ 		mutex_unlock(&me->signal->cred_guard_mutex);
+ 
+ out:
++	if (retval)
++		pr_err("EXEC_DEBUG: begin_new_exec failed retval=%d\n", retval);
+ 	return retval;
+ }
+ EXPORT_SYMBOL(begin_new_exec);
+@@ -1467,6 +1489,9 @@
+ 	if (!retval)
+ 		return bprm;
+ 
++	pr_err("EXEC_DEBUG: alloc_bprm: bprm_mm_init failed retval=%d filename=%s\n",
++	       retval, bprm->filename);
++
+ out_free:
+ 	free_bprm(bprm);
+ 	return ERR_PTR(retval);
+@@ -1752,8 +1777,11 @@
+ 		goto out;
+ 
+ 	retval = exec_binprm(bprm);
+-	if (retval < 0)
++	if (retval < 0) {
++		pr_err("EXEC_DEBUG: bprm_execve: exec_binprm failed retval=%d interp=%s\n",
++		       retval, bprm->interp);
+ 		goto out;
++	}
+ 
+ 	sched_mm_cid_after_execve(current);
+ 	rseq_execve(current);
+@@ -1918,9 +1946,15 @@
+ 		goto out_free;
+ 
+ 	retval = bprm_execve(bprm);
++	if (retval < 0)
++		pr_err("EXEC_DEBUG: kernel_execve: bprm_execve failed retval=%d filename=%s\n",
++		       retval, kernel_filename);
+ out_free:
+ 	free_bprm(bprm);
+ out_ret:
++	if (retval < 0)
++		pr_err("EXEC_DEBUG: kernel_execve: FINAL retval=%d filename=%s\n",
++		       retval, kernel_filename);
+ 	putname(filename);
+ 	return retval;
+ }
+--- a/mm/mmap.c	2026-03-14 20:53:17.218612450 +0000
++++ b/mm/mmap.c	2026-03-14 20:56:35.456997890 +0000
+@@ -407,8 +407,11 @@
+ 	 * that it represents a valid section of the address space.
+ 	 */
+ 	addr = __get_unmapped_area(file, addr, len, pgoff, flags, vm_flags);
+-	if (IS_ERR_VALUE(addr))
++	if (IS_ERR_VALUE(addr)) {
++		pr_err("MMAP_DEBUG: do_mmap: __get_unmapped_area failed addr=%lx file=%d len=%lx flags=%lx\n",
++		       addr, !!file, len, flags);
+ 		return addr;
++	}
+ 
+ 	if (flags & MAP_FIXED_NOREPLACE) {
+ 		if (find_vma_intersection(mm, addr, addr + len))
+@@ -559,6 +562,9 @@
+ 	}
+ 
+ 	addr = mmap_region(file, addr, len, vm_flags, pgoff, uf);
++	if (IS_ERR_VALUE(addr))
++		pr_err("MMAP_DEBUG: do_mmap: mmap_region failed addr=%lx vm_flags=%lx\n",
++		       addr, vm_flags);
+ 	if (!IS_ERR_VALUE(addr) &&
+ 	    ((vm_flags & VM_LOCKED) ||
+ 	     (flags & (MAP_POPULATE | MAP_NONBLOCK)) == MAP_POPULATE))
+@@ -820,8 +826,11 @@
+ 				  = NULL;
+ 
+ 	unsigned long error = arch_mmap_check(addr, len, flags);
+-	if (error)
++	if (error) {
++		pr_err("MMAP_DEBUG: arch_mmap_check failed err=%lx addr=%lx len=%lx\n",
++		       error, addr, len);
+ 		return error;
++	}
+ 
+ 	/* Careful about overflows.. */
+ 	if (len > TASK_SIZE)
+@@ -831,10 +840,6 @@
+ 		if (file->f_op->get_unmapped_area)
+ 			get_area = file->f_op->get_unmapped_area;
+ 	} else if (flags & MAP_SHARED) {
+-		/*
+-		 * mmap_region() will call shmem_zero_setup() to create a file,
+-		 * so use shmem's get_unmapped_area in case it can be huge.
+-		 */
+ 		get_area = shmem_get_unmapped_area;
+ 	}
+ 
+@@ -844,23 +849,34 @@
+ 
+ 	if (get_area) {
+ 		addr = get_area(file, addr, len, pgoff, flags);
++		if (IS_ERR_VALUE(addr))
++			pr_err("MMAP_DEBUG: get_area callback failed addr=%lx len=%lx pgoff=%lx\n",
++			       addr, len, pgoff);
+ 	} else if (IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE) && !file
+ 		   && !addr /* no hint */
+ 		   && IS_ALIGNED(len, PMD_SIZE)) {
+-		/* Ensures that larger anonymous mappings are THP aligned. */
+ 		addr = thp_get_unmapped_area_vmflags(file, addr, len,
+ 						     pgoff, flags, vm_flags);
+ 	} else {
+ 		addr = mm_get_unmapped_area_vmflags(current->mm, file, addr, len,
+ 						    pgoff, flags, vm_flags);
++		if (IS_ERR_VALUE(addr))
++			pr_err("MMAP_DEBUG: mm_get_unmapped_area failed addr=%lx len=%lx mmap_base=%lx\n",
++			       addr, len, current->mm->mmap_base);
+ 	}
+ 	if (IS_ERR_VALUE(addr))
+ 		return addr;
+ 
+-	if (addr > TASK_SIZE - len)
++	if (addr > TASK_SIZE - len) {
++		pr_err("MMAP_DEBUG: addr>TASK_SIZE-len addr=%lx TASK_SIZE=%lx len=%lx\n",
++		       addr, (unsigned long)TASK_SIZE, len);
+ 		return -ENOMEM;
+-	if (offset_in_page(addr))
++	}
++	if (offset_in_page(addr)) {
++		pr_err("MMAP_DEBUG: offset_in_page addr=%lx PAGE_SIZE=%lx\n",
++		       addr, PAGE_SIZE);
+ 		return -EINVAL;
++	}
+ 
+ 	error = security_mmap_addr(addr);
+ 	return error ? error : addr;
+--- a/mm/vma_exec.c	2026-03-14 19:54:41.000000000 +0000
++++ b/mm/vma_exec.c	2026-03-14 19:54:57.000000000 +0000
+@@ -141,8 +141,11 @@
+ 	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
+ 
+ 	err = insert_vm_struct(mm, vma);
+-	if (err)
++	if (err) {
++		pr_err("EXEC_DEBUG: create_init_stack_vma: insert_vm_struct failed err=%d vm_start=%lx vm_end=%lx\n",
++		       err, vma->vm_start, vma->vm_end);
+ 		goto err;
++	}
+ 
+ 	mm->stack_vm = mm->total_vm = 1;
+ 	mmap_write_unlock(mm);

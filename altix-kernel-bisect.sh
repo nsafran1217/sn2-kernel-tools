@@ -39,8 +39,14 @@ git apply $_BASE_DIR/sn2-kernel-tools/diff/sn_mmiowb.patch
 
 set -e # end on any error
 
+if [ -z "$1" ]
+  then
+    ver=$(git log --oneline | head -n1 | grep -o "Linux\ .*" | cut -d' ' -f2-)
 
-ver=$(git log --oneline | head -n1 | grep -o "Linux\ .*" | cut -d' ' -f2-)
+else 
+
+	ver=$1
+fi
 echo $ver
 
 # define LOCALVERSION
