@@ -145,7 +145,7 @@ index 5d267132f8cb..9c68a7af3265 100644
  
  #endif /* _ASM_IA64_HW_IRQ_H */
 diff --git a/arch/ia64/include/asm/io.h b/arch/ia64/include/asm/io.h
-index 58b73bd33595..d499d84912da 100644
+index 58b73bd33595..a1055bb3ace5 100644
 --- a/arch/ia64/include/asm/io.h
 +++ b/arch/ia64/include/asm/io.h
 @@ -262,6 +262,59 @@ extern void memset_io(volatile void __iomem *s, int c, long n);
@@ -10359,18 +10359,6 @@ index e19ecb959c38..a34e52a4311b 100644
  	}
  
  	/* System-Level Interrupt Routing */
-diff --git a/arch/ia64/kernel/crash.c b/arch/ia64/kernel/crash.c
-index 88b3ce3e66cd..65b0781f83ab 100644
---- a/arch/ia64/kernel/crash.c
-+++ b/arch/ia64/kernel/crash.c
-@@ -232,7 +232,6 @@ static struct ctl_table kdump_ctl_table[] = {
- 		.mode = 0644,
- 		.proc_handler = proc_dointvec,
- 	},
--	{ }
- };
- #endif
- 
 diff --git a/arch/ia64/kernel/irq_ia64.c b/arch/ia64/kernel/irq_ia64.c
 index 6ab677f7ab97..e579c476176b 100644
 --- a/arch/ia64/kernel/irq_ia64.c
@@ -10392,19 +10380,6 @@ index 6ab677f7ab97..e579c476176b 100644
  ia64_send_ipi (int cpu, int vector, int delivery_mode, int redirect)
  {
  	void __iomem *ipi_addr;
-diff --git a/arch/ia64/kernel/mca.c b/arch/ia64/kernel/mca.c
-index 2c272a392e9c..caa3ef698ab7 100644
---- a/arch/ia64/kernel/mca.c
-+++ b/arch/ia64/kernel/mca.c
-@@ -607,7 +607,7 @@ ia64_mca_cpe_int_handler (int cpe_irq, void *arg)
-  *  Outputs
-  *      None
-  */
--static void
-+void
- ia64_mca_register_cpev (int cpev)
- {
- 	/* Register the CPE interrupt vector with SAL */
 diff --git a/arch/ia64/kernel/msi_ia64.c b/arch/ia64/kernel/msi_ia64.c
 index 025e5133c860..5cd956c2a043 100644
 --- a/arch/ia64/kernel/msi_ia64.c
@@ -10591,293 +10566,6 @@ index 9c3f56882725..7b1901b41119 100644
  	info.length = len;
  	info.low_limit = addr;
  	info.high_limit = TASK_SIZE;
-diff --git a/arch/ia64/kernel/uncached.c b/arch/ia64/kernel/uncached.c
-new file mode 100644
-index 000000000000..2fb431a42e7b
---- /dev/null
-+++ b/arch/ia64/kernel/uncached.c
-@@ -0,0 +1,281 @@
-+// SPDX-License-Identifier: GPL-2.0-only
-+/*
-+ * Copyright (C) 2001-2008 Silicon Graphics, Inc.  All rights reserved.
-+ *
-+ * A simple uncached page allocator using the generic allocator. This
-+ * allocator first utilizes the spare (spill) pages found in the EFI
-+ * memmap and will then start converting cached pages to uncached ones
-+ * at a granule at a time. Node awareness is implemented by having a
-+ * pool of pages per node.
-+ */
-+
-+#include <linux/types.h>
-+#include <linux/kernel.h>
-+#include <linux/module.h>
-+#include <linux/init.h>
-+#include <linux/errno.h>
-+#include <linux/string.h>
-+#include <linux/efi.h>
-+#include <linux/nmi.h>
-+#include <linux/genalloc.h>
-+#include <linux/gfp.h>
-+#include <linux/pgtable.h>
-+#include <asm/efi.h>
-+#include <asm/page.h>
-+#include <asm/machvec.h>
-+#include <asm/pal.h>
-+#include <linux/atomic.h>
-+#include <asm/tlbflush.h>
-+
-+struct uncached_pool {
-+	struct gen_pool *pool;
-+	struct mutex add_chunk_mutex;	/* serialize adding a converted chunk */
-+	int nchunks_added;		/* #of converted chunks added to pool */
-+	atomic_t status;		/* smp called function's return status*/
-+};
-+
-+#define MAX_CONVERTED_CHUNKS_PER_NODE	2
-+
-+struct uncached_pool uncached_pools[MAX_NUMNODES];
-+
-+
-+static void uncached_ipi_visibility(void *data)
-+{
-+	int status;
-+	struct uncached_pool *uc_pool = (struct uncached_pool *)data;
-+
-+	status = ia64_pal_prefetch_visibility(PAL_VISIBILITY_PHYSICAL);
-+	if ((status != PAL_VISIBILITY_OK) &&
-+	    (status != PAL_VISIBILITY_OK_REMOTE_NEEDED))
-+		atomic_inc(&uc_pool->status);
-+}
-+
-+
-+static void uncached_ipi_mc_drain(void *data)
-+{
-+	int status;
-+	struct uncached_pool *uc_pool = (struct uncached_pool *)data;
-+
-+	status = ia64_pal_mc_drain();
-+	if (status != PAL_STATUS_SUCCESS)
-+		atomic_inc(&uc_pool->status);
-+}
-+
-+
-+/*
-+ * Add a new chunk of uncached memory pages to the specified pool.
-+ *
-+ * @pool: pool to add new chunk of uncached memory to
-+ * @nid: node id of node to allocate memory from, or -1
-+ *
-+ * This is accomplished by first allocating a granule of cached memory pages
-+ * and then converting them to uncached memory pages.
-+ */
-+static int uncached_add_chunk(struct uncached_pool *uc_pool, int nid)
-+{
-+	struct page *page;
-+	int status, i, nchunks_added = uc_pool->nchunks_added;
-+	unsigned long c_addr, uc_addr;
-+
-+	if (mutex_lock_interruptible(&uc_pool->add_chunk_mutex) != 0)
-+		return -1;	/* interrupted by a signal */
-+
-+	if (uc_pool->nchunks_added > nchunks_added) {
-+		/* someone added a new chunk while we were waiting */
-+		mutex_unlock(&uc_pool->add_chunk_mutex);
-+		return 0;
-+	}
-+
-+	if (uc_pool->nchunks_added >= MAX_CONVERTED_CHUNKS_PER_NODE) {
-+		mutex_unlock(&uc_pool->add_chunk_mutex);
-+		return -1;
-+	}
-+
-+	/* attempt to allocate a granule's worth of cached memory pages */
-+
-+	page = __alloc_pages_node(nid,
-+				GFP_KERNEL | __GFP_ZERO | __GFP_THISNODE,
-+				IA64_GRANULE_SHIFT-PAGE_SHIFT);
-+	if (!page) {
-+		mutex_unlock(&uc_pool->add_chunk_mutex);
-+		return -1;
-+	}
-+
-+	/* convert the memory pages from cached to uncached */
-+
-+	c_addr = (unsigned long)page_address(page);
-+	uc_addr = c_addr - PAGE_OFFSET + __IA64_UNCACHED_OFFSET;
-+
-+	/*
-+	 * There's a small race here where it's possible for someone to
-+	 * access the page through /dev/mem halfway through the conversion
-+	 * to uncached - not sure it's really worth bothering about
-+	 */
-+	for (i = 0; i < (IA64_GRANULE_SIZE / PAGE_SIZE); i++)
-+		SetPageUncached(&page[i]);
-+
-+	flush_tlb_kernel_range(uc_addr, uc_addr + IA64_GRANULE_SIZE);
-+
-+	status = ia64_pal_prefetch_visibility(PAL_VISIBILITY_PHYSICAL);
-+	if (status == PAL_VISIBILITY_OK_REMOTE_NEEDED) {
-+		atomic_set(&uc_pool->status, 0);
-+		smp_call_function(uncached_ipi_visibility, uc_pool, 1);
-+		if (atomic_read(&uc_pool->status))
-+			goto failed;
-+	} else if (status != PAL_VISIBILITY_OK)
-+		goto failed;
-+
-+	preempt_disable();
-+
-+#ifdef CONFIG_IA64_SGI_SN2
-+	{
-+		extern void sn_flush_all_caches(unsigned long, unsigned long);
-+		sn_flush_all_caches(uc_addr, IA64_GRANULE_SIZE);
-+	}
-+#else
-+	flush_icache_range(uc_addr, uc_addr + IA64_GRANULE_SIZE);
-+#endif
-+
-+	/* flush the just introduced uncached translation from the TLB */
-+	local_flush_tlb_all();
-+
-+	preempt_enable();
-+
-+	status = ia64_pal_mc_drain();
-+	if (status != PAL_STATUS_SUCCESS)
-+		goto failed;
-+	atomic_set(&uc_pool->status, 0);
-+	smp_call_function(uncached_ipi_mc_drain, uc_pool, 1);
-+	if (atomic_read(&uc_pool->status))
-+		goto failed;
-+
-+	/*
-+	 * The chunk of memory pages has been converted to uncached so now we
-+	 * can add it to the pool.
-+	 */
-+	status = gen_pool_add(uc_pool->pool, uc_addr, IA64_GRANULE_SIZE, nid);
-+	if (status)
-+		goto failed;
-+
-+	uc_pool->nchunks_added++;
-+	mutex_unlock(&uc_pool->add_chunk_mutex);
-+	return 0;
-+
-+	/* failed to convert or add the chunk so give it back to the kernel */
-+failed:
-+	for (i = 0; i < (IA64_GRANULE_SIZE / PAGE_SIZE); i++)
-+		ClearPageUncached(&page[i]);
-+
-+	free_pages(c_addr, IA64_GRANULE_SHIFT-PAGE_SHIFT);
-+	mutex_unlock(&uc_pool->add_chunk_mutex);
-+	return -1;
-+}
-+
-+
-+/*
-+ * uncached_alloc_page
-+ *
-+ * @starting_nid: node id of node to start with, or -1
-+ * @n_pages: number of contiguous pages to allocate
-+ *
-+ * Allocate the specified number of contiguous uncached pages on the
-+ * requested node. If not enough contiguous uncached pages are available
-+ * on the requested node, roundrobin starting with the next higher node.
-+ */
-+unsigned long uncached_alloc_page(int starting_nid, int n_pages)
-+{
-+	unsigned long uc_addr;
-+	struct uncached_pool *uc_pool;
-+	int nid;
-+
-+	if (unlikely(starting_nid >= MAX_NUMNODES))
-+		return 0;
-+
-+	if (starting_nid < 0)
-+		starting_nid = numa_node_id();
-+	nid = starting_nid;
-+
-+	do {
-+		if (!node_state(nid, N_HIGH_MEMORY))
-+			continue;
-+		uc_pool = &uncached_pools[nid];
-+		if (uc_pool->pool == NULL)
-+			continue;
-+		do {
-+			uc_addr = gen_pool_alloc(uc_pool->pool,
-+						 n_pages * PAGE_SIZE);
-+			if (uc_addr != 0)
-+				return uc_addr;
-+		} while (uncached_add_chunk(uc_pool, nid) == 0);
-+
-+	} while ((nid = (nid + 1) % MAX_NUMNODES) != starting_nid);
-+
-+	return 0;
-+}
-+EXPORT_SYMBOL(uncached_alloc_page);
-+
-+
-+/*
-+ * uncached_free_page
-+ *
-+ * @uc_addr: uncached address of first page to free
-+ * @n_pages: number of contiguous pages to free
-+ *
-+ * Free the specified number of uncached pages.
-+ */
-+void uncached_free_page(unsigned long uc_addr, int n_pages)
-+{
-+	int nid = paddr_to_nid(uc_addr - __IA64_UNCACHED_OFFSET);
-+	struct gen_pool *pool = uncached_pools[nid].pool;
-+
-+	if (unlikely(pool == NULL))
-+		return;
-+
-+	if ((uc_addr & (0XFUL << 60)) != __IA64_UNCACHED_OFFSET)
-+		panic("uncached_free_page invalid address %lx\n", uc_addr);
-+
-+	gen_pool_free(pool, uc_addr, n_pages * PAGE_SIZE);
-+}
-+EXPORT_SYMBOL(uncached_free_page);
-+
-+
-+/*
-+ * uncached_build_memmap,
-+ *
-+ * @uc_start: uncached starting address of a chunk of uncached memory
-+ * @uc_end: uncached ending address of a chunk of uncached memory
-+ * @arg: ignored, (NULL argument passed in on call to efi_memmap_walk_uc())
-+ *
-+ * Called at boot time to build a map of pages that can be used for
-+ * memory special operations.
-+ */
-+static int __init uncached_build_memmap(u64 uc_start, u64 uc_end, void *arg)
-+{
-+	int nid = paddr_to_nid(uc_start - __IA64_UNCACHED_OFFSET);
-+	struct gen_pool *pool = uncached_pools[nid].pool;
-+	size_t size = uc_end - uc_start;
-+
-+	touch_softlockup_watchdog();
-+
-+	if (pool != NULL) {
-+		memset((char *)uc_start, 0, size);
-+		(void) gen_pool_add(pool, uc_start, size, nid);
-+	}
-+	return 0;
-+}
-+
-+
-+static int __init uncached_init(void)
-+{
-+	int nid;
-+
-+	for_each_online_node(nid) {
-+		uncached_pools[nid].pool = gen_pool_create(PAGE_SHIFT, nid);
-+		mutex_init(&uncached_pools[nid].add_chunk_mutex);
-+	}
-+
-+	efi_memmap_walk_uc(uncached_build_memmap, NULL);
-+	return 0;
-+}
-+
-+__initcall(uncached_init);
 diff --git a/arch/ia64/mm/contig.c b/arch/ia64/mm/contig.c
 index 1e9eaa107eb7..3cd1c85f3d4c 100644
 --- a/arch/ia64/mm/contig.c
@@ -22474,16 +22162,15 @@ index f8ba40002d53..87ad3e5009e9 100644
 +         say Y or M here, otherwise say N.
 +
  endmenu
-diff --git a/drivers/char/Makefile b/drivers/char/Makefile
-index e9b360cdc99a..6d8807b75492 100644
---- a/drivers/char/Makefile
-+++ b/drivers/char/Makefile
-@@ -8,8 +8,11 @@ obj-$(CONFIG_TTY_PRINTK)	+= ttyprintk.o
+diff -ruN clean/drivers/char/Makefile work/drivers/char/Makefile
+--- clean/drivers/char/Makefile	2026-03-10 21:13:37.000000000 +0000
++++ work/drivers/char/Makefile	2026-03-10 21:16:07.000000000 +0000
+@@ -8,9 +8,11 @@
  obj-y				+= misc.o
  obj-$(CONFIG_ATARI_DSP56K)	+= dsp56k.o
  obj-$(CONFIG_VIRTIO_CONSOLE)	+= virtio_console.o
 +obj-$(CONFIG_SGI_SNSC)		+= snsc.o snsc_event.o
-+obj-$(CONFIG_MSPEC)		+= mspec.o
+ obj-$(CONFIG_MSPEC)		+= mspec.o
  obj-$(CONFIG_UV_MMTIMER)	+= uv_mmtimer.o
  obj-$(CONFIG_IBM_BSR)		+= bsr.o
 +obj-$(CONFIG_SGI_MBCS)		+= mbcs.o
@@ -24261,59 +23948,27 @@ index 000000000000..1a36884c48b5
 +static int mbcs_gscr_mmap(struct file *fp, struct vm_area_struct *vma);
 +
 +#endif				// __MBCS_H__
-diff --git a/drivers/char/mspec.c b/drivers/char/mspec.c
-new file mode 100644
-index 000000000000..2b4cc588daa0
---- /dev/null
-+++ b/drivers/char/mspec.c
-@@ -0,0 +1,426 @@
-+// SPDX-License-Identifier: GPL-2.0-only
-+/*
-+ * Copyright (C) 2001-2006 Silicon Graphics, Inc.  All rights
-+ * reserved.
-+ */
-+
-+/*
-+ * SN Platform Special Memory (mspec) Support
-+ *
-+ * This driver exports the SN special memory (mspec) facility to user
-+ * processes.
+diff -ruN clean/drivers/char/mspec.c work/drivers/char/mspec.c
+--- clean/drivers/char/mspec.c	2026-03-10 21:13:37.000000000 +0000
++++ work/drivers/char/mspec.c	2026-03-13 02:56:02.943145580 +0000
+@@ -9,8 +9,11 @@
+  *
+  * This driver exports the SN special memory (mspec) facility to user
+  * processes.
+- * There are two types of memory made available thru this driver:
+- * uncached and cached.
 + * There are three types of memory made available thru this driver:
 + * fetchops, uncached and cached.
 + *
 + * Fetchops are atomic memory operations that are implemented in the
 + * memory controller on SGI SN hardware.
-+ *
-+ * Uncached are used for memory write combining feature of the ia64
-+ * cpu.
-+ *
-+ * Cached are used for areas of memory that are used as cached addresses
-+ * on our partition and used as uncached addresses from other partitions.
-+ * Due to a design constraint of the SN2 Shub, you can not have processors
-+ * on the same FSB perform both a cached and uncached reference to the
-+ * same cache line.  These special memory cached regions prevent the
-+ * kernel from ever dropping in a TLB entry and therefore prevent the
-+ * processor from ever speculating a cache line from this page.
-+ */
-+
-+#include <linux/types.h>
-+#include <linux/kernel.h>
-+#include <linux/module.h>
-+#include <linux/init.h>
-+#include <linux/errno.h>
-+#include <linux/miscdevice.h>
-+#include <linux/spinlock.h>
-+#include <linux/mm.h>
-+#include <linux/fs.h>
-+#include <linux/vmalloc.h>
-+#include <linux/string.h>
-+#include <linux/slab.h>
-+#include <linux/numa.h>
-+#include <linux/refcount.h>
-+#include <asm/page.h>
-+#include <linux/atomic.h>
-+#include <asm/tlbflush.h>
-+#include <asm/uncached.h>
+  *
+  * Uncached are used for memory write combining feature of the ia64
+  * cpu.
+@@ -42,8 +45,17 @@
+ #include <linux/atomic.h>
+ #include <asm/tlbflush.h>
+ #include <asm/uncached.h>
 +#include <asm/sn/addrs.h>
 +#include <asm/sn/arch.h>
 +#include <asm/sn/mspec.h>
@@ -24322,49 +23977,35 @@ index 000000000000..2b4cc588daa0
 +#include <asm/sn/bte.h>
 +#include <asm/sn/shubio.h>
 +#include <asm/machvec.h>
-+
-+
+ 
+ 
 +#define FETCHOP_ID	"SGI Fetchop,"
-+#define CACHED_ID	"Cached,"
-+#define UNCACHED_ID	"Uncached"
-+#define REVISION	"4.0"
-+#define MSPEC_BASENAME	"mspec"
-+
-+/*
-+ * Page types allocated by the device.
-+ */
-+enum mspec_page_type {
+ #define CACHED_ID	"Cached,"
+ #define UNCACHED_ID	"Uncached"
+ #define REVISION	"4.0"
+@@ -53,10 +65,17 @@
+  * Page types allocated by the device.
+  */
+ enum mspec_page_type {
+-	MSPEC_CACHED = 2,
 +	MSPEC_FETCHOP = 1,
 +	MSPEC_CACHED,
-+	MSPEC_UNCACHED
-+};
-+
+ 	MSPEC_UNCACHED
+ };
+ 
 +#ifdef CONFIG_SGI_SN
 +static int is_sn2;
 +#else
 +#define is_sn2		0
 +#endif
 +
-+/*
-+ * One of these structures is allocated when an mspec region is mmaped. The
-+ * structure is pointed to by the vma->vm_private_data field in the vma struct.
-+ * This structure is used to record the addresses of the mspec pages.
-+ * This structure is shared by all vma's that are split off from the
-+ * original vma when split_vma()'s are done.
-+ *
-+ * The refcnt is incremented atomically because mm->mmap_lock does not
-+ * protect in fork case where multiple tasks share the vma_data.
-+ */
-+struct vma_data {
-+	refcount_t refcnt;	/* Number of vmas sharing the data. */
-+	spinlock_t lock;	/* Serialize access to this structure. */
-+	int count;		/* Number of pages allocated. */
-+	enum mspec_page_type type; /* Type of pages allocated. */
-+	unsigned long vm_start;	/* Original (unsplit) base. */
-+	unsigned long vm_end;	/* Original (unsplit) end. */
-+	unsigned long maddr[];	/* Array of MSPEC addresses. */
-+};
-+
+ /*
+  * One of these structures is allocated when an mspec region is mmaped. The
+  * structure is pointed to by the vma->vm_private_data field in the vma struct.
+@@ -77,6 +96,39 @@
+ 	unsigned long maddr[];	/* Array of MSPEC addresses. */
+ };
+ 
 +/* used on shub2 to clear FOP cache in the HUB */
 +static unsigned long scratch_page[MAX_NUMNODES];
 +#define SH2_AMO_CACHE_ENTRIES	4
@@ -24398,168 +24039,62 @@ index 000000000000..2b4cc588daa0
 +	return status;
 +}
 +
-+/*
-+ * mspec_open
-+ *
-+ * Called when a device mapping is created by a means other than mmap
-+ * (via fork, munmap, etc.).  Increments the reference count on the
-+ * underlying mspec data so it is not freed prematurely.
-+ */
-+static void
-+mspec_open(struct vm_area_struct *vma)
-+{
-+	struct vma_data *vdata;
-+
-+	vdata = vma->vm_private_data;
-+	refcount_inc(&vdata->refcnt);
-+}
-+
-+/*
-+ * mspec_close
-+ *
-+ * Called when unmapping a device mapping. Frees all mspec pages
-+ * belonging to all the vma's sharing this vma_data structure.
-+ */
-+static void
-+mspec_close(struct vm_area_struct *vma)
-+{
-+	struct vma_data *vdata;
-+	int index, last_index;
-+	unsigned long my_page;
-+
-+	vdata = vma->vm_private_data;
-+
-+	if (!refcount_dec_and_test(&vdata->refcnt))
-+		return;
-+
-+	last_index = (vdata->vm_end - vdata->vm_start) >> PAGE_SHIFT;
-+	for (index = 0; index < last_index; index++) {
-+		if (vdata->maddr[index] == 0)
-+			continue;
-+		/*
-+		 * Clear the page before sticking it back
-+		 * into the pool.
-+		 */
-+		my_page = vdata->maddr[index];
-+		vdata->maddr[index] = 0;
+ /*
+  * mspec_open
+  *
+@@ -121,8 +173,11 @@
+ 		 */
+ 		my_page = vdata->maddr[index];
+ 		vdata->maddr[index] = 0;
+-		memset((char *)my_page, 0, PAGE_SIZE);
+-		uncached_free_page(my_page, 1);
 +		if (!mspec_zero_block(my_page, PAGE_SIZE))
 +			uncached_free_page(my_page, 1);
 +		else
 +			printk(KERN_WARNING "mspec_close(): "
 +			       "failed to zero page %ld\n", my_page);
-+	}
-+
-+	kvfree(vdata);
-+}
-+
-+/*
-+ * mspec_fault
-+ *
-+ * Creates a mspec page and maps it to user space.
-+ */
-+static vm_fault_t
-+mspec_fault(struct vm_fault *vmf)
-+{
-+	unsigned long paddr, maddr;
-+	unsigned long pfn;
-+	pgoff_t index = vmf->pgoff;
-+	struct vma_data *vdata = vmf->vma->vm_private_data;
-+
-+	maddr = (volatile unsigned long) vdata->maddr[index];
-+	if (maddr == 0) {
-+		maddr = uncached_alloc_page(numa_node_id(), 1);
-+		if (maddr == 0)
-+			return VM_FAULT_OOM;
-+
-+		spin_lock(&vdata->lock);
-+		if (vdata->maddr[index] == 0) {
-+			vdata->count++;
-+			vdata->maddr[index] = maddr;
-+		} else {
-+			uncached_free_page(maddr, 1);
-+			maddr = vdata->maddr[index];
-+		}
-+		spin_unlock(&vdata->lock);
-+	}
-+
+ 	}
+ 
+ 	kvfree(vdata);
+@@ -158,7 +213,11 @@
+ 		spin_unlock(&vdata->lock);
+ 	}
+ 
+-	paddr = maddr & ~__IA64_UNCACHED_OFFSET;
 +	if (vdata->type == MSPEC_FETCHOP)
 +		paddr = TO_AMO(maddr);
 +	else
 +		paddr = maddr & ~__IA64_UNCACHED_OFFSET;
 +
-+	pfn = paddr >> PAGE_SHIFT;
-+
-+	return vmf_insert_pfn(vmf->vma, vmf->address, pfn);
-+}
-+
-+static const struct vm_operations_struct mspec_vm_ops = {
-+	.open = mspec_open,
-+	.close = mspec_close,
-+	.fault = mspec_fault,
-+};
-+
-+/*
-+ * mspec_mmap
-+ *
-+ * Called when mmapping the device.  Initializes the vma with a fault handler
-+ * and private data structure necessary to allocate, track, and free the
-+ * underlying pages.
-+ */
-+static int
-+mspec_mmap(struct file *file, struct vm_area_struct *vma,
-+					enum mspec_page_type type)
-+{
-+	struct vma_data *vdata;
-+	int pages, vdata_size;
-+
-+	if (vma->vm_pgoff != 0)
-+		return -EINVAL;
-+
-+	if ((vma->vm_flags & VM_SHARED) == 0)
-+		return -EINVAL;
-+
-+	if ((vma->vm_flags & VM_WRITE) == 0)
-+		return -EPERM;
-+
-+	pages = vma_pages(vma);
-+	vdata_size = sizeof(struct vma_data) + pages * sizeof(long);
-+	vdata = kvzalloc(vdata_size, GFP_KERNEL);
-+	if (!vdata)
-+		return -ENOMEM;
-+
-+	vdata->vm_start = vma->vm_start;
-+	vdata->vm_end = vma->vm_end;
-+	vdata->type = type;
-+	spin_lock_init(&vdata->lock);
-+	refcount_set(&vdata->refcnt, 1);
-+	vma->vm_private_data = vdata;
-+
-+	vm_flags_set(vma, VM_IO | VM_PFNMAP | VM_DONTEXPAND | VM_DONTDUMP);
+ 	pfn = paddr >> PAGE_SHIFT;
+ 
+ 	return vmf_insert_pfn(vmf->vma, vmf->address, pfn);
+@@ -207,7 +266,7 @@
+ 	vma->vm_private_data = vdata;
+ 
+ 	vm_flags_set(vma, VM_IO | VM_PFNMAP | VM_DONTEXPAND | VM_DONTDUMP);
+-	if (vdata->type == MSPEC_UNCACHED)
 +	if (vdata->type == MSPEC_FETCHOP || vdata->type == MSPEC_UNCACHED)
-+		vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
-+	vma->vm_ops = &mspec_vm_ops;
-+
-+	return 0;
-+}
-+
-+static int
+ 		vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+ 	vma->vm_ops = &mspec_vm_ops;
+ 
+@@ -215,6 +274,12 @@
+ }
+ 
+ static int
 +fetchop_mmap(struct file *file, struct vm_area_struct *vma)
 +{
 +	return mspec_mmap(file, vma, MSPEC_FETCHOP);
 +}
 +
 +static int
-+cached_mmap(struct file *file, struct vm_area_struct *vma)
-+{
-+	return mspec_mmap(file, vma, MSPEC_CACHED);
-+}
-+
-+static int
-+uncached_mmap(struct file *file, struct vm_area_struct *vma)
-+{
-+	return mspec_mmap(file, vma, MSPEC_UNCACHED);
-+}
-+
+ cached_mmap(struct file *file, struct vm_area_struct *vma)
+ {
+ 	return mspec_mmap(file, vma, MSPEC_CACHED);
+@@ -226,6 +291,18 @@
+ 	return mspec_mmap(file, vma, MSPEC_UNCACHED);
+ }
+ 
 +static const struct file_operations fetchop_fops = {
 +	.owner = THIS_MODULE,
 +	.mmap = fetchop_mmap,
@@ -24572,39 +24107,13 @@ index 000000000000..2b4cc588daa0
 +	.fops = &fetchop_fops
 +};
 +
-+static const struct file_operations cached_fops = {
-+	.owner = THIS_MODULE,
-+	.mmap = cached_mmap,
-+	.llseek = noop_llseek,
-+};
-+
-+static struct miscdevice cached_miscdev = {
-+	.minor = MISC_DYNAMIC_MINOR,
-+	.name = "mspec_cached",
-+	.fops = &cached_fops
-+};
-+
-+static const struct file_operations uncached_fops = {
-+	.owner = THIS_MODULE,
-+	.mmap = uncached_mmap,
-+	.llseek = noop_llseek,
-+};
-+
-+static struct miscdevice uncached_miscdev = {
-+	.minor = MISC_DYNAMIC_MINOR,
-+	.name = "mspec_uncached",
-+	.fops = &uncached_fops
-+};
-+
-+/*
-+ * mspec_init
-+ *
-+ * Called at boot time to initialize the mspec facility.
-+ */
-+static int __init
-+mspec_init(void)
-+{
-+	int ret;
+ static const struct file_operations cached_fops = {
+ 	.owner = THIS_MODULE,
+ 	.mmap = cached_mmap,
+@@ -259,32 +336,86 @@
+ mspec_init(void)
+ {
+ 	int ret;
 +	int nid;
 +
 +	/*
@@ -24636,31 +24145,35 @@ index 000000000000..2b4cc588daa0
 +		       FETCHOP_ID, ret);
 +		goto free_scratch_pages;
 +	}
-+
+ 
 +#endif
-+	ret = misc_register(&cached_miscdev);
-+	if (ret) {
-+		printk(KERN_ERR "%s: failed to register device %i\n",
-+		       CACHED_ID, ret);
+ 	ret = misc_register(&cached_miscdev);
+ 	if (ret) {
+ 		printk(KERN_ERR "%s: failed to register device %i\n",
+ 		       CACHED_ID, ret);
+-		return ret;
 +		if (is_sn2)
 +			misc_deregister(&fetchop_miscdev);
 +		goto free_scratch_pages;
-+	}
-+	ret = misc_register(&uncached_miscdev);
-+	if (ret) {
-+		printk(KERN_ERR "%s: failed to register device %i\n",
-+		       UNCACHED_ID, ret);
-+		misc_deregister(&cached_miscdev);
+ 	}
+ 	ret = misc_register(&uncached_miscdev);
+ 	if (ret) {
+ 		printk(KERN_ERR "%s: failed to register device %i\n",
+ 		       UNCACHED_ID, ret);
+ 		misc_deregister(&cached_miscdev);
+-		return ret;
 +		if (is_sn2)
 +			misc_deregister(&fetchop_miscdev);
 +		goto free_scratch_pages;
-+	}
-+
+ 	}
+ 
+-	printk(KERN_INFO "%s %s initialized devices: %s %s\n",
+-	       MSPEC_BASENAME, REVISION, CACHED_ID, UNCACHED_ID);
 +	printk(KERN_INFO "%s %s initialized devices: %s %s %s\n",
 +	       MSPEC_BASENAME, REVISION, is_sn2 ? FETCHOP_ID : "",
 +	       CACHED_ID, UNCACHED_ID);
-+
-+	return 0;
+ 
+ 	return 0;
 +
 + free_scratch_pages:
 +	for_each_node(nid) {
@@ -24668,15 +24181,15 @@ index 000000000000..2b4cc588daa0
 +			uncached_free_page(scratch_page[nid], 1);
 +	}
 +	return ret;
-+}
-+
-+static void __exit
-+mspec_exit(void)
-+{
+ }
+ 
+ static void __exit
+ mspec_exit(void)
+ {
 +	int nid;
 +
-+	misc_deregister(&uncached_miscdev);
-+	misc_deregister(&cached_miscdev);
+ 	misc_deregister(&uncached_miscdev);
+ 	misc_deregister(&cached_miscdev);
 +	if (is_sn2) {
 +		misc_deregister(&fetchop_miscdev);
 +
@@ -24685,14 +24198,9 @@ index 000000000000..2b4cc588daa0
 +				uncached_free_page(scratch_page[nid], 1);
 +		}
 +	}
-+}
-+
-+module_init(mspec_init);
-+module_exit(mspec_exit);
-+
-+MODULE_AUTHOR("Silicon Graphics, Inc. <linux-altix@sgi.com>");
-+MODULE_DESCRIPTION("Driver for SGI SN special memory operations");
-+MODULE_LICENSE("GPL");
+ }
+ 
+ module_init(mspec_init);
 diff --git a/drivers/char/snsc.c b/drivers/char/snsc.c
 new file mode 100644
 index 000000000000..130133309f41
