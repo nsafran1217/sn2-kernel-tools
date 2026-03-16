@@ -1,3 +1,5 @@
+# init prompt
+
 Lets work on re-adding SN2 support to linux 6.16. I have uploaded `6.16-clean.tar.xz` to this chat which contains the files that we need to patch. I also uploaded `6.6-sn2-patched.tar.xz` which is the patched version which works on SN2.
 This may be more difficult than previous work because ia64 support was removed in version 6.7. The version I uploaded in 6.16-clean.tar.xz has already had ia64 support added back in. All you need to do is add SN2 support back in.
 
@@ -17,7 +19,7 @@ Create a new patch with the changes required for 6.16. Confirm that the patch ap
 
 
 
-Gen context:
+# Gen context:
 
 tar cJf ~/desktop/VERSION.tar.xz \
   --exclude='*.o' \
@@ -64,6 +66,8 @@ Okay, lets work on fixing the build issues. Keep track of the build issues in a 
 Give me individual patches, at the end, we'll combine them into the complete patch.  
 
 first build issue:
+```
+```
 
 # After patch is done
 This is working well. Built and Boot successfully.. Please add those build patches into the complete patch.  
