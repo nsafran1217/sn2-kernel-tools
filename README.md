@@ -1,5 +1,10 @@
 # Notes added after i did most of the work.
 
+# DO NOT USE THESE PATCHES
+** These are for reference only. Generate a patch from a branch in [https://github.com/nsafran1217/linux-sn2](https://github.com/nsafran1217/linux-sn2) **
+
+
+
 So im rediscovering this unfortunalty.
 
 Im just going to document the simple stuff I have, not the fancy scripts. If you need to bisect, relearn them.
