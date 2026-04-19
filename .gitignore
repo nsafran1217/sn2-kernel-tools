@@ -1,2 +1,4 @@
 patch-6.16-epic2.patch
 diff/t2/0000.patch.ia64
+radeon/fglrx/fglrx.ko
+
