@@ -1,0 +1,40 @@
+--- a/drivers/gpu/drm/radeon/radeon.h
++++ b/drivers/gpu/drm/radeon/radeon.h
+@@ -2467,6 +2467,24 @@
+ 		writel(v, ((void __iomem *)rdev->rmmio) + reg);
+ 	else
+ 		r100_mm_wreg_slow(rdev, reg, v);
++#ifdef CONFIG_IA64_SGI_SN2
++	/*
++	 * SN2 workaround: PIO writes are posted through SHUB xtalk buffers.
++	 * Rapid bursts of writel() without intervening reads can overflow
++	 * the SHUB's xtalk transmit path, causing corrupted xtalk command
++	 * words and PIC bridge errors.  Per SGI Altix driver porting guide
++	 * (007-4520-007): "device drivers are required to push all prior
++	 * PIO write operations out to the device by issuing a PIO read."
++	 * Flush every 32 writes to balance correctness vs performance.
++	 */
++	{
++		static unsigned int sn2_wreg_cnt;
++		if (++sn2_wreg_cnt >= 32) {
++			sn2_wreg_cnt = 0;
++			(void)readl((void __iomem *)rdev->rmmio);
++		}
++	}
++#endif
+ }
+ 
+ u32 r100_io_rreg(struct radeon_device *rdev, u32 reg);
+--- a/drivers/gpu/drm/radeon/r100.c
++++ b/drivers/gpu/drm/radeon/r100.c
+@@ -4138,6 +4138,10 @@
+ 	spin_lock_irqsave(&rdev->mmio_idx_lock, flags);
+ 	writel(reg, ((void __iomem *)rdev->rmmio) + RADEON_MM_INDEX);
+ 	writel(v, ((void __iomem *)rdev->rmmio) + RADEON_MM_DATA);
++#ifdef CONFIG_IA64_SGI_SN2
++	/* Flush posted PIO writes through SHUB - see r100_mm_wreg comment */
++	(void)readl(((void __iomem *)rdev->rmmio) + RADEON_MM_DATA);
++#endif
+ 	spin_unlock_irqrestore(&rdev->mmio_idx_lock, flags);
+ }
+

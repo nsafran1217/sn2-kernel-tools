@@ -1,0 +1,76 @@
+From 53027185705aee19c1d81384478fb178a30ee4b1 Mon Sep 17 00:00:00 2001
+From: SN2 Debug <debug@sn2>
+Date: Sat, 11 Apr 2026 22:54:31 +0000
+Subject: [PATCH] radeon/r100: force full GPU soft reset before CP init for
+ unPOSTed cards
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+On platforms without BIOS POST (e.g., SGI Altix SN2), the GPU engines
+may be in undefined states causing GUI_ACTIVE (RBBM_STATUS bit 31) to
+be permanently set. This makes the CP's ISYNC WAIT_IDLEGUI command
+deadlock — the CP reads all ring data successfully (DMA works) but
+stalls waiting for GUI idle that never comes.
+
+Evidence from SN2 debugging:
+- CP_RB_RPTR=0x20 = CP_RB_WPTR=0x20: CP consumed all ring data
+- RBBM_STATUS=0x80010140: GUI_ACTIVE=1, CP_CMDSTRM_BUSY=1
+- Ring content: ISYNC with WAIT_IDLEGUI at [0..1], correct encoding
+- GART/DMA all working correctly (32-bit ATE-mapped addresses)
+- r100_asic_reset() skips reset when GUI_ACTIVE=0 at early init
+- RBBM_SOFT_RESET in r100_asic_reset doesn't include SOFT_RESET_CP
+
+Force a full soft reset of all GPU blocks (CP, SE, RE, PP, E2, RB)
+immediately before CP initialization to ensure clean engine state.
+
+Includes debug instrumentation to log pre/post reset RBBM_STATUS.
+---
+ drivers/gpu/drm/radeon/r100.c | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/drivers/gpu/drm/radeon/r100.c b/drivers/gpu/drm/radeon/r100.c
+index 7bfb0ef..8e54c61 100644
+--- a/drivers/gpu/drm/radeon/r100.c
++++ b/drivers/gpu/drm/radeon/r100.c
+@@ -3987,6 +3987,37 @@ static int r100_startup(struct radeon_device *rdev)
+ 
+ 	r100_irq_set(rdev);
+ 	rdev->config.r100.hdp_cntl = RREG32(RADEON_HOST_PATH_CNTL);
++
++	/* SN2 fix: Force a full soft reset of all GPU blocks before CP init.
++	 * On platforms without BIOS POST (e.g., SGI Altix), the GPU engines
++	 * may be in undefined states causing GUI_ACTIVE to be stuck, which
++	 * makes the CP's ISYNC WAIT_IDLEGUI command deadlock.
++	 * [Evidence: RBBM_STATUS=0x80010140 with GUI_ACTIVE=1 at ring test,
++	 *  CP consumed all ring data (RPTR=WPTR=0x20) but stalled on ISYNC]
++	 */
++	{
++		u32 rbbm_status = RREG32(R_000E40_RBBM_STATUS);
++		printk(KERN_INFO "[SN2-DBG] r100_startup: pre-CP RBBM_STATUS=0x%08x\n", rbbm_status); // [DEBUG INSTRUMENTATION]
++		if (G_000E40_GUI_ACTIVE(rbbm_status)) {
++			printk(KERN_INFO "[SN2-DBG] r100_startup: GUI_ACTIVE set, forcing full soft reset\n"); // [DEBUG INSTRUMENTATION]
++		}
++		/* Reset ALL GPU blocks: CP, SE, RE, PP, E2, RB */
++		WREG32(R_0000F0_RBBM_SOFT_RESET,
++			S_0000F0_SOFT_RESET_CP(1) |
++			S_0000F0_SOFT_RESET_SE(1) |
++			S_0000F0_SOFT_RESET_RE(1) |
++			S_0000F0_SOFT_RESET_PP(1) |
++			S_0000F0_SOFT_RESET_E2(1) |
++			S_0000F0_SOFT_RESET_RB(1));
++		RREG32(R_0000F0_RBBM_SOFT_RESET);
++		mdelay(1);
++		WREG32(R_0000F0_RBBM_SOFT_RESET, 0);
++		RREG32(R_0000F0_RBBM_SOFT_RESET);
++		mdelay(1);
++		rbbm_status = RREG32(R_000E40_RBBM_STATUS);
++		printk(KERN_INFO "[SN2-DBG] r100_startup: post-reset RBBM_STATUS=0x%08x\n", rbbm_status); // [DEBUG INSTRUMENTATION]
++	}
++
+ 	/* 1M ring buffer */
+ 	r = r100_cp_init(rdev, 1024 * 1024);
+ 	if (r) {
+-- 
+2.43.0
+

@@ -1,0 +1,977 @@
+diff --git a/arch/ia64/sn/pci/pci_dma.c b/arch/ia64/sn/pci/pci_dma.c
+index 7b19e0b701e8..3a59a0c187d4 100644
+--- a/arch/ia64/sn/pci/pci_dma.c
++++ b/arch/ia64/sn/pci/pci_dma.c
+@@ -225,6 +225,12 @@ static dma_addr_t sn_dma_map_phys(struct device *dev, phys_addr_t phys,
+ 		return DMA_MAPPING_ERROR;
+ 	provider = pcidev_info->pdi_provider;
+ 
++	if (!provider) {
++		dev_err_once(dev, "SN2_DEBUG: sn_dma_map_phys: NULL provider for %s!\n",
++			     pci_name(pdev));
++		return DMA_MAPPING_ERROR;
++	}
++
+ 	if (attrs & DMA_ATTR_WRITE_BARRIER)
+ 		dma_addr = provider->dma_map_consistent(pdev, phys,
+ 							size, SN_DMA_ADDR_PHYS);
+@@ -232,6 +238,14 @@ static dma_addr_t sn_dma_map_phys(struct device *dev, phys_addr_t phys,
+ 		dma_addr = provider->dma_map(pdev, phys, size,
+ 					     SN_DMA_ADDR_PHYS);
+ 
++	/* Log DMA mappings for devices on secondary buses (behind bridges) */
++	if (pdev->bus->number != 0) {
++		dev_info_ratelimited(dev,
++			"SN2_DEBUG: dma_map %s phys=0x%llx size=%zu dma=0x%llx mask=0x%llx dir=%d\n",
++			pci_name(pdev), (u64)phys, size, (u64)dma_addr,
++			pdev->dma_mask, dir);
++	}
++
+ 	if (!dma_addr) {
+ 		printk(KERN_ERR "%s: out of ATEs\n", __func__);
+ 		return DMA_MAPPING_ERROR;
+diff --git a/arch/ia64/sn/pci/pcibr/pcibr_ate.c b/arch/ia64/sn/pci/pcibr/pcibr_ate.c
+index b67bb4cb73ff..18b765ea5854 100644
+--- a/arch/ia64/sn/pci/pcibr/pcibr_ate.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_ate.c
+@@ -121,6 +121,10 @@ int pcibr_ate_alloc(struct pcibus_info *pcibus_info, int count)
+ 	status = alloc_ate_resource(&pcibus_info->pbi_int_ate_resource, count);
+ 	spin_unlock_irqrestore(&pcibus_info->pbi_lock, flags);
+ 
++	if (status >= 0)
++		pr_info_ratelimited("SN2_ATE: alloc %d ATEs at index %d (total_avail=%d)\n",
++			count, status, pcibus_info->pbi_int_ate_size);
++
+ 	return status;
+ }
+ 
+diff --git a/arch/ia64/sn/pci/pcibr/pcibr_dma.c b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
+index 8a4a67b96342..eead25345783 100644
+--- a/arch/ia64/sn/pci/pcibr/pcibr_dma.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
+@@ -82,7 +82,7 @@ pcibr_dmamap_ate32(struct pcidev_info *info,
+ 	if (IS_PCIX(pcibus_info))
+ 		ate_flags &= ~(PCI32_ATE_PREF);
+ 
+-	if (SN_DMA_ADDRTYPE(dma_flags == SN_DMA_ADDR_PHYS))
++	if (SN_DMA_ADDRTYPE(dma_flags) == SN_DMA_ADDR_PHYS) // fix parens NS
+ 		xio_addr = IS_PIC_SOFT(pcibus_info) ? PHYS_TO_DMA(paddr) :
+ 	    					      PHYS_TO_TIODMA(paddr);
+ 	else
+@@ -362,6 +362,7 @@ pcibr_dma_map(struct pci_dev * hwdev, unsigned long phys_addr, size_t size, int
+ {
+ 	dma_addr_t dma_handle;
+ 	struct pcidev_info *pcidev_info = SN_PCIDEV_INFO(hwdev);
++	const char *path;
+ 
+ 	if (!pcidev_info)
+ 		return 0;
+@@ -379,6 +380,7 @@ pcibr_dma_map(struct pci_dev * hwdev, unsigned long phys_addr, size_t size, int
+ 
+ 		dma_handle = pcibr_dmatrans_direct64(pcidev_info, phys_addr,
+ 						     PCI64_ATTR_PREF, dma_flags);
++		path = "direct64";
+ 	} else {
+ 		/* Handle 32-63 bit cards via direct mapping */
+ 		dma_handle = pcibr_dmatrans_direct32(pcidev_info, phys_addr,
+@@ -392,9 +394,20 @@ pcibr_dma_map(struct pci_dev * hwdev, unsigned long phys_addr, size_t size, int
+ 			dma_handle = pcibr_dmamap_ate32(pcidev_info, phys_addr,
+ 							size, PCI32_ATE_PREF,
+ 							dma_flags);
++			path = "ate32";
++		} else {
++			path = "direct32";
+ 		}
+ 	}
+ 
++	/* Log for devices behind bridges */
++	if (hwdev->bus->number != 0) {
++		dev_info_ratelimited(&hwdev->dev,
++			"SN2_DEBUG: pcibr_dma_map %s phys=0x%lx size=%zu dma=0x%llx path=%s mask=0x%llx\n",
++			pci_name(hwdev), phys_addr, size,
++			(unsigned long long)dma_handle, path, hwdev->dma_mask);
++	}
++
+ 	return dma_handle;
+ }
+ 
+@@ -417,6 +430,14 @@ pcibr_dma_map_consistent(struct pci_dev * hwdev, unsigned long phys_addr,
+ 						    PCI32_ATE_BAR, dma_flags);
+ 	}
+ 
++	if (hwdev->bus->number != 0) {
++		dev_info_ratelimited(&hwdev->dev,
++			"SN2_DEBUG: pcibr_dma_map_consistent %s phys=0x%lx size=%zu dma=0x%llx coherent_mask=0x%llx\n",
++			pci_name(hwdev), phys_addr, size,
++			(unsigned long long)dma_handle,
++			hwdev->dev.coherent_dma_mask);
++	}
++
+ 	return dma_handle;
+ }
+ 
+diff --git a/arch/ia64/sn/pci/pcibr/pcibr_provider.c b/arch/ia64/sn/pci/pcibr/pcibr_provider.c
+index ae0ff279e39b..1b48c672ef59 100644
+--- a/arch/ia64/sn/pci/pcibr/pcibr_provider.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_provider.c
+@@ -99,13 +99,42 @@ u16 sn_ioboard_to_pci_bus(struct pci_bus *pci_bus)
+  * PCI Bridge Error interrupt handler.  Gets invoked whenever a PCI 
+  * bridge sends an error interrupt.
+  */
++static atomic_t pcibr_error_count = ATOMIC_INIT(0);
++
++/* Hook for GPU driver to dump PIO trace on bridge errors */
++void (*pcibr_error_dump_hook)(const char *reason);
++EXPORT_SYMBOL(pcibr_error_dump_hook);
++
++/* Global PIO freeze flag - set on bridge error to stop all device PIO */
++atomic_t pcibr_pio_frozen = ATOMIC_INIT(0);
++EXPORT_SYMBOL(pcibr_pio_frozen);
++
+ static irqreturn_t
+ pcibr_error_intr_handler(int irq, void *arg)
+ {
+ 	struct pcibus_info *soft = arg;
++	int ret;
++	int count;
++
++	/* Freeze PIO IMMEDIATELY to prevent cascade to MCA */
++	atomic_set(&pcibr_pio_frozen, 1);
++
++	ret = sal_pcibr_error_interrupt(soft);
++	count = atomic_inc_return(&pcibr_error_count);
++
++	if (ret < 0) {
++		printk(KERN_ERR "pcibr_error_intr_handler(): Bridge Error #%d "
++		       "(SAL returned %d) - PIO FROZEN\n",
++		       count, ret);
++	} else {
++		printk(KERN_WARNING "pcibr_error_intr_handler(): Bridge Error #%d "
++		       "(non-fatal, SAL returned %d) - PIO FROZEN\n",
++		       count, ret);
++	}
+ 
+-	if (sal_pcibr_error_interrupt(soft) < 0)
+-		panic("pcibr_error_intr_handler(): Fatal Bridge Error");
++	/* Dump GPU PIO trace if hook is registered */
++	if (pcibr_error_dump_hook)
++		pcibr_error_dump_hook("PIC_BRIDGE_ERROR");
+ 
+ 	return IRQ_HANDLED;
+ }
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu.h b/drivers/gpu/drm/amd/amdgpu/amdgpu.h
+index 447e734c362b..e0efd5620662 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu.h
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu.h
+@@ -168,6 +168,7 @@ extern int amdgpu_disp_priority;
+ extern int amdgpu_hw_i2c;
+ extern int amdgpu_pcie_gen2;
+ extern int amdgpu_msi;
++extern int amdgpu_irq_poll_interval;
+ extern char amdgpu_lockup_timeout[AMDGPU_MAX_TIMEOUT_PARAM_LENGTH];
+ extern int amdgpu_dpm;
+ extern int amdgpu_fw_load_type;
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
+index d9789e0b5201..3a5b4caaacd0 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
+@@ -846,6 +846,66 @@ bool amdgpu_device_skip_hw_access(struct amdgpu_device *adev)
+ 	return false;
+ }
+ 
++/**
++ * SN2 PIO Trace Ring Buffer
++ *
++ * Records the last PIO_TRACE_SIZE register writes for post-mortem debugging.
++ * Auto-dumps via printk when amdgpu_pio_trace_dump() is called.
++ */
++#define PIO_TRACE_SIZE 256
++#define PIO_TRACE_MASK (PIO_TRACE_SIZE - 1)
++
++struct pio_trace_entry {
++	u32 reg;
++	u32 val;
++	u32 rw;     /* 0=write, 1=read */
++	unsigned long jiffies;
++	void *caller;
++};
++
++static struct pio_trace_entry pio_trace_buf[PIO_TRACE_SIZE];
++static atomic_t pio_trace_idx = ATOMIC_INIT(0);
++static unsigned long pio_trace_last_dump;
++
++static inline void pio_trace_record(u32 reg, u32 val, u32 rw,
++				    void *caller)
++{
++	int idx = atomic_inc_return(&pio_trace_idx) & PIO_TRACE_MASK;
++	pio_trace_buf[idx].reg = reg;
++	pio_trace_buf[idx].val = val;
++	pio_trace_buf[idx].rw = rw;
++	pio_trace_buf[idx].jiffies = jiffies;
++	pio_trace_buf[idx].caller = caller;
++}
++
++void amdgpu_pio_trace_dump(const char *reason)
++{
++	int cur = atomic_read(&pio_trace_idx);
++	int i, idx;
++
++	/* Rate limit dumps to once per 10 seconds */
++	if (time_before(jiffies, pio_trace_last_dump + 10 * HZ))
++		return;
++	pio_trace_last_dump = jiffies;
++
++	printk(KERN_ERR "=== PIO TRACE DUMP (%s) last %d ops ===\n",
++	       reason, PIO_TRACE_SIZE);
++	for (i = 0; i < PIO_TRACE_SIZE; i++) {
++		idx = (cur - PIO_TRACE_SIZE + 1 + i) & PIO_TRACE_MASK;
++		if (pio_trace_buf[idx].jiffies == 0)
++			continue;
++		printk(KERN_ERR "  PIO[%03d] %s reg=0x%04x val=0x%08x j=%lu [%pS]\n",
++		       i,
++		       pio_trace_buf[idx].rw ? " RD" : " WR",
++		       pio_trace_buf[idx].reg * 4,
++		       pio_trace_buf[idx].val,
++		       pio_trace_buf[idx].jiffies,
++		       pio_trace_buf[idx].caller);
++	}
++	printk(KERN_ERR "=== PIO TRACE DUMP END ===\n");
++}
++EXPORT_SYMBOL(amdgpu_pio_trace_dump);
++
+ /**
+  * amdgpu_device_rreg - read a memory mapped IO or indirect register
+  *
+@@ -863,6 +923,14 @@ uint32_t amdgpu_device_rreg(struct amdgpu_device *adev,
+ 	if (amdgpu_device_skip_hw_access(adev))
+ 		return 0;
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	{
++		extern atomic_t pcibr_pio_frozen;
++		if (atomic_read(&pcibr_pio_frozen))
++			return 0;
++	}
++#endif
++
+ 	if ((reg * 4) < adev->rmmio_size) {
+ 		if (!(acc_flags & AMDGPU_REGS_NO_KIQ) &&
+ 		    amdgpu_sriov_runtime(adev) &&
+@@ -990,6 +1058,14 @@ void amdgpu_device_wreg(struct amdgpu_device *adev,
+ 	if (amdgpu_device_skip_hw_access(adev))
+ 		return;
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	{
++		extern atomic_t pcibr_pio_frozen;
++		if (atomic_read(&pcibr_pio_frozen))
++			return;
++	}
++#endif
++
+ 	if ((reg * 4) < adev->rmmio_size) {
+ 		if (!(acc_flags & AMDGPU_REGS_NO_KIQ) &&
+ 		    amdgpu_sriov_runtime(adev) &&
+@@ -1004,6 +1080,7 @@ void amdgpu_device_wreg(struct amdgpu_device *adev,
+ 	}
+ 
+ 	trace_amdgpu_device_wreg(adev->pdev->device, reg, v);
++	pio_trace_record(reg, v, 0, __builtin_return_address(0));
+ }
+ 
+ /**
+@@ -3368,6 +3445,8 @@ static int amdgpu_device_ip_late_init(struct amdgpu_device *adev)
+ 		if (!adev->ip_blocks[i].status.hw)
+ 			continue;
+ 		if (adev->ip_blocks[i].version->funcs->late_init) {
++			dev_info(adev->dev, "SN2_DEBUG: late_init block %d <%s> starting\n",
++				 i, adev->ip_blocks[i].version->funcs->name);
+ 			r = adev->ip_blocks[i].version->funcs->late_init(&adev->ip_blocks[i]);
+ 			if (r) {
+ 				dev_err(adev->dev,
+@@ -3376,6 +3455,8 @@ static int amdgpu_device_ip_late_init(struct amdgpu_device *adev)
+ 					r);
+ 				return r;
+ 			}
++			dev_info(adev->dev, "SN2_DEBUG: late_init block %d <%s> done\n",
++				 i, adev->ip_blocks[i].version->funcs->name);
+ 		}
+ 		adev->ip_blocks[i].status.late_initialized = true;
+ 	}
+@@ -3618,9 +3699,13 @@ static void amdgpu_device_delayed_init_work_handler(struct work_struct *work)
+ 		container_of(work, struct amdgpu_device, delayed_init_work.work);
+ 	int r;
+ 
++	dev_info(adev->dev, "SN2_DEBUG: delayed_init_work ENTERED - about to run ib_ring_tests\n");
++
+ 	r = amdgpu_ib_ring_tests(adev);
+ 	if (r)
+ 		dev_err(adev->dev, "ib ring test failed (%d).\n", r);
++
++	dev_info(adev->dev, "SN2_DEBUG: delayed_init_work EXITING r=%d\n", r);
+ }
+ 
+ static void amdgpu_device_delay_enable_gfx_off(struct work_struct *work)
+@@ -4757,12 +4842,15 @@ int amdgpu_device_init(struct amdgpu_device *adev,
+ 	 * explicit gating rather than handling it automatically.
+ 	 */
+ 	if (adev->init_lvl->level != AMDGPU_INIT_LEVEL_MINIMAL_XGMI) {
++		dev_info(adev->dev, "SN2_DEBUG: calling ip_late_init\n");
+ 		r = amdgpu_device_ip_late_init(adev);
+ 		if (r) {
+ 			dev_err(adev->dev, "amdgpu_device_ip_late_init failed\n");
+ 			amdgpu_vf_error_put(adev, AMDGIM_ERROR_VF_AMDGPU_LATE_INIT_FAIL, 0, r);
+ 			goto release_ras_con;
+ 		}
++		dev_info(adev->dev, "SN2_DEBUG: ip_late_init done, scheduling delayed_init_work in %dms\n",
++			 AMDGPU_RESUME_MS);
+ 		/* must succeed. */
+ 		amdgpu_ras_resume(adev);
+ 		queue_delayed_work(system_wq, &adev->delayed_init_work,
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_display.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_display.c
+index bef9dce2e7ea..debd95116a7d 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_display.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_display.c
+@@ -559,6 +559,18 @@ uint32_t amdgpu_display_supported_domains(struct amdgpu_device *adev,
+ {
+ 	uint32_t domain = AMDGPU_GEM_DOMAIN_VRAM;
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	/*
++	 * On SN2 with a PLX bridge, CPU writes to VRAM serialize through
++	 * SHUB PIO slots with no write-combining. Display scanout BOs get
++	 * pinned in the domain returned here — once pinned, they cannot be
++	 * moved by fault_reserve_notify. Force GTT so the CPU writes to
++	 * system RAM at full speed and the display engine reads via GART DMA.
++	 * (Proven working: modetest 6/6 with GTT scanout at 1280x1024@60Hz)
++	 */
++	return AMDGPU_GEM_DOMAIN_GTT;
++#endif
++
+ #if defined(CONFIG_DRM_AMD_DC)
+ 	/*
+ 	 * if amdgpu_bo_support_uswc returns false it means that USWC mappings
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
+index 95d26f086d54..48dc779380ec 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
+@@ -159,6 +159,7 @@ int amdgpu_disp_priority;
+ int amdgpu_hw_i2c;
+ int amdgpu_pcie_gen2 = -1;
+ int amdgpu_msi = -1;
++int amdgpu_irq_poll_interval;
+ char amdgpu_lockup_timeout[AMDGPU_MAX_TIMEOUT_PARAM_LENGTH];
+ int amdgpu_dpm = -1;
+ int amdgpu_fw_load_type = -1;
+@@ -345,6 +346,16 @@ module_param_named(pcie_gen2, amdgpu_pcie_gen2, int, 0444);
+ MODULE_PARM_DESC(msi, "MSI support (1 = enable, 0 = disable, -1 = auto)");
+ module_param_named(msi, amdgpu_msi, int, 0444);
+ 
++/**
++ * DOC: irq_poll (int)
++ * Interrupt polling interval in milliseconds for platforms without working
++ * hardware interrupt delivery. When set to a positive value, a timer
++ * periodically invokes the IRQ handler to process GPU interrupts.
++ * (0 = disabled, default; 1+ = polling interval in ms)
++ */
++MODULE_PARM_DESC(irq_poll, "IRQ polling interval in ms (0 = disabled, 1+ = poll interval)");
++module_param_named(irq_poll, amdgpu_irq_poll_interval, int, 0444);
++
+ /**
+  * DOC: svm_default_granularity (uint)
+  * Used in buffer migration and handling of recoverable page faults
+@@ -2469,10 +2480,14 @@ static int amdgpu_pci_probe(struct pci_dev *pdev,
+ 	if (ret)
+ 		goto err_pci;
+ 
++	dev_info(adev->dev, "SN2_DEBUG: probe: xcp_dev_register done\n");
++
+ 	ret = amdgpu_amdkfd_drm_client_create(adev);
+ 	if (ret)
+ 		goto err_pci;
+ 
++	dev_info(adev->dev, "SN2_DEBUG: probe: amdkfd_drm_client_create done\n");
++
+ 	/*
+ 	 * 1. don't init fbdev on hw without DCE
+ 	 * 2. don't init fbdev if there are no connectors
+@@ -2487,9 +2502,14 @@ static int amdgpu_pci_probe(struct pci_dev *pdev,
+ 		else
+ 			format = NULL;
+ 
++		dev_info(adev->dev, "SN2_DEBUG: probe: calling drm_client_setup (fbdev)\n");
+ 		drm_client_setup(adev_to_drm(adev), format);
++		dev_info(adev->dev, "SN2_DEBUG: probe: drm_client_setup done\n");
++	} else {
++		dev_info(adev->dev, "SN2_DEBUG: probe: skipping fbdev init\n");
+ 	}
+ 
++	dev_info(adev->dev, "SN2_DEBUG: probe: calling debugfs_init\n");
+ 	ret = amdgpu_debugfs_init(adev);
+ 	if (ret)
+ 		DRM_ERROR("Creating debugfs files failed (%d).\n", ret);
+@@ -2537,6 +2557,8 @@ static int amdgpu_pci_probe(struct pci_dev *pdev,
+ 			amdgpu_get_secondary_funcs(adev);
+ 	}
+ 
++	dev_info(adev->dev, "SN2_DEBUG: probe function returning SUCCESS\n");
++
+ 	return 0;
+ 
+ err_pci:
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_gart.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_gart.c
+index e2d32c29668a..1ebf970a30b4 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_gart.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_gart.c
+@@ -424,6 +424,12 @@ void amdgpu_gart_bind(struct amdgpu_device *adev, uint64_t offset,
+ 		return;
+ 
+ 	amdgpu_gart_map(adev, offset, pages, dma_addr, flags, adev->gart.ptr);
++
++	/* Flush posted PIO writes on platforms with posted MMIO (e.g. ia64/SN2) */
++	dev_info_ratelimited(adev->dev,
++		"SN2_DEBUG: gart_bind flush offset=0x%llx pages=%d\n",
++		offset, pages);
++	amdgpu_gart_invalidate_tlb(adev);
+ }
+ 
+ /**
+@@ -441,10 +447,15 @@ void amdgpu_gart_invalidate_tlb(struct amdgpu_device *adev)
+ 	if (!adev->gart.ptr)
+ 		return;
+ 
++	dev_info_ratelimited(adev->dev,
++		"SN2_DEBUG: gart_invalidate_tlb - flushing HDP + TLB\n");
+ 	mb();
+ 	if (down_read_trylock(&adev->reset_domain->sem)) {
+ 		amdgpu_device_flush_hdp(adev, NULL);
+ 		up_read(&adev->reset_domain->sem);
++	} else {
++		dev_warn(adev->dev,
++			"SN2_DEBUG: gart_invalidate_tlb - HDP flush SKIPPED (trylock failed)!\n");
+ 	}
+ 	for_each_set_bit(i, adev->vmhubs_mask, AMDGPU_MAX_VMHUBS)
+ 		amdgpu_gmc_flush_gpu_tlb(adev, 0, i, 0);
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_gem.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_gem.c
+index a6107109a2b8..b0e518936e81 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_gem.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_gem.c
+@@ -116,23 +116,58 @@ static vm_fault_t amdgpu_gem_fault(struct vm_fault *vmf)
+ {
+ 	struct ttm_buffer_object *bo = vmf->vma->vm_private_data;
+ 	struct drm_device *ddev = bo->base.dev;
++	struct amdgpu_device *adev = drm_to_adev(ddev);
+ 	vm_fault_t ret;
+ 	int idx;
+ 
++	dev_info(adev->dev, "SN2_DEBUG: gem_fault ENTER bo=%p mem_type=%d "
++		 "start=0x%lx size=%zu\n",
++		 bo, bo->resource ? bo->resource->mem_type : -1,
++		 bo->resource ? bo->resource->start : 0,
++		 bo->resource ? (size_t)bo->resource->size : 0);
++
+ 	ret = ttm_bo_vm_reserve(bo, vmf);
+ 	if (ret)
+ 		return ret;
+ 
++	/* Check fences after reservation lock acquired */
++	{
++		struct dma_resv_iter cursor;
++		struct dma_fence *fence;
++		int fence_count = 0;
++
++		dma_resv_iter_begin(&cursor, bo->base.resv, DMA_RESV_USAGE_BOOKKEEP);
++		dma_resv_for_each_fence_unlocked(&cursor, fence) {
++			dev_info(adev->dev, "SN2_DEBUG: gem_fault fence[%d]: %s:%s ctx=%llu seq=%llu signaled=%d\n",
++				 fence_count,
++				 fence->ops->get_driver_name(fence),
++				 fence->ops->get_timeline_name(fence),
++				 (unsigned long long)fence->context,
++				 (unsigned long long)fence->seqno,
++				 dma_fence_is_signaled(fence));
++			fence_count++;
++		}
++		dma_resv_iter_end(&cursor);
++		dev_info(adev->dev, "SN2_DEBUG: gem_fault total fences=%d\n", fence_count);
++	}
++
+ 	if (drm_dev_enter(ddev, &idx)) {
++		dev_info(adev->dev, "SN2_DEBUG: gem_fault calling fault_reserve_notify\n");
+ 		ret = amdgpu_bo_fault_reserve_notify(bo);
+ 		if (ret) {
++			dev_err(adev->dev, "SN2_DEBUG: fault_reserve_notify FAILED ret=%d\n", ret);
+ 			drm_dev_exit(idx);
+ 			goto unlock;
+ 		}
++		dev_info(adev->dev, "SN2_DEBUG: gem_fault calling ttm_bo_vm_fault_reserved "
++			 "(mem_type=%d visible=%d)\n",
++			 bo->resource ? bo->resource->mem_type : -1,
++			 bo->resource ? amdgpu_res_cpu_visible(adev, bo->resource) : -1);
+ 
+ 		ret = ttm_bo_vm_fault_reserved(vmf, vmf->vma->vm_page_prot,
+ 					       TTM_BO_VM_NUM_PREFAULT);
+ 
++		dev_info(adev->dev, "SN2_DEBUG: ttm_bo_vm_fault_reserved returned %d\n", ret);
+ 		drm_dev_exit(idx);
+ 	} else {
+ 		ret = ttm_bo_vm_dummy_page(vmf, vmf->vma->vm_page_prot);
+@@ -1258,8 +1293,7 @@ int amdgpu_mode_dumb_create(struct drm_file *file_priv,
+ 	struct drm_gem_object *gobj;
+ 	uint32_t handle;
+ 	u64 flags = AMDGPU_GEM_CREATE_CPU_ACCESS_REQUIRED |
+-		    AMDGPU_GEM_CREATE_CPU_GTT_USWC |
+-		    AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
++		    AMDGPU_GEM_CREATE_CPU_GTT_USWC;
+ 	u32 domain;
+ 	int r;
+ 
+@@ -1275,8 +1309,21 @@ int amdgpu_mode_dumb_create(struct drm_file *file_priv,
+ 					     DIV_ROUND_UP(args->bpp, 8), 0);
+ 	args->size = (u64)args->pitch * args->height;
+ 	args->size = ALIGN(args->size, PAGE_SIZE);
+-	domain = amdgpu_bo_get_preferred_domain(adev,
+-				amdgpu_display_supported_domains(adev, flags));
++
++	/*
++	 * Force GTT (system memory) for CPU-writable dumb buffers.
++	 * On platforms with high PIO latency (e.g. ia64/SN2 with PLX bridge),
++	 * writing 5MB to VRAM through the BAR takes minutes because each
++	 * 4-byte store serializes through SHUB->PIC->PLX->GPU. Using GTT
++	 * lets the CPU write to system RAM at full speed; the display engine
++	 * reads through GART DMA instead.
++	 */
++	domain = AMDGPU_GEM_DOMAIN_GTT;
++
++	//old version
++	//domain = amdgpu_bo_get_preferred_domain(adev,
++    //          amdgpu_display_supported_domains(adev, flags));
++
+ 	r = amdgpu_gem_object_create(adev, args->size, 0, domain, flags,
+ 				     ttm_bo_type_device, NULL, &gobj, fpriv->xcp_id + 1);
+ 	if (r)
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_i2c.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_i2c.c
+index c576e103a783..3be295617bbe 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_i2c.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_i2c.c
+@@ -198,7 +198,7 @@ struct amdgpu_i2c_chan *amdgpu_i2c_create(struct drm_device *dev,
+ 		i2c->bit.setscl = amdgpu_i2c_set_clock;
+ 		i2c->bit.getsda = amdgpu_i2c_get_data;
+ 		i2c->bit.getscl = amdgpu_i2c_get_clock;
+-		i2c->bit.udelay = 10;
++		i2c->bit.udelay = 200;  /* SN2: throttle PIO through PLX bridge (was 10) */
+ 		i2c->bit.timeout = usecs_to_jiffies(2200);	/* from VESA */
+ 		i2c->bit.data = i2c;
+ 		ret = i2c_bit_add_bus(&i2c->adapter);
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_ib.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_ib.c
+index 3a7bab87b5d8..35078b79de90 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_ib.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_ib.c
+@@ -457,14 +457,19 @@ int amdgpu_ib_ring_tests(struct amdgpu_device *adev)
+ 		else
+ 			tmo = tmo_gfx;
+ 
++		dev_info(adev->dev, "SN2_DEBUG: ib_ring_tests: testing ring '%s' type=%d tmo=%ld\n",
++			 ring->name, ring->funcs->type, tmo);
++
+ 		r = amdgpu_ring_test_ib(ring, tmo);
+ 		if (!r) {
+-			DRM_DEV_DEBUG(adev->dev, "ib test on %s succeeded\n",
+-				      ring->name);
++			dev_info(adev->dev, "SN2_DEBUG: ib test on %s SUCCEEDED\n",
++				 ring->name);
+ 			continue;
+ 		}
+ 
+ 		ring->sched.ready = false;
++		dev_info(adev->dev, "SN2_DEBUG: IB test FAILED on %s r=%d\n",
++			 ring->name, r);
+ 		DRM_DEV_ERROR(adev->dev, "IB test failed on %s (%d).\n",
+ 			  ring->name, r);
+ 
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_irq.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_irq.c
+index 254a4e983f40..d2bee76902ae 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_irq.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_irq.c
+@@ -44,6 +44,7 @@
+ 
+ #include <linux/irq.h>
+ #include <linux/pci.h>
++#include <linux/timer.h>
+ 
+ #include <drm/drm_vblank.h>
+ #include <drm/amdgpu_drm.h>
+@@ -293,6 +294,75 @@ void amdgpu_restore_msix(struct amdgpu_device *adev)
+ 	pci_write_config_word(adev->pdev, adev->pdev->msix_cap + PCI_MSIX_FLAGS, ctrl);
+ }
+ 
++/**
++ * amdgpu_irq_poll_timer_fn - periodic IRQ polling callback
++ *
++ * @t: timer_list pointer
++ *
++ * For platforms where hardware interrupt delivery is broken (e.g. SGI Altix
++ * SN2 with devices behind PLX PCI bridges), this timer periodically calls
++ * the IH processor to drain the GPU's interrupt ring buffer. This ensures
++ * vblank events, fence completions, and other interrupt-driven functionality
++ * work without depending on hardware IRQ delivery.
++ */
++static void amdgpu_irq_poll_timer_fn(struct timer_list *t)
++{
++	struct amdgpu_irq *irq = timer_container_of(irq, t, irq_poll_timer);
++	struct amdgpu_device *adev = container_of(irq, struct amdgpu_device, irq);
++	static unsigned long stall_start;
++	static uint32_t stall_last_seq;
++	int i;
++	bool ring_stuck = false;
++
++	amdgpu_ih_process(adev, &adev->irq.ih);
++
++	/* Stall watchdog: check if any ring has pending fences not progressing */
++	for (i = 0; i < AMDGPU_MAX_RINGS; i++) {
++		struct amdgpu_ring *ring = adev->rings[i];
++
++		if (!ring || !ring->sched.ready)
++			continue;
++		if (ring->fence_drv.sync_seq !=
++		    atomic_read(&ring->fence_drv.last_seq)) {
++			ring_stuck = true;
++			break;
++		}
++	}
++
++	if (ring_stuck) {
++		uint32_t cur_seq = atomic_read(&adev->rings[i]->fence_drv.last_seq);
++
++		if (stall_start == 0) {
++			/* First detection of pending fences */
++			stall_start = jiffies;
++			stall_last_seq = cur_seq;
++		} else if (cur_seq == stall_last_seq &&
++			   time_after(jiffies, stall_start + 3 * HZ)) {
++			/* Fence hasn't moved in 3 seconds - dump trace */
++			extern void amdgpu_pio_trace_dump(const char *reason);
++			printk(KERN_ERR "SN2_DEBUG: ring '%s' stalled! "
++			       "sync_seq=%u last_seq=%u for %lu ms\n",
++			       adev->rings[i]->name,
++			       adev->rings[i]->fence_drv.sync_seq,
++			       cur_seq,
++			       jiffies_to_msecs(jiffies - stall_start));
++			amdgpu_pio_trace_dump("FENCE_STALL");
++			stall_start = jiffies; /* reset to avoid spamming */
++		} else if (cur_seq != stall_last_seq) {
++			/* Fence moved - reset watchdog */
++			stall_start = jiffies;
++			stall_last_seq = cur_seq;
++		}
++	} else {
++		stall_start = 0;
++	}
++
++	/* re-arm the timer */
++	if (irq->irq_poll_enabled)
++		mod_timer(&irq->irq_poll_timer,
++			  jiffies + msecs_to_jiffies(amdgpu_irq_poll_interval));
++}
++
+ /**
+  * amdgpu_irq_init - initialize interrupt handling
+  *
+@@ -319,6 +389,9 @@ int amdgpu_irq_init(struct amdgpu_device *adev)
+ 	else
+ 		flags = PCI_IRQ_ALL_TYPES;
+ 
++	dev_info(adev->dev, "SN2_DEBUG: irq_init: msi_ok=%d flags=0x%x pdev->irq=%u\n",
++		 amdgpu_msi_ok(adev), flags, adev->pdev->irq);
++
+ 	/* we only need one vector */
+ 	r = pci_alloc_irq_vectors(adev->pdev, 1, 1, flags);
+ 	if (r < 0) {
+@@ -326,6 +399,8 @@ int amdgpu_irq_init(struct amdgpu_device *adev)
+ 		return r;
+ 	}
+ 
++	dev_info(adev->dev, "SN2_DEBUG: pci_alloc_irq_vectors returned %d vectors\n", r);
++
+ 	if (amdgpu_msi_ok(adev)) {
+ 		adev->irq.msi_enabled = true;
+ 		dev_dbg(adev->dev, "using MSI/MSI-X.\n");
+@@ -344,13 +419,40 @@ int amdgpu_irq_init(struct amdgpu_device *adev)
+ 	/* PCI devices require shared interrupts. */
+ 	r = request_irq(irq, amdgpu_irq_handler, IRQF_SHARED, adev_to_drm(adev)->driver->name,
+ 			adev_to_drm(adev));
+-	if (r)
++	if (r) {
++		dev_info(adev->dev, "SN2_DEBUG: request_irq(%u) FAILED r=%d\n", irq, r);
+ 		goto free_vectors;
++	}
++
++	dev_info(adev->dev, "SN2_DEBUG: IRQ installed: irq=%u msi_enabled=%d\n",
++		 irq, adev->irq.msi_enabled);
+ 
+ 	adev->irq.installed = true;
+ 	adev->irq.irq = irq;
+ 	adev_to_drm(adev)->max_vblank_count = 0x00ffffff;
+ 
++	/* Set up IRQ polling timer if requested */
++	if (amdgpu_irq_poll_interval > 0) {
++		timer_setup(&adev->irq.irq_poll_timer,
++			    amdgpu_irq_poll_timer_fn, 0);
++		adev->irq.irq_poll_enabled = true;
++		mod_timer(&adev->irq.irq_poll_timer,
++			  jiffies + msecs_to_jiffies(amdgpu_irq_poll_interval));
++		dev_info(adev->dev,
++			 "IRQ polling enabled at %d ms interval\n",
++			 amdgpu_irq_poll_interval);
++	}
++
++#ifdef CONFIG_IA64_SGI_SN2
++	/* Register PIO trace dump hook for PIC bridge error handler */
++	{
++		extern void (*pcibr_error_dump_hook)(const char *reason);
++		extern void amdgpu_pio_trace_dump(const char *reason);
++		pcibr_error_dump_hook = amdgpu_pio_trace_dump;
++		dev_info(adev->dev, "SN2: registered PIO trace dump hook\n");
++	}
++#endif
++
+ 	dev_dbg(adev->dev, "irq initialized.\n");
+ 	return 0;
+ 
+@@ -364,6 +466,18 @@ int amdgpu_irq_init(struct amdgpu_device *adev)
+ 
+ void amdgpu_irq_fini_hw(struct amdgpu_device *adev)
+ {
++#ifdef CONFIG_IA64_SGI_SN2
++	{
++		extern void (*pcibr_error_dump_hook)(const char *reason);
++		pcibr_error_dump_hook = NULL;
++	}
++#endif
++	/* Stop IRQ polling timer before freeing IRQ */
++	if (adev->irq.irq_poll_enabled) {
++		adev->irq.irq_poll_enabled = false;
++		timer_delete_sync(&adev->irq.irq_poll_timer);
++	}
++
+ 	if (adev->irq.installed) {
+ 		free_irq(adev->irq.irq, adev_to_drm(adev));
+ 		adev->irq.installed = false;
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_irq.h b/drivers/gpu/drm/amd/amdgpu/amdgpu_irq.h
+index af72405a7226..67b7af817e4a 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_irq.h
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_irq.h
+@@ -89,6 +89,10 @@ struct amdgpu_irq {
+ 	/* status, etc. */
+ 	bool				msi_enabled; /* msi enabled */
+ 
++	/* interrupt polling for platforms without working IRQ delivery */
++	struct timer_list		irq_poll_timer;
++	bool				irq_poll_enabled;
++
+ 	/* interrupt rings */
+ 	struct amdgpu_ih_ring		ih, ih1, ih2, ih_soft;
+ 	const struct amdgpu_ih_funcs    *ih_funcs;
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_object.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_object.c
+index 1fb956400696..2b05ee0a05a0 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_object.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_object.c
+@@ -1359,6 +1359,45 @@ vm_fault_t amdgpu_bo_fault_reserve_notify(struct ttm_buffer_object *bo)
+ 	/* Remember that this BO was accessed by the CPU */
+ 	abo->flags |= AMDGPU_GEM_CREATE_CPU_ACCESS_REQUIRED;
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	/*
++	 * On SN2 with a PLX PEX8111 bridge, CPU writes to VRAM go through
++	 * SHUB -> PIC -> PCI-X -> PLX -> PCIe -> GPU with no write-combining.
++	 * Each 4-byte store serializes through the SHUB's limited PIO slots,
++	 * making a 5MB framebuffer write take 10+ minutes. This affects ALL
++	 * VRAM BOs, even those in the "visible" region — visibility only means
++	 * the BAR window covers the address, not that access is fast.
++	 *
++	 * Move any VRAM BO to GTT (system memory) on CPU fault. The CPU then
++	 * writes to RAM at full speed. The GPU accesses it through GART DMA,
++	 * which works through the PLX bridge's DMA path (proven by ring tests).
++	 *
++	 * This is the universal safety net — catches GEM_CREATE from X11/Mesa,
++	 * dumb_create from modetest, fbdev, and any other CPU access path.
++	 */
++	if (bo->resource->mem_type == TTM_PL_VRAM) {
++		if (abo->tbo.pin_count > 0) {
++			dev_warn(adev->dev, "SN2: CPU fault on pinned VRAM BO %p — "
++				 "cannot move to GTT, expect slow PIO\n", abo);
++			return 0;  /* Allow access but it will be slow */
++		}
++
++		dev_info(adev->dev, "SN2: moving BO %p (%zu bytes) from VRAM to GTT "
++			 "to avoid BAR PIO stall\n", abo,
++			 (size_t)bo->resource->size);
++
++		amdgpu_bo_placement_from_domain(abo, AMDGPU_GEM_DOMAIN_GTT);
++		r = ttm_bo_validate(bo, &abo->placement, &ctx);
++		if (unlikely(r == -EBUSY || r == -ERESTARTSYS))
++			return VM_FAULT_NOPAGE;
++		else if (unlikely(r))
++			return VM_FAULT_SIGBUS;
++
++		ttm_bo_move_to_lru_tail_unlocked(bo);
++		return 0;
++	}
++#endif
++
+ 	if (amdgpu_res_cpu_visible(adev, bo->resource))
+ 		return 0;
+ 
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_ttm.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_ttm.c
+index eeaa56c8d129..692918366a39 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_ttm.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_ttm.c
+@@ -955,6 +955,9 @@ static int amdgpu_ttm_backend_bind(struct ttm_device *bdev,
+ 
+ 	/* bind pages into GART page tables */
+ 	gtt->offset = (u64)bo_mem->start << PAGE_SHIFT;
++	dev_info_ratelimited(adev->dev,
++		"SN2_DEBUG: ttm_backend_bind offset=0x%llx pages=%u\n",
++		gtt->offset, ttm->num_pages);
+ 	amdgpu_gart_bind(adev, gtt->offset, ttm->num_pages,
+ 			 gtt->ttm.dma_address, flags);
+ 	gtt->bound = true;
+@@ -1004,6 +1007,8 @@ int amdgpu_ttm_alloc_gart(struct ttm_buffer_object *bo)
+ 
+ 	/* Bind pages */
+ 	gtt->offset = (u64)tmp->start << PAGE_SHIFT;
++	dev_info_ratelimited(adev->dev,
++		"SN2_DEBUG: ttm_alloc_gart offset=0x%llx\n", gtt->offset);
+ 	amdgpu_ttm_gart_bind(adev, bo, flags);
+ 	amdgpu_gart_invalidate_tlb(adev);
+ 	ttm_resource_free(bo, &bo->resource);
+diff --git a/drivers/gpu/drm/amd/amdgpu/dce_v6_0.c b/drivers/gpu/drm/amd/amdgpu/dce_v6_0.c
+index a72e20db5363..13ff7c2dfce2 100644
+--- a/drivers/gpu/drm/amd/amdgpu/dce_v6_0.c
++++ b/drivers/gpu/drm/amd/amdgpu/dce_v6_0.c
+@@ -1909,11 +1909,19 @@ static int dce_v6_0_crtc_do_set_base(struct drm_crtc *crtc,
+ 		return r;
+ 
+ 	abo->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
+-	r = amdgpu_bo_pin(abo, AMDGPU_GEM_DOMAIN_VRAM);
++	r = amdgpu_bo_pin(abo,
++			  amdgpu_display_supported_domains(adev, abo->flags));
+ 	if (unlikely(r != 0)) {
+ 		amdgpu_bo_unreserve(abo);
+ 		return -EINVAL;
+ 	}
++
++	r = amdgpu_ttm_alloc_gart(&abo->tbo);
++	if (unlikely(r != 0)) {
++		amdgpu_bo_unpin(abo);
++		amdgpu_bo_unreserve(abo);
++		return -EINVAL;
++	}
+ 	fb_location = amdgpu_bo_gpu_offset(abo);
+ 
+ 	amdgpu_bo_get_tiling_flags(abo, &tiling_flags);
+diff --git a/drivers/gpu/drm/amd/amdgpu/gmc_v6_0.c b/drivers/gpu/drm/amd/amdgpu/gmc_v6_0.c
+index 886bf77309a5..75b1e96f1e9d 100644
+--- a/drivers/gpu/drm/amd/amdgpu/gmc_v6_0.c
++++ b/drivers/gpu/drm/amd/amdgpu/gmc_v6_0.c
+@@ -355,6 +355,7 @@ static void gmc_v6_0_flush_gpu_tlb(struct amdgpu_device *adev, uint32_t vmid,
+ 					uint32_t vmhub, uint32_t flush_type)
+ {
+ 	WREG32(mmVM_INVALIDATE_REQUEST, 1 << vmid);
++	(void)RREG32(mmVM_INVALIDATE_REQUEST); /* flush posted write on SN2 */
+ }
+ 
+ static uint64_t gmc_v6_0_emit_flush_gpu_tlb(struct amdgpu_ring *ring,
+@@ -555,6 +556,9 @@ static int gmc_v6_0_gart_enable(struct amdgpu_device *adev)
+ 		gmc_v6_0_set_fault_enable_default(adev, true);
+ 
+ 	gmc_v6_0_flush_gpu_tlb(adev, 0, 0, 0);
++	/* Flush all posted PIO writes to ensure GPU config is committed */
++	(void)RREG32(mmVM_INVALIDATE_REQUEST);
++	dev_info(adev->dev, "SN2_DEBUG: gmc_v6_0_gart_enable - flushed all WREG32s\n");
+ 	drm_info(adev_to_drm(adev), "PCIE GART of %uM enabled (table at 0x%016llX).\n",
+ 		 (unsigned int)(adev->gmc.gart_size >> 20),
+ 		 (unsigned long long)table_addr);
+@@ -843,6 +847,18 @@ static int gmc_v6_0_sw_init(struct amdgpu_ip_block *ip_block)
+ 		return r;
+ 	}
+ 	adev->need_swiotlb = drm_need_swiotlb(40);
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2's high physical addresses (NASID bits) cause a false positive.
++	 * The PIC ASIC already translates physical addresses to 32-bit PCI
++	 * via direct32 or ATE mappings — swiotlb bounce buffers are not needed.
++	 * Forcing this false lets TTM use alloc_pages + dma_map_page (streaming)
++	 * instead of dma_alloc_coherent, which avoids consuming scarce ATEs
++	 * (only 1024 in the PIC) for every page allocation.
++	 */
++	dev_info(adev->dev, "SN2: drm_need_swiotlb(40) returned %d, overriding to false\n",
++		 adev->need_swiotlb);
++	adev->need_swiotlb = false;
++#endif
+ 
+ 	r = gmc_v6_0_init_microcode(adev);
+ 	if (r) {
+diff --git a/drivers/gpu/drm/amd/amdgpu/si_dma.c b/drivers/gpu/drm/amd/amdgpu/si_dma.c
+index 74fcaa340d9b..c0833883ea92 100644
+--- a/drivers/gpu/drm/amd/amdgpu/si_dma.c
++++ b/drivers/gpu/drm/amd/amdgpu/si_dma.c
+@@ -73,6 +73,7 @@ static void si_dma_ring_set_wptr(struct amdgpu_ring *ring)
+ 	u32 me = (ring == &adev->sdma.instance[0].ring) ? 0 : 1;
+ 
+ 	WREG32(mmDMA_GFX_RB_WPTR + sdma_offsets[me], (ring->wptr << 2) & 0x3fffc);
++	(void)RREG32(mmDMA_GFX_RB_WPTR + sdma_offsets[me]); /* flush posted write */
+ }
+ 
+ static void si_dma_ring_emit_ib(struct amdgpu_ring *ring,
+@@ -266,6 +267,9 @@ static int si_dma_ring_test_ib(struct amdgpu_ring *ring, long timeout)
+ 	u64 gpu_addr;
+ 	long r;
+ 
++	dev_info(adev->dev, "SN2_DEBUG: si_dma_ring_test_ib ENTER ring=%s timeout=%ld\n",
++		 ring->name, timeout);
++
+ 	r = amdgpu_device_wb_get(adev, &index);
+ 	if (r)
+ 		return r;
+@@ -279,16 +283,25 @@ static int si_dma_ring_test_ib(struct amdgpu_ring *ring, long timeout)
+ 	if (r)
+ 		goto err0;
+ 
++	dev_info(adev->dev, "SN2_DEBUG: si_dma ib.gpu_addr=0x%llx wb_gpu_addr=0x%llx\n",
++		 ib.gpu_addr, gpu_addr);
++
+ 	ib.ptr[0] = DMA_PACKET(DMA_PACKET_WRITE, 0, 0, 0, 1);
+ 	ib.ptr[1] = lower_32_bits(gpu_addr);
+ 	ib.ptr[2] = upper_32_bits(gpu_addr) & 0xff;
+ 	ib.ptr[3] = 0xDEADBEEF;
+ 	ib.length_dw = 4;
++
++	dev_info(adev->dev, "SN2_DEBUG: si_dma calling ib_schedule\n");
+ 	r = amdgpu_ib_schedule(ring, 1, &ib, NULL, &f);
+-	if (r)
++	if (r) {
++		dev_info(adev->dev, "SN2_DEBUG: si_dma ib_schedule FAILED r=%ld\n", r);
+ 		goto err1;
++	}
+ 
++	dev_info(adev->dev, "SN2_DEBUG: si_dma calling dma_fence_wait_timeout(%ld)\n", timeout);
+ 	r = dma_fence_wait_timeout(f, false, timeout);
++	dev_info(adev->dev, "SN2_DEBUG: si_dma dma_fence_wait returned %ld\n", r);
+ 	if (r == 0) {
+ 		r = -ETIMEDOUT;
+ 		goto err1;
+@@ -296,6 +309,7 @@ static int si_dma_ring_test_ib(struct amdgpu_ring *ring, long timeout)
+ 		goto err1;
+ 	}
+ 	tmp = le32_to_cpu(adev->wb.wb[index]);
++	dev_info(adev->dev, "SN2_DEBUG: si_dma wb[%u]=0x%x (expect 0xDEADBEEF)\n", index, tmp);
+ 	if (tmp == 0xDEADBEEF)
+ 		r = 0;
+ 	else
+@@ -306,6 +320,7 @@ static int si_dma_ring_test_ib(struct amdgpu_ring *ring, long timeout)
+ 	dma_fence_put(f);
+ err0:
+ 	amdgpu_device_wb_free(adev, index);
++	dev_info(adev->dev, "SN2_DEBUG: si_dma_ring_test_ib EXIT r=%ld\n", r);
+ 	return r;
+ }
+ 

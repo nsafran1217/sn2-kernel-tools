@@ -1,0 +1,88 @@
+--- a/drivers/gpu/drm/radeon/radeon.h
++++ b/drivers/gpu/drm/radeon/radeon.h
+@@ -2460,9 +2460,27 @@
+ 	else
+ 		return r100_mm_rreg_slow(rdev, reg);
+ }
++#ifdef CONFIG_IA64_SGI_SN2
++/* SN2 PIO trace - arrays live in pcibr_provider.c (built-in kernel) */
++extern u32 sn2_pio_trace_reg[];
++extern u32 sn2_pio_trace_val[];
++extern u64 sn2_pio_trace_cnt[];
++extern unsigned int sn2_pio_trace_idx;
++extern u64 sn2_pio_trace_total;
++#endif
++
+ static inline void r100_mm_wreg(struct radeon_device *rdev, uint32_t reg, uint32_t v,
+ 				bool always_indirect)
+ {
++#ifdef CONFIG_IA64_SGI_SN2
++	{
++		unsigned int idx = sn2_pio_trace_idx;
++		sn2_pio_trace_reg[idx] = reg;
++		sn2_pio_trace_val[idx] = v;
++		sn2_pio_trace_cnt[idx] = ++sn2_pio_trace_total;
++		sn2_pio_trace_idx = (idx + 1) & 31;
++	}
++#endif
+ 	if ((reg < rdev->rmmio_size || reg < RADEON_MIN_MMIO_SIZE) && !always_indirect)
+ 		writel(v, ((void __iomem *)rdev->rmmio) + reg);
+ 	else
+--- a/arch/ia64/sn/pci/pcibr/pcibr_provider.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_provider.c
+@@ -95,6 +95,40 @@
+ 	return ioboard;
+ }
+ 
++/*
++ * SN2 GPU PIO write trace ring buffer.
++ * Written by radeon driver (module), read by bridge error handler (built-in).
++ */
++u32 sn2_pio_trace_reg[32];
++u32 sn2_pio_trace_val[32];
++u64 sn2_pio_trace_cnt[32];
++unsigned int sn2_pio_trace_idx;
++u64 sn2_pio_trace_total;
++EXPORT_SYMBOL(sn2_pio_trace_reg);
++EXPORT_SYMBOL(sn2_pio_trace_val);
++EXPORT_SYMBOL(sn2_pio_trace_cnt);
++EXPORT_SYMBOL(sn2_pio_trace_idx);
++EXPORT_SYMBOL(sn2_pio_trace_total);
++
++static void sn2_pio_trace_dump(void)
++{
++	int i, idx;
++
++	if (!sn2_pio_trace_total)
++		return;
++	pr_crit("SN2_PIO: Last 32 GPU register writes (total=%llu):\n",
++		sn2_pio_trace_total);
++	idx = sn2_pio_trace_idx;
++	for (i = 0; i < 32; i++) {
++		int j = (idx + i) & 31;
++		if (sn2_pio_trace_cnt[j])
++			pr_crit("SN2_PIO:  [%llu] reg=0x%04x val=0x%08x\n",
++				sn2_pio_trace_cnt[j],
++				sn2_pio_trace_reg[j],
++				sn2_pio_trace_val[j]);
++	}
++}
++
+ /* 
+  * PCI Bridge Error interrupt handler.  Gets invoked whenever a PCI 
+  * bridge sends an error interrupt.
+@@ -104,8 +138,11 @@
+ {
+ 	struct pcibus_info *soft = arg;
+ 
+-	if (sal_pcibr_error_interrupt(soft) < 0)
+-		panic("pcibr_error_intr_handler(): Fatal Bridge Error");
++	if (sal_pcibr_error_interrupt(soft) < 0) {
++		pr_crit("pcibr_error_intr_handler(): Bridge Error (non-fatal)\n");
++		sn2_pio_trace_dump();
++		dump_stack();
++	}
+ 
+ 	return IRQ_HANDLED;
+ }
+ 

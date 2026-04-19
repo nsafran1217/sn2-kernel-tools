@@ -1,0 +1,42 @@
+--- a/drivers/gpu/drm/radeon/r100.c
++++ b/drivers/gpu/drm/radeon/r100.c
+@@ -4124,6 +4124,24 @@
+ 	unsigned long flags;
+ 	uint32_t ret;
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	/*
++	 * SN2 PLX bridge workaround: The MM_INDEX/MM_DATA indirect register
++	 * access mechanism causes fatal xtalk errors on SN2 when the GPU is
++	 * behind a PLX PEX 8111 PCI-to-PCIe bridge. Every other register
++	 * read/write pattern works fine — only the write-to-0x0000 then
++	 * read-from-0x0004 pair is fatal. Log and return 0 for diagnosis.
++	 */
++	{
++		static int warn_count;
++		if (warn_count < 50) {
++			pr_warn_ratelimited("radeon: SN2 indirect read reg=0x%05x (MM_INDEX/MM_DATA bypassed)\n", reg);
++			warn_count++;
++		}
++	}
++	return 0;
++#endif
++
+ 	spin_lock_irqsave(&rdev->mmio_idx_lock, flags);
+ 	writel(reg, ((void __iomem *)rdev->rmmio) + RADEON_MM_INDEX);
+ 	ret = readl(((void __iomem *)rdev->rmmio) + RADEON_MM_DATA);
+--- a/arch/ia64/sn/pci/pcibr/pcibr_provider.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_provider.c
+@@ -104,8 +104,10 @@
+ {
+ 	struct pcibus_info *soft = arg;
+ 
+-	if (sal_pcibr_error_interrupt(soft) < 0)
+-		panic("pcibr_error_intr_handler(): Fatal Bridge Error");
++	if (sal_pcibr_error_interrupt(soft) < 0) {
++		pr_crit("pcibr_error_intr_handler(): Bridge Error (non-fatal)\n");
++		dump_stack();
++	}
+ 
+ 	return IRQ_HANDLED;
+ }

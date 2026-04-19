@@ -1,0 +1,49 @@
+diff --git a/drivers/gpu/drm/radeon/radeon_device.c b/drivers/gpu/drm/radeon/radeon_device.c
+index 266e3cb..bcf43b4 100644
+--- a/drivers/gpu/drm/radeon/radeon_device.c
++++ b/drivers/gpu/drm/radeon/radeon_device.c
+@@ -1313,6 +1313,7 @@ int radeon_device_init(struct radeon_device *rdev,
+ 		 radeon_family_name[rdev->family], pdev->vendor, pdev->device,
+ 		 pdev->subsystem_vendor, pdev->subsystem_device, pdev->revision);
+ 
++	printk(KERN_INFO "[SN2-DBG] radeon_device_init: stage 1 — mutexes\n");
+ 	/* mutex initialization are all done here so we
+ 	 * can recall function without having locking issues */
+ 	mutex_init(&rdev->ring_lock);
+@@ -1408,14 +1409,19 @@ int radeon_device_init(struct radeon_device *rdev,
+ 		rdev->rmmio_base = pci_resource_start(rdev->pdev, 2);
+ 		rdev->rmmio_size = pci_resource_len(rdev->pdev, 2);
+ 	}
++	printk(KERN_INFO "[SN2-DBG] radeon_device_init: stage 4 — ioremap\n");
+ 	rdev->rmmio = ioremap(rdev->rmmio_base, rdev->rmmio_size);
+ 	if (rdev->rmmio == NULL)
+ 		return -ENOMEM;
+ 
++	printk(KERN_INFO "[SN2-DBG] radeon_device_init: stage 5 — io port + vga\n");
++
+ 	/* doorbell bar mapping */
+ 	if (rdev->family >= CHIP_BONAIRE)
+ 		radeon_doorbell_init(rdev);
+ 
++	printk(KERN_INFO "[SN2-DBG] radeon_device_init: stage 5a — io port loop\n");
++
+ 	/* io port mapping */
+ 	for (i = 0; i < DEVICE_COUNT_RESOURCE; i++) {
+ 		if (pci_resource_flags(rdev->pdev, i) & IORESOURCE_IO) {
+@@ -1427,6 +1433,8 @@ int radeon_device_init(struct radeon_device *rdev,
+ 	if (rdev->rio_mem == NULL)
+ 		DRM_ERROR("Unable to find PCI I/O BAR\n");
+ 
++	printk(KERN_INFO "[SN2-DBG] radeon_device_init: stage 5b — vga_client_register\n");
++
+ 	if (rdev->flags & RADEON_IS_PX)
+ 		radeon_device_handle_px_quirks(rdev);
+ 
+@@ -1443,6 +1451,7 @@ int radeon_device_init(struct radeon_device *rdev,
+ 	if (runtime)
+ 		vga_switcheroo_init_domain_pm_ops(rdev->dev, &rdev->vga_pm_domain);
+ 
++	printk(KERN_INFO "[SN2-DBG] radeon_device_init: stage 6 — radeon_init\n");
+ 	r = radeon_init(rdev);
+ 	if (r)
+ 		goto failed;

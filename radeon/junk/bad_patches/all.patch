@@ -1,0 +1,286 @@
+diff --git a/drivers/gpu/drm/radeon/r100.c b/drivers/gpu/drm/radeon/r100.c
+index 3ac1a79..6512b3e 100644
+--- a/drivers/gpu/drm/radeon/r100.c
++++ b/drivers/gpu/drm/radeon/r100.c
+@@ -643,10 +643,16 @@ void r100_hpd_fini(struct radeon_device *rdev)
+  */
+ void r100_pci_gart_tlb_flush(struct radeon_device *rdev)
+ {
+-	/* TODO: can we do somethings here ? */
+-	/* It seems hw only cache one entry so we should discard this
+-	 * entry otherwise if first GPU GART read hit this entry it
+-	 * could end up in wrong address. */
++	/* SN2 fix: Toggle PCIGART_TRANSLATE_EN to force AIC cache re-read.
++	 * Without this, stale AIC entries could cause DMA reads to access
++	 * wrong physical pages after GART table updates. */
++	u32 tmp = RREG32(RADEON_AIC_CNTL);
++	WREG32(RADEON_AIC_CNTL, tmp & ~RADEON_PCIGART_TRANSLATE_EN);
++	RREG32(RADEON_AIC_CNTL); /* PIO flush */
++	udelay(10);
++	WREG32(RADEON_AIC_CNTL, tmp);
++	RREG32(RADEON_AIC_CNTL); /* PIO flush */
++	mb();
+ }
+ 
+ int r100_pci_gart_init(struct radeon_device *rdev)
+@@ -950,8 +956,8 @@ struct radeon_fence *r100_copy_blit(struct radeon_device *rdev,
+ 				  RADEON_DP_SRC_SOURCE_MEMORY |
+ 				  RADEON_GMC_CLR_CMP_CNTL_DIS |
+ 				  RADEON_GMC_WR_MSK_DIS);
+-		radeon_ring_write(ring, (pitch << 22) | (src_offset >> 10));
+-		radeon_ring_write(ring, (pitch << 22) | (dst_offset >> 10));
++		radeon_ring_write(ring, (pitch << 22) | ((uint32_t)src_offset >> 10));
++		radeon_ring_write(ring, (pitch << 22) | ((uint32_t)dst_offset >> 10));
+ 		radeon_ring_write(ring, (0x1fff) | (0x1fff << 16));
+ 		radeon_ring_write(ring, 0);
+ 		radeon_ring_write(ring, (0x1fff) | (0x1fff << 16));
+@@ -1220,7 +1226,16 @@ int r100_cp_init(struct radeon_device *rdev, unsigned ring_size)
+ 	if (rdev->wb.enabled)
+ 		WREG32(R_000770_SCRATCH_UMSK, 0xff);
+ 	else {
++#ifndef CONFIG_IA64_SGI_SN2
++		/* SN2: Do NOT set RB_NO_UPDATE. The R100 CP microcode
++		 * unconditionally writes RPTR to RPTR_ADDR via DMA when
++		 * the ring goes idle. With RB_NO_UPDATE, the DMA still
++		 * happens but RPTR_ADDR might be 0 on other platforms.
++		 * On SN2, bus address 0 has no ATE → DMA never completes
++		 * → RSIU permanently stalls. RPTR_ADDR is already set to
++		 * a valid GART address above (line 1216), so let it write. */
+ 		tmp |= RADEON_RB_NO_UPDATE;
++#endif
+ 		WREG32(R_000770_SCRATCH_UMSK, 0);
+ 	}
+ 
+@@ -3894,6 +3909,18 @@ static void r100_clock_startup(struct radeon_device *rdev)
+ 	tmp |= S_00000D_FORCE_CP(1) | S_00000D_FORCE_VIP(1);
+ 	if ((rdev->family == CHIP_RV250) || (rdev->family == CHIP_RV280))
+ 		tmp |= S_00000D_FORCE_DISP1(1) | S_00000D_FORCE_DISP2(1);
++
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: Without BIOS POST, engine clocks may be gated off.
++	 * Force all engine clocks ON so the rendering pipeline can
++	 * process CP register writes. */
++	if (!rdev->bios) {
++		printk(KERN_INFO "[SN2-DBG] r100_clock_startup: no BIOS, forcing all engine clocks ON\n");
++		WREG32(R_00000D_SCLK_CNTL, 0x1FFF7FFA);
++		return;
++	}
++#endif
++
+ 	WREG32_PLL(R_00000D_SCLK_CNTL, tmp);
+ }
+ 
+diff --git a/drivers/gpu/drm/radeon/radeon_device.c b/drivers/gpu/drm/radeon/radeon_device.c
+index 5d523d5..156e07c 100644
+--- a/drivers/gpu/drm/radeon/radeon_device.c
++++ b/drivers/gpu/drm/radeon/radeon_device.c
+@@ -1301,6 +1301,8 @@ int radeon_device_init(struct radeon_device *rdev,
+ 		 radeon_family_name[rdev->family], pdev->vendor, pdev->device,
+ 		 pdev->subsystem_vendor, pdev->subsystem_device, pdev->revision);
+ 
++	// [DEBUG INSTRUMENTATION]
++	printk(KERN_INFO "[SN2-DBG] radeon_device_init: stage 1 — mutexes\n");
+ 	/* mutex initialization are all done here so we
+ 	 * can recall function without having locking issues */
+ 	mutex_init(&rdev->ring_lock);
+@@ -1369,6 +1371,9 @@ int radeon_device_init(struct radeon_device *rdev,
+ 		dma_bits = 32;
+ #endif
+ 
++	// [DEBUG INSTRUMENTATION]
++	printk(KERN_INFO "[SN2-DBG] radeon_device_init: stage 3 — dma_set_mask\n");
++
+ 	r = dma_set_mask_and_coherent(&rdev->pdev->dev, DMA_BIT_MASK(dma_bits));
+ 	if (r) {
+ 		pr_warn("radeon: No suitable DMA available\n");
+@@ -1377,6 +1382,15 @@ int radeon_device_init(struct radeon_device *rdev,
+ 	rdev->pdev->msi_addr_mask = DMA_BIT_MASK(dma_bits);
+ 	rdev->need_swiotlb = drm_need_swiotlb(dma_bits);
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: drm_need_swiotlb() false positive from NASID-encoded phys addrs.
++	 * With need_swiotlb=true, TTM uses dma_alloc_coherent which creates
++	 * barrier ATEs (PCI32_ATE_BAR) causing WrReqWithResp xtalk packets.
++	 * The PIC bridge rejects WrReqWithResp for devices behind PLX bridge.
++	 * Force streaming DMA (direct32 path, no barrier ATEs). */
++	rdev->need_swiotlb = false;
++#endif
++
+ 	/* Registers mapping */
+ 	/* TODO: block userspace mapping of io register */
+ 	spin_lock_init(&rdev->mmio_idx_lock);
+@@ -1398,15 +1412,30 @@ int radeon_device_init(struct radeon_device *rdev,
+ 		rdev->rmmio_base = pci_resource_start(rdev->pdev, 2);
+ 		rdev->rmmio_size = pci_resource_len(rdev->pdev, 2);
+ 	}
++	// [DEBUG INSTRUMENTATION]
++	printk(KERN_INFO "[SN2-DBG] radeon_device_init: stage 4 — ioremap\n");
+ 	rdev->rmmio = ioremap(rdev->rmmio_base, rdev->rmmio_size);
+ 	if (rdev->rmmio == NULL)
+ 		return -ENOMEM;
+ 
++	// [DEBUG INSTRUMENTATION]
++	printk(KERN_INFO "[SN2-DBG] radeon_device_init: stage 5 — io port + vga\n");
++
+ 	/* doorbell bar mapping */
+ 	if (rdev->family >= CHIP_BONAIRE)
+ 		radeon_doorbell_init(rdev);
+ 
++	// [DEBUG INSTRUMENTATION]
++	printk(KERN_INFO "[SN2-DBG] radeon_device_init: stage 5a — io port loop\n");
++
+ 	/* io port mapping */
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: pci_iomap for I/O BARs hangs on devices behind PLX bridge.
++	 * SN2 doesn't support legacy I/O port access via PIO anyway.
++	 * ATOM parser falls back to MMIO for IIO operations.
++	 * [PDF §Legacy Functionality / Page 3]: no legacy I/O ports on SN2 */
++	rdev->rio_mem = NULL;
++#else
+ 	for (i = 0; i < DEVICE_COUNT_RESOURCE; i++) {
+ 		if (pci_resource_flags(rdev->pdev, i) & IORESOURCE_IO) {
+ 			rdev->rio_mem_size = pci_resource_len(rdev->pdev, i);
+@@ -1414,9 +1443,13 @@ int radeon_device_init(struct radeon_device *rdev,
+ 			break;
+ 		}
+ 	}
++#endif
+ 	if (rdev->rio_mem == NULL)
+ 		DRM_ERROR("Unable to find PCI I/O BAR\n");
+ 
++	// [DEBUG INSTRUMENTATION]
++	printk(KERN_INFO "[SN2-DBG] radeon_device_init: stage 5b — vga_client_register\n");
++
+ 	if (rdev->flags & RADEON_IS_PX)
+ 		radeon_device_handle_px_quirks(rdev);
+ 
+@@ -1433,6 +1466,8 @@ int radeon_device_init(struct radeon_device *rdev,
+ 	if (runtime)
+ 		vga_switcheroo_init_domain_pm_ops(rdev->dev, &rdev->vga_pm_domain);
+ 
++	// [DEBUG INSTRUMENTATION]
++	printk(KERN_INFO "[SN2-DBG] radeon_device_init: stage 6 — radeon_init\n");
+ 	r = radeon_init(rdev);
+ 	if (r)
+ 		goto failed;
+diff --git a/drivers/gpu/drm/radeon/radeon_fbdev.c b/drivers/gpu/drm/radeon/radeon_fbdev.c
+index 18d61f3..c4b2ec9 100644
+--- a/drivers/gpu/drm/radeon/radeon_fbdev.c
++++ b/drivers/gpu/drm/radeon/radeon_fbdev.c
+@@ -77,9 +77,17 @@ static int radeon_fbdev_create_pinned_object(struct drm_fb_helper *fb_helper,
+ 		height = ALIGN(mode_cmd->height, 8);
+ 	size = mode_cmd->pitches[0] * height;
+ 	aligned_size = ALIGN(size, PAGE_SIZE);
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: create fbdev BO in GTT. Avoids intermittent hang during
++	 * fbcon screen clear. TTM blits GTT→VRAM when pinned for scanout. */
++	ret = radeon_gem_object_create(rdev, aligned_size, 0,
++				       RADEON_GEM_DOMAIN_GTT,
++				       0, true, &gobj);
++#else
+ 	ret = radeon_gem_object_create(rdev, aligned_size, 0,
+ 				       RADEON_GEM_DOMAIN_VRAM,
+ 				       0, true, &gobj);
++#endif
+ 	if (ret) {
+ 		pr_err("failed to allocate framebuffer (%d)\n", aligned_size);
+ 		return -ENOMEM;
+diff --git a/drivers/gpu/drm/radeon/radeon_legacy_crtc.c b/drivers/gpu/drm/radeon/radeon_legacy_crtc.c
+index a1054c8..3f3c645 100644
+--- a/drivers/gpu/drm/radeon/radeon_legacy_crtc.c
++++ b/drivers/gpu/drm/radeon/radeon_legacy_crtc.c
+@@ -452,6 +452,17 @@ retry:
+ 		return -EINVAL;
+ 	}
+ 	radeon_bo_get_tiling_flags(rbo, &tiling_flags, NULL);
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: Wait for GTT→VRAM blit fence to complete before CRTC scans.
++	 * With broken interrupts, fence poll timing can miss. */
++	{
++		long wr = dma_resv_wait_timeout(rbo->tbo.base.resv,
++						DMA_RESV_USAGE_KERNEL,
++						false, MAX_SCHEDULE_TIMEOUT);
++		if (wr <= 0)
++			printk(KERN_WARNING "[SN2-DBG] crtc_do_set_base: fence wait returned %ld\n", wr);
++	}
++#endif
+ 	radeon_bo_unreserve(rbo);
+ 	if (tiling_flags & RADEON_TILING_MICRO)
+ 		DRM_ERROR("trying to scanout microtiled buffer\n");
+diff --git a/drivers/gpu/drm/radeon/radeon_object.c b/drivers/gpu/drm/radeon/radeon_object.c
+index a0fc080..2c9dae5 100644
+--- a/drivers/gpu/drm/radeon/radeon_object.c
++++ b/drivers/gpu/drm/radeon/radeon_object.c
+@@ -200,6 +200,9 @@ int radeon_bo_create(struct radeon_device *rdev,
+ 
+ 	radeon_ttm_placement_from_domain(bo, domain);
+ 	/* Kernel allocation are uninterruptible */
++	// [DEBUG INSTRUMENTATION]
++	printk(KERN_INFO "[SN2-DBG] bo_create: size=%lu domain=%u type=%d\n",
++	       size, domain, type);
+ 	down_read(&rdev->pm.mclk_lock);
+ 	r = ttm_bo_init_validate(&rdev->mman.bdev, &bo->tbo, type,
+ 				 &bo->placement, page_align, !kernel, sg, resv,
+@@ -208,6 +211,10 @@ int radeon_bo_create(struct radeon_device *rdev,
+ 	if (unlikely(r != 0)) {
+ 		return r;
+ 	}
++	// [DEBUG INSTRUMENTATION]
++	printk(KERN_INFO "[SN2-DBG] bo_create: mem_type=%d is_iomem=%d\n",
++	       bo->tbo.resource->mem_type,
++	       bo->tbo.resource->bus.is_iomem);
+ 	*bo_ptr = bo;
+ 
+ 	trace_radeon_bo_create(bo);
+diff --git a/drivers/gpu/drm/radeon/radeon_ttm.c b/drivers/gpu/drm/radeon/radeon_ttm.c
+index e7ab816..1fdf39a 100644
+--- a/drivers/gpu/drm/radeon/radeon_ttm.c
++++ b/drivers/gpu/drm/radeon/radeon_ttm.c
+@@ -298,6 +298,25 @@ static int radeon_ttm_io_mem_reserve(struct ttm_device *bdev, struct ttm_resourc
+ 		 */
+ 		mem->bus.offset = (mem->bus.offset & 0x0ffffffffUL) +
+ 			rdev->hose->dense_mem_base;
++#endif
++#ifdef CONFIG_IA64_SGI_SN2
++		/*
++		 * SN2/ia64: pci_resource_start() returns PIO addresses with
++		 * ia64 region bits (63:61) set. aper_base=0x80000008... has
++		 * region 4 (bit 63). The PFN from bus.offset >> PAGE_SHIFT
++		 * overflows ia64's 50-bit physical address space, causing MCA
++		 * when vmf_insert_pfn_prot() builds userspace PTEs.
++		 * Strip region bits — raw phys addr is valid for ia64 PTEs.
++		 * [Identical pattern to Alpha fix above]
++		 */
++		mem->bus.offset &= 0x1FFFFFFFFFFFFFFFULL; /* keep bits 60:0 */
++
++		/* SN2: VRAM accessed via PIO. Write-combining (_PAGE_MA_WC)
++		 * causes CPU write buffers to never flush to PIO space → hang.
++		 * PDF page 67 requires pgprot_noncached() for PCI mem resources.
++		 * Kernel ioremap uses UC (region 6). Userspace PTEs must match.
++		 */
++		mem->bus.caching = ttm_uncached;
+ #endif
+ 		break;
+ 	default:
+diff --git a/drivers/gpu/drm/ttm/ttm_bo_vm.c b/drivers/gpu/drm/ttm/ttm_bo_vm.c
+index a805104..a9145be 100644
+--- a/drivers/gpu/drm/ttm/ttm_bo_vm.c
++++ b/drivers/gpu/drm/ttm/ttm_bo_vm.c
+@@ -245,6 +245,17 @@ vm_fault_t ttm_bo_vm_fault_reserved(struct vm_fault *vmf,
+ 	for (i = 0; i < num_prefault; ++i) {
+ 		if (bo->resource->bus.is_iomem) {
+ 			pfn = ttm_bo_io_mem_pfn(bo, page_offset);
++			// [DEBUG INSTRUMENTATION] Log first VRAM page fault
++			if (i == 0 && page_offset == 0) {
++				printk(KERN_INFO "[SN2-DBG] ttm_vm_fault: VRAM iomem pfn=0x%lx "
++				       "addr=0x%lx mem_type=%d bo_size=%lu "
++				       "prot=0x%lx caching=%d bus.offset=0x%llx\n",
++				       pfn, address, bo->resource->mem_type,
++				       (unsigned long)bo->base.size,
++				       (unsigned long)pgprot_val(prot),
++				       bo->resource->bus.caching,
++				       (unsigned long long)bo->resource->bus.offset);
++			}
+ 		} else {
+ 			page = ttm->pages[page_offset];
+ 			if (unlikely(!page && i == 0)) {

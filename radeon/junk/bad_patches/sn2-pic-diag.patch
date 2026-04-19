@@ -1,0 +1,1683 @@
+diff --git a/SN2-PIO-DMA-MECHANISMS.md b/SN2-PIO-DMA-MECHANISMS.md
+new file mode 100644
+index 0000000..f34faf6
+--- /dev/null
++++ b/SN2-PIO-DMA-MECHANISMS.md
+@@ -0,0 +1,368 @@
++# SN2 PIO and DMA Mechanisms for GPU Driver Debugging
++
++## Overview
++
++This document traces every step of how CPU↔GPU communication works on
++SGI Altix SN2, based on the actual kernel source code and the SGI Altix
++Device Driver Porting Guide (007-4520-007). The purpose is to identify
++exactly where DMA flush, PIO ordering, and ATE translation interact —
++particularly for devices behind PCI-PCI bridges (PPBs) like the PLX
++PEX8111.
++
++---
++
++## 1. PIO (Programmable I/O) — CPU Writes/Reads GPU Registers
++
++### 1.1 Write Path: WREG32 → writel
++
++```
++radeon driver:  WREG32(reg, val)
++  → r100_mm_wreg()                         [radeon.h:2463]
++    → writel(v, rdev->rmmio + reg)          [radeon.h:2467]
++      → *(volatile u32 *)(addr) = val       [ia64 writel is a volatile store]
++      → ia64_mfa()                          [memory fence — orders stores]
++```
++
++**No sn_dma_flush.  No __sn_mmiowb.**  The write is posted into the SN2
++PIO pipeline:
++
++```
++CPU store → SHub PIO write buffer → NUMAlink → PIC widget → PLX bridge → GPU register
++```
++
++The write may sit in the SHub PIO write buffer for an indefinite time.
++Other PIO writes from the SAME CPU are guaranteed to arrive in order
++[PDF §PIO Write (Posted) Synchronization, Page 70], but they are NOT
++guaranteed to have reached the device when writel() returns.
++
++**Source**: [arch/ia64/include/asm/sn/io.h] — writel does NOT call
++sn_dma_flush() or __sn_mmiowb().  Only explicit readl() triggers
++sn_dma_flush.
++
++### 1.2 Read Path: RREG32 → readl → sn_dma_flush
++
++```
++radeon driver:  RREG32(reg)
++  → r100_mm_rreg()                         [radeon.h:2454]
++    → readl(rdev->rmmio + reg)              [radeon.h:2459]
++      → ___sn_readl(addr)                   [arch/ia64/include/asm/sn/io.h:163]
++        1. val = *(volatile u32 *)addr       — PIO read through SHub→PIC→PLX→GPU
++        2. ia64_mfa()                        — memory fence after read
++        3. sn_dma_flush((unsigned long)addr) — flush posted DMA write buffers
++        4. return val
++```
++
++**The PIO read itself forces all prior PIO writes to complete** because
++the PIC processes PIO operations in order within the same slot. The read
++cannot return until the GPU responds, and the GPU cannot respond until
++all prior PIO writes in the pipeline have been delivered.
++
++[PDF §PIO Write (Posted) Synchronization, Page 70]: "To guarantee that
++PIO write operations have completed, device drivers are required to push
++all prior PIO write operations out to the device by issuing a PIO read
++operation to the same controller."
++
++### 1.3 sn_dma_flush — Posted DMA Write Buffer Drain
++
++After every readl(), the SN2 platform calls `sn_dma_flush(addr)` which
++is supposed to ensure that all DMA writes FROM the device TO memory have
++arrived. This is a separate concern from PIO ordering.
++
++[PDF §PIO Reads and Posted DMAs, Page 5]: "PCI-X bridge chipsets on SGI
++Altix systems do not automatically flush Posted DMA writes on any PIO
++reads."
++
++The sn_dma_flush mechanism:
++
++```
++sn_dma_flush(addr):                        [pcibr_dma.c:251]
++  1. Extract nasid from addr                — identifies which SHub
++  2. Extract widget number from addr        — identifies which PIC bridge
++  3. Look up flush_nasid_list[wid_num]      — array of device entries
++  4. Match addr against BAR ranges          — find which device slot
++  5. If match found:
++     For TIOCP: read pcireg_wrb_flush_get() — WRB flush register (per-slot)
++     For PIC:   force interrupt + wait       — see below
++  6. If NO match: return without flushing   ← THE BUG FOR DEVICES BEHIND PPBs
++```
++
++### 1.4 PIC Flush via Forced Interrupt
++
++For PIC bridges, the flush works by forcing a fake interrupt:
++
++```c
++// [pcibr_dma.c:413-421]
++*common->sfdl_flush_addr = 0;                    // clear memory sentinel
++*(volatile u32 *)(common->sfdl_force_int_addr) = 1;  // trigger PIC p_force_pin[n]
++while (*(common->sfdl_flush_addr) != 0x10f)      // wait for interrupt arrival
++    cpu_relax();
++```
++
++The forced interrupt travels: PIC → Xtalk link → SHub → memory write
++(sets sentinel to 0x10f). When the sentinel is set, all DMA writes that
++were in-flight before the interrupt was generated must have completed,
++because the interrupt is ordered after them on the Xtalk link.
++
++[PDF §Device Interrupts and Posted DMAs, Page 5]: "SGI Altix I/O
++subsystems use the interrupt mechanism to flush all posted DMA data to
++target memory. This is the only mechanism currently available."
++
++### 1.5 The Critical Bug: Devices Behind PCI-PCI Bridges
++
++The flush_nasid_list is populated by the PROM via SAL calls during boot
++[io_common.c:196]. The PROM only knows about devices DIRECTLY on the
++PIC bus. Devices behind PCI-PCI bridges (PPBs) are not in the list.
++
++For our GPU topology:
++```
++PIC widget 15, bus 0:
++  dev=0: ??? (some device with BARs registered)
++  dev=2: PLX PEX8111 bridge (BARs NOT in flush list)
++    → bus 1, dev=0: Radeon GPU (BARs NOT in flush list)
++```
++
++When readl() calls sn_dma_flush() with the GPU's MMIO address, the
++lookup at step 4 FAILS — no BAR matches. The instrumentation confirms:
++
++```
++[SN2-FLUSH] NO BAR MATCH for addr 0xc00000080fd015e0 nasid=0x0 wid=15
++```
++
++**Result: sn_dma_flush is a NO-OP for every GPU register read.**
++
++The fallback code (added during debugging) uses dev=0's flush entry.
++But on PIC, `p_force_pin[]` and `p_wr_req_buf[]` are per-slot
++[pic.h:134,139]. The PIC has:
++- `p_force_pin[8]` — 8 interrupt force pins (2 per slot × 4 slots)
++- `p_wr_req_buf[4]` — 4 WRB flush registers, one per slot
++
++**OPEN QUESTION**: Does forcing a pin associated with slot 0 drain ALL
++DMA write buffers from ALL slots (including slot 2 where PLX sits)?
++Or only slot 0's WRBs? The PDF implies all, but we have no evidence.
++
++---
++
++## 2. DMA — GPU Reads/Writes System Memory
++
++### 2.1 DMA Address Translation: Three Paths
++
++The PIC bridge provides three DMA translation methods
++[pcibr_dma.c:35-50]:
++
++| Method | Address Range | How It Works | When Used |
++|--------|-------------|--------------|-----------|
++| **Direct64** | Full 64-bit | PCI addr = coretalk addr + attributes | dma_mask == ~0UL (64-bit) |
++| **Direct32** | 0x80000000–0xFFFFFFFF | PCI addr = dir_xbase + offset | dma_mask < 64-bit, no MSI |
++| **ATE (PMU)** | 0x40000000–0x7FFFFFFF | PCI addr → ATE → coretalk addr | Fallback, or MSI/barrier |
++
++For Turks on this system:
++- dma_mask = 0xFFFFFFFF_FF (40-bit)  [radeon_device.c:1361]
++- Not 64-bit, so Direct64 is NOT used
++- Direct32 is the primary path
++- ATEs used only for MSI and coherent allocs (barrier)
++
++### 2.2 Direct32 Path (Primary for GPU)
++
++```
++pcibr_dmatrans_direct32():                  [pcibr_dma.c:174]
++  1. Convert phys_addr to xio_addr:
++     xio_addr = PHYS_TO_DMA(phys_addr)     — strips IA-64 region bits
++  2. Calculate offset from dir_xbase:
++     offset = xio_addr - pbi_dir_xbase      — dir_xbase is 0x0 for our system
++  3. Check: offset must fit in 2GB window
++  4. Return: PCI32_DIRECT_BASE | offset      — PCI32_DIRECT_BASE = 0x80000000
++```
++
++The device sees addresses in range 0x80000000–0xFFFFFFFF. The PIC's
++`p_dir_map` register (0x000080) contains the upper bits that translate
++these back to system physical addresses.
++
++**No ATEs consumed. No GART entries. No resource limits.**
++
++### 2.3 ATE Path (Used for MSI and Coherent Allocations)
++
++```
++pcibr_dmamap_ate32():                       [pcibr_dma.c:52]
++  1. Calculate ATE count needed
++  2. Allocate contiguous ATEs:
++     pcibr_ate_alloc()                      [pcibr_ate.c:115]
++       → alloc_ate_resource()               — linear scan for free slots
++  3. Write ATE entries to PIC hardware:
++     ate_write()                            [pcibr_ate.c:143]
++       → pcireg_int_ate_set()               — writes to p_int_ate_ram[]
++       → pcireg_tflush_get()                — reads p_wid_tflush to flush PIO
++  4. Return: PCI32_MAPPED_BASE + offset + IOPGSIZE * ate_index
++```
++
++ATE entries live in PIC SRAM (`p_int_ate_ram[1024]` at offset 0x010000).
++Each ATE maps one IOPGSIZE page (16KB when PAGE_SIZE < 16KB, or
++PAGE_SIZE when >= 16KB).
++
++**Total ATE capacity**: 1024 entries × 16KB = 16MB on this system.
++
++This is why `need_swiotlb = true` causes ATE exhaustion — the TTM
++DMA_ALLOC path routes ALL page allocations through dma_alloc_coherent(),
++which goes through the ATE path (dma_map_consistent), quickly exhausting
++the 16MB budget.
++
++### 2.4 ATE Entry Format (PIC)
++
++```
++Bit 63:     Valid
++Bit 57:     Swap (byte-swap for big-endian)
++Bit 56:     Prefetch
++Bit 55:     Precise (barrier)
++Bit 54:     PIO (for MSI)
++Bits 47-12: Coretalk address >> 12
++Bits 11-4:  Target widget ID (pbi_hub_xid)
++```
++
++Source: [pcibr_dma.c:64-116] and PIC documentation.
++
++### 2.5 DMA_ATTR_WRITE_BARRIER — Coherent DMA
++
++When `DMA_ATTR_WRITE_BARRIER` is set, the mapping goes through
++`provider->dma_map_consistent()` instead of `provider->dma_map()`.
++
++```
++pcibr_dma_map_consistent():                 [pcibr_dma.c:499]
++  → pcibr_dmamap_ate32(... PCI32_ATE_BAR ...)
++```
++
++The `PCI32_ATE_BAR` flag sets the "barrier" bit in the ATE. This
++ensures that when the device DMAs through this ATE, the PIC enforces
++ordering — all prior DMA writes complete before this one proceeds.
++
++Visible in dmesg as:
++```
++[SN2-GPU-DMA] consistent: phys=0x800110000000 size=8 ... dma=0x40000000 BARRIER-ATE
++```
++
++---
++
++## 3. Interrupt Path
++
++### 3.1 MSI Setup on SN2
++
++The radeon driver uses MSI. On SN2, MSI is routed through the PIC's
++ATE mechanism [msi_sn.c]. The MSI address/data are programmed to target
++an ATE entry marked with PCI32_ATE_MSI, which causes the PIC to
++generate an interrupt to the SHub when the device writes to that address.
++
++```
++radeon: using MSI
++salruntime_sn_intr_handler: Invalid provider_call 3
++```
++
++The "Invalid provider_call 3" during MSI setup is `SAL_INTR_REDIRECT`,
++which is used to redirect interrupts between CPUs. This failing means
++the interrupt may not be fully configured.
++
++### 3.2 Interrupt as DMA Flush
++
++[PDF §Device Interrupts and Posted DMAs, Page 5]: The interrupt
++mechanism is the ONLY way to guarantee DMA writes have completed on PIC.
++
++```
++GPU generates interrupt (MSI write to ATE-mapped address)
++  → PIC processes MSI, generates interrupt to SHub
++  → ALL pending DMA writes from that device complete before interrupt arrives
++  → SHub delivers interrupt to CPU
++  → CPU runs interrupt handler
++```
++
++**If GPU interrupts stop being delivered** (as observed during heavy 3D),
++there is NO mechanism to flush GPU DMA writes. The fence WB values may
++pile up in PIC WRBs indefinitely.
++
++---
++
++## 4. The sn_dma_flush Failure Chain
++
++Here is the exact chain of failure for our GPU behind a PLX bridge:
++
++```
++1. GPU does DMA write (fence value) → PIC WRBs (slot 2) → [buffered]
++2. CPU does RREG32(scratch) → readl() → sn_dma_flush(gpu_mmio_addr)
++3. sn_dma_flush: nasid=0x0, widget=15
++4. Lookup flush_nasid_list[15] → iterate DEV_PER_WIDGET=32 entries
++5. For each entry, check sfdl_bar_list[0..5].start/end against addr
++6. GPU MMIO addr is BEHIND PLX bridge — PROM never registered these BARs
++7. NO MATCH → return without flushing
++8. DMA write (fence) may STILL be in PIC WRB for slot 2
++9. CPU reads fence from WB memory → may see stale value
++   (or worse: reads WB memory but PIC has not delivered the DMA)
++```
++
++### 4.1 The Fallback Fix (Current Instrumentation)
++
++The v6b instrumentation added a fallback: if no BAR match, use dev=0's
++flush entry on the same widget. This forces an interrupt on dev=0's pin.
++
++**Question**: Does the forced interrupt on dev=0's pin drain WRBs for
++dev=2 (PLX bridge)?
++
++PIC hardware has per-slot resources:
++- `p_wr_req_buf[4]` — 4 WRB flush registers at offsets 0x240-0x258
++- `p_force_pin[8]` — 8 force interrupt pins at offsets 0x1C0-0x1F8
++
++The WRB flush registers are indexed by slot. Reading `p_wr_req_buf[n]`
++flushes slot n's WRBs (but this is only used for TIOCP, not PIC).
++
++For PIC, the forced-interrupt mechanism might be global (drains all
++WRBs) because the interrupt travels the same Xtalk link as all DMA
++writes. But this is UNVERIFIED.
++
++---
++
++## 5. Key Addresses and Identifiers
++
++| Item | Value | Source |
++|------|-------|--------|
++| GPU PCI BDF | 0002:01:00.0 | dmesg |
++| PLX bridge PCI BDF | 0002:00:02.0 | dmesg |
++| PIC widget | 15 | sn_dma_flush trace |
++| PIC nasid | 0x0 | sn_dma_flush trace |
++| PIC slab | 0 | topology |
++| PLX slot on PIC | 2 (dev=2, 0-indexed) | PCI topology |
++| DMA mask | 0xFFFFFFFF_FF (40-bit) | dmesg [SN2-GPU-DMA] INIT |
++| DMA path | PCI32 direct mapped | IS_PIC=1, IS_PCIX=0 |
++| dir_xbase | 0x0 | dmesg [SN2-GPU-DMA] INIT |
++| DMA address range | 0x80000000–0xFFFFFFFF | PCI32_DIRECT_BASE |
++| ATE count | 1024 | pcibus_info->pbi_int_ate_size |
++| ATE page size | 16KB (PAGE_SIZE < 16384) | pcibr_bus_fixup |
++| ATE total capacity | 16MB | 1024 × 16KB |
++| GPU MMIO base | 0xc00000080fd00000 (approx) | ioremap of BAR2 |
++| GPU VRAM base | 0xc00000080e000000 (approx) | ioremap of BAR0 |
++
++---
++
++## 6. What Needs Instrumentation
++
++### Q1: Does PIC forced-interrupt flush drain ALL slots' WRBs?
++
++We need to verify whether forcing an interrupt on pin N (associated with
++slot 0) drains WRBs for slot 2 (where PLX sits). If not, the fallback
++flush is useless.
++
++**Test**: Read `p_wr_req_buf[1]` (PLX slot's WRB flush register)
++directly, INSTEAD of using the forced-interrupt mechanism.
++
++### Q2: What is the PIC RRB/WRB allocation for the PLX bridge slot?
++
++The PIC allocates Read Response Buffers (RRBs) via `p_rrb_map[2]`
++(even/odd) and the PROM configures these during boot. If the PLX
++bridge's slot has too few RRBs, heavy GPU DMA reads will stall.
++
++**Test**: Read `p_rrb_map[0]` and `p_rrb_map[1]` and decode the
++per-slot RRB allocation.
++
++### Q3: Are WRBs actually accumulating?
++
++Read the PIC's `p_wr_req_buf[slot]` register before and after a known
++GPU DMA sequence. If a non-zero value is ever read, WRBs ARE pending.
++
++### Q4: Does the GPU's MSI interrupt properly flush DMA?
++
++Track whether GPU interrupts (MSI) correlate with DMA write completion.
++If interrupts stop during heavy 3D, DMA writes may never be flushed.
+diff --git a/arch/ia64/kernel/mca.c b/arch/ia64/kernel/mca.c
+index 3aa1f52..55b6eaf 100644
+--- a/arch/ia64/kernel/mca.c
++++ b/arch/ia64/kernel/mca.c
+@@ -491,6 +491,15 @@ ia64_mca_log_sal_error_record(int sal_info_type)
+ 			mprintk(KERN_CRIT "[SN2-MCA]  +%03x: %016llx %016llx\n",
+ 				i * 8, raw[i], raw[i+1]);
+ 		}
++
++#ifdef CONFIG_IA64_SGI_SN2
++		/* NOTE: SHub register reads REMOVED from MCA handler.
++		 * When the PI is frozen (which is the case for GPU MCA),
++		 * ANY MMR read through the PI blocks forever, causing
++		 * the MCA handler itself to hang. The PI, II, and CAM
++		 * registers are all accessed through the PI path from
++		 * the CPU. Use JTAG/errdmp instead for post-mortem. */
++#endif
+ 	}
+ 
+ 	salinfo_log_wakeup(sal_info_type, buffer, size, irq_safe);
+diff --git a/arch/ia64/sn/kernel/iomv.c b/arch/ia64/sn/kernel/iomv.c
+index 749a2cf..705bd7b 100644
+--- a/arch/ia64/sn/kernel/iomv.c
++++ b/arch/ia64/sn/kernel/iomv.c
+@@ -84,3 +84,46 @@ void __sn_mmiowb(void)
+ }
+ 
+ EXPORT_SYMBOL(__sn_mmiowb);
++
++/**
++ * sn2_pio_write_status - Read PIO write PENDING count for all CPUs
++ * @counts: array of per-CPU pending write counts (0=idle, 63=full)
++ * @deadlock: array of per-CPU deadlock flags
++ *
++ * Returns the maximum PENDING count across all CPUs.
++ *
++ * IMPORTANT: On SHub1 (Altix 350), the register counts FREE slots,
++ * not occupied ones. 63 = all free (0 pending), 0 = all occupied
++ * (63 pending). The __sn_mmiowb() function confirms this: it spins
++ * until count == pio_write_status_val (0x3f = 63 = "drained").
++ * We invert to report PENDING writes (63 - raw) for clarity.
++ *
++ * [shub_mmr.h: PENDING_WRITE_COUNT bits 61:56, 6-bit field]
++ * [iomv.c: __sn_mmiowb waits for count == 63 = drained]
++ */
++// [DEBUG INSTRUMENTATION]
++int sn2_pio_write_status(u64 *counts, int *deadlock, int max_cpus)
++{
++	int cpu, max_pending = 0;
++
++	for (cpu = 0; cpu < max_cpus && cpu < nr_cpu_ids; cpu++) {
++		struct pda_s *p = &per_cpu(pda_percpu, cpu);
++		if (p->pio_write_status_addr) {
++			u64 raw = *(p->pio_write_status_addr);
++			int free_slots = (raw >> SH_PIO_WRITE_STATUS_PENDING_WRITE_COUNT_SHFT) & 0x3f;
++			int pending = 63 - free_slots;  /* invert: 0=idle, 63=full */
++			int dl = (raw >> SH_PIO_WRITE_STATUS_WRITE_DEADLOCK_SHFT) & 1;
++			if (counts)
++				counts[cpu] = pending;
++			if (deadlock)
++				deadlock[cpu] = dl;
++			if (pending > max_pending)
++				max_pending = pending;
++		} else {
++			if (counts) counts[cpu] = 0;
++			if (deadlock) deadlock[cpu] = 0;
++		}
++	}
++	return max_pending;
++}
++EXPORT_SYMBOL(sn2_pio_write_status);
+diff --git a/arch/ia64/sn/pci/pci_dma.c b/arch/ia64/sn/pci/pci_dma.c
+index 7b19e0b..c597e07 100644
+--- a/arch/ia64/sn/pci/pci_dma.c
++++ b/arch/ia64/sn/pci/pci_dma.c
+@@ -18,6 +18,13 @@
+ #include <asm/sn/pcibus_provider_defs.h>
+ #include <asm/sn/pcidev.h>
+ #include <asm/sn/sn_sal.h>
++#include <asm/cacheflush.h>
++#include <linux/scatterlist.h>
++#include <linux/export.h>
++
++/* clflush_cache_range is in arch/ia64/lib/flush.S but not exported.
++ * GPU drivers need it to flush CPU caches before device DMA reads. */
++EXPORT_SYMBOL(clflush_cache_range);
+ 
+ /*
+  * DMA_ATTR_WRITE_BARRIER was a DMA attribute (bit 0) originally defined in
+@@ -491,6 +498,61 @@ int sn_pci_legacy_write(struct pci_bus *bus, u16 port, u32 val, u8 size)
+ 	return ret;
+ }
+ 
++/**
++ * sn_dma_sync_single_for_device - flush CPU cache for device DMA access
++ *
++ * On SN2, the directory-based cache coherence protocol (RDEXC) handles
++ * cache consistency for DMA. However, under heavy GPU DMA load, the
++ * FSB intervention table overflows → FSB_PROTO_ERR → MCA.
++ *
++ * Fix: explicitly flush dirty CPU cache lines to memory before the
++ * device reads them. This eliminates RDEXC interventions because the
++ * directory sees "Clean" instead of "Modified in CPU cache".
++ *
++ * Uses ia64 fc (flush cache) instruction via clflush_cache_range().
++ */
++static void sn_dma_sync_single_for_device(struct device *dev,
++					   dma_addr_t dma_handle,
++					   size_t size,
++					   enum dma_data_direction dir)
++{
++	/* Only need to flush for device reads (CPU wrote, device reads) */
++	if (dir == DMA_TO_DEVICE || dir == DMA_BIDIRECTIONAL) {
++		/* Convert DMA address back to virtual.
++		 * Direct32: dma = PCI32_DIRECT_BASE | (phys - dir_xbase)
++		 * For our system dir_xbase=0, so phys = dma & 0x7FFFFFFF
++		 * Kernel virt = __va(phys) */
++		phys_addr_t phys = dma_handle & 0x7FFFFFFFULL;
++		void *vaddr = phys_to_virt(phys);
++		clflush_cache_range(vaddr, size);
++	}
++}
++
++/**
++ * sn_dma_sync_sg_for_device - flush CPU cache for scatter-gather DMA
++ *
++ * Same as above but for scatterlist entries. Each sg entry has
++ * the struct page pointer, so we can get the kernel virtual address
++ * directly without reverse-mapping the DMA address.
++ */
++static void sn_dma_sync_sg_for_device(struct device *dev,
++				       struct scatterlist *sgl,
++				       int nents,
++				       enum dma_data_direction dir)
++{
++	struct scatterlist *sg;
++	int i;
++
++	if (dir == DMA_TO_DEVICE || dir == DMA_BIDIRECTIONAL) {
++		for_each_sg(sgl, sg, nents, i) {
++			void *vaddr = page_address(sg_page(sg));
++			if (vaddr)
++				clflush_cache_range(vaddr + sg->offset,
++						    sg->length);
++		}
++	}
++}
++
+ static const struct dma_map_ops sn_dma_ops = {
+ 	.alloc			= sn_dma_alloc_coherent,
+ 	.free			= sn_dma_free_coherent,
+@@ -498,6 +560,8 @@ static const struct dma_map_ops sn_dma_ops = {
+ 	.unmap_phys		= sn_dma_unmap_phys,
+ 	.map_sg			= sn_dma_map_sg,
+ 	.unmap_sg		= sn_dma_unmap_sg,
++	.sync_single_for_device	= sn_dma_sync_single_for_device,
++	.sync_sg_for_device	= sn_dma_sync_sg_for_device,
+ 	.dma_supported		= sn_dma_supported,
+ 	.get_required_mask	= sn_dma_get_required_mask,
+ 	.mmap			= dma_common_mmap,
+diff --git a/arch/ia64/sn/pci/pcibr/pcibr_dma.c b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
+index 3ecaab6..f6f24bd 100644
+--- a/arch/ia64/sn/pci/pcibr/pcibr_dma.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
+@@ -10,6 +10,8 @@
+ #include <linux/pci.h>
+ #include <linux/export.h>
+ #include <asm/sn/addrs.h>
++#include <asm/sn/shubio.h>
++#include <asm/sn/shub_mmr.h>
+ #include <asm/sn/geo.h>
+ #include <asm/sn/pcibr_provider.h>
+ #include <asm/sn/pcibus_provider_defs.h>
+@@ -321,6 +323,7 @@ void sn_dma_flush(unsigned long addr)
+ 	p = &flush_nasid_list->widget_p[wid_num][0];
+ 
+ 	/* find a matching BAR */
++	/* [DEBUG INSTRUMENTATION] Track which flush path is taken */
+ 	for (i = 0; i < DEV_PER_WIDGET; i++,p++) {
+ 		common = p->common;
+ 		for (j = 0; j < PCI_ROM_RESOURCE; j++) {
+@@ -336,43 +339,126 @@ void sn_dma_flush(unsigned long addr)
+ 
+ 	/* if no matching BAR, return without doing anything. */
+ 	if (i == DEV_PER_WIDGET) {
+-		if (do_trace) {
+-			/* Dump what BARs ARE in the list for this widget */
+-			struct sn_flush_device_kernel *pp =
+-				&flush_nasid_list->widget_p[wid_num][0];
+-			printk(KERN_ERR "[SN2-FLUSH] NO BAR MATCH for addr 0x%lx "
+-			       "nasid=0x%x wid=%d\n", addr, nasid, wid_num);
+-			for (i = 0; i < DEV_PER_WIDGET; i++, pp++) {
+-				struct sn_flush_device_common *c = pp->common;
+-				for (j = 0; j < PCI_ROM_RESOURCE; j++) {
+-					if (c->sfdl_bar_list[j].start == 0)
+-						break;
+-					printk(KERN_ERR "[SN2-FLUSH]   dev=%d bar=%d "
+-					       "start=0x%lx end=0x%lx\n",
+-					       i, j,
+-					       c->sfdl_bar_list[j].start,
+-					       c->sfdl_bar_list[j].end);
+-				}
+-			}
+-		}
+ 		sn2_flush_fallback_count++;
+ 		/*
+-		 * Fall back to first registered device on this widget.
+-		 * On PIC, forcing an interrupt on ANY device on the widget
+-		 * drains ALL posted DMA write buffers for the widget, so
+-		 * this is safe. This handles devices behind PCI-PCI bridges
+-		 * (PPBs) whose BARs are not in the flush list.
+-		 * [PDF §Device Interrupts and Posted DMAs, Page 5]
++		 * [FIX] Device is behind a PCI-PCI bridge (PPB) — its BARs
++		 * are not in the PROM's flush list. We must find the correct
++		 * flush entry by matching the PCI bus.
++		 *
++		 * PIC has two independent PCI buses (BUS0 and BUS1) with
++		 * SEPARATE write buffer pipelines and force-interrupt pins:
++		 *   BUS0: p_force_pin at widget_base + 0x0001a0-0x0001f8
++		 *   BUS1: p_force_pin at widget_base + 0x800198-0x8001f8
++		 *
++		 * Using a BUS0 flush entry for a BUS1 device does NOT drain
++		 * BUS1's write buffers — the forced interrupt only travels
++		 * through BUS0's pipeline.
++		 *
++		 * The GPU (Radeon HD 7570) is behind a PLX PEX8111 bridge on
++		 * BUS1. The PROM has a flush entry for BUS1 (flush[3]) but
++		 * the old fallback code always used flush[0] (BUS0).
++		 *
++		 * Fix: determine which bus the address belongs to by checking
++		 * the PIC address space layout (BUS1 starts at offset 0x800000),
++		 * then find a flush entry with matching sfdl_bus.
++		 *
++		 * [Evidence: flush[0] bus=0, flush[3] bus=1 from PIC dump]
++		 * [Evidence: GPU on bus 1 behind PLX at 0002:00:02.0]
++		 * [Evidence: sn_dma_flush was using BUS0 flush for BUS1 GPU]
+ 		 */
++		struct sn_flush_device_kernel *best_p = NULL;
++		struct sn_flush_device_common *best_common = NULL;
++		int target_bus = -1;
++		unsigned long widget_base;
++		static int diag_done[2] = {0, 0};  /* one-shot per bus */
++
++		/* Determine target bus from PIC address space layout.
++		 * On PIC, BUS1 register space starts at widget_base + 0x800000.
++		 * If the address offset within the widget is >= 0x800000, the
++		 * device is on BUS1; otherwise BUS0.
++		 * Note: addr may be in big-window space, but BUS1 addresses
++		 * always have bit 23 set in the widget-relative offset. */
++		widget_base = (unsigned long)NODE_SWIN_BASE(nasid, wid_num);
++		if ((addr - widget_base) >= 0x800000)
++			target_bus = 1;
++		else
++			target_bus = 0;
++
++		/* [DEBUG INSTRUMENTATION] One-shot dump of ALL search state */
++		if (target_bus >= 0 && target_bus <= 1 && !diag_done[target_bus]) {
++			int di;
++			struct sn_flush_device_kernel *dp;
++			diag_done[target_bus] = 1;
++			printk(KERN_ERR "[SN2-FLUSH-DIAG] addr=0x%lx nasid=0x%x "
++			       "wid_num=%d widget_base=0x%lx "
++			       "offset=0x%lx target_bus=%d\n",
++			       addr, nasid, wid_num, widget_base,
++			       addr - widget_base, target_bus);
++			printk(KERN_ERR "[SN2-FLUSH-DIAG] BWIN=%lu SWIN_WID=%lu\n",
++			       (unsigned long)BWIN_WINDOWNUM(addr),
++			       (unsigned long)SWIN_WIDGETNUM(addr));
++			dp = &flush_nasid_list->widget_p[wid_num][0];
++			for (di = 0; di < DEV_PER_WIDGET; di++, dp++) {
++				struct sn_flush_device_common *dc = dp->common;
++				if (!dc) {
++					printk(KERN_ERR "[SN2-FLUSH-DIAG]   [%d] common=NULL\n", di);
++					continue;
++				}
++				if (dc->sfdl_slot == -1)
++					continue; /* skip truly empty */
++				printk(KERN_ERR "[SN2-FLUSH-DIAG]   [%d] bus=%d slot=%d "
++				       "pin=%d bar0_start=0x%lx force_int=0x%lx\n",
++				       di, dc->sfdl_bus, dc->sfdl_slot,
++				       dc->sfdl_pin, dc->sfdl_bar_list[0].start,
++				       dc->sfdl_force_int_addr);
++			}
++		}
++
++		/* Search for a flush entry matching the target bus */
+ 		p = &flush_nasid_list->widget_p[wid_num][0];
+-		common = p->common;
+-		if (common->sfdl_bar_list[0].start != 0) {
+-			if (do_trace)
+-				printk(KERN_INFO "[SN2-FLUSH] FALLBACK: using "
+-				       "dev=0 slot=%d for widget %d flush\n",
+-				       common->sfdl_slot, wid_num);
++		for (i = 0; i < DEV_PER_WIDGET; i++, p++) {
++			common = p->common;
++			if (!common || common->sfdl_slot == -1)
++				continue;
++			if (common->sfdl_bar_list[0].start == 0)
++				continue;
++			if (common->sfdl_bus == target_bus) {
++				best_p = p;
++				best_common = common;
++				break;  /* first match on correct bus */
++			}
++			/* Keep any valid entry as last-resort fallback */
++			if (!best_p) {
++				best_p = p;
++				best_common = common;
++			}
++		}
++
++		if (best_p) {
++			static int bus_logged[2] = {0, 0}; // [DEBUG]
++			p = best_p;
++			common = best_common;
++			if (target_bus >= 0 && target_bus <= 1 &&
++			    !bus_logged[target_bus]) {
++				bus_logged[target_bus] = 1;
++				printk(KERN_CRIT "[SN2-FLUSH-BUS] DMA flush bus "
++				       "selection: addr=0x%lx target_bus=%d "
++				       "→ using bus=%d slot=%d pin=%d "
++				       "force_int=0x%lx %s\n",
++				       addr, target_bus,
++				       common->sfdl_bus, common->sfdl_slot,
++				       common->sfdl_pin,
++				       common->sfdl_force_int_addr,
++				       (common->sfdl_bus == target_bus) ?
++				       "(BUS MATCH)" : "(BUS MISMATCH!)");
++			}
+ 			goto do_flush;
+ 		}
++
++		if (do_trace || sn2_flush_fallback_count <= 3)
++			printk(KERN_ERR "[SN2-FLUSH] NO FLUSH ENTRY for "
++			       "addr 0x%lx target_bus=%d — DMA writes "
++			       "NOT flushed!\n", addr, target_bus);
+ 		return;
+ 	}
+ 
+@@ -405,8 +491,9 @@ void sn_dma_flush(unsigned long addr)
+ do_flush:
+ 	if (do_trace) {
+ 		printk(KERN_INFO "[SN2-FLUSH] PIC flush for addr 0x%lx "
+-		       "wid=%d slot=%d force_int=0x%lx\n",
+-		       addr, wid_num, common->sfdl_slot,
++		       "wid=%d bus=%d slot=%d pin=%d force_int=0x%lx\n",
++		       addr, wid_num, common->sfdl_bus, common->sfdl_slot,
++		       common->sfdl_pin,
+ 		       (unsigned long)common->sfdl_force_int_addr);
+ 	}
+ 	sn2_flush_total_count++;
+@@ -529,3 +616,644 @@ pcibr_dma_map_consistent(struct pci_dev * hwdev, unsigned long phys_addr,
+ }
+ 
+ EXPORT_SYMBOL(sn_dma_flush);
++
++/* =====================================================================
++ *    [DEBUG INSTRUMENTATION] PIC Bridge Diagnostics for GPU Debugging
++ *
++ *    These functions allow the GPU driver to inspect and interact with
++ *    the PIC bridge hardware directly, which is needed because devices
++ *    behind PCI-PCI bridges (PPBs) are invisible to the standard
++ *    sn_dma_flush mechanism.
++ * =====================================================================
++ */
++
++/**
++ * sn2_pic_bridge_dump - Dump PIC bridge state for a PCI device
++ * @pdev: any PCI device on this PIC bus (e.g., the GPU or PLX bridge)
++ *
++ * Reads and logs PIC registers: RRB map, WRB status, direct map,
++ * flush list entries, and device registers. Call at driver probe time.
++ */
++// [DEBUG INSTRUMENTATION]
++void sn2_pic_bridge_dump(struct pci_dev *pdev)
++{
++	struct pcidev_info *pcidev_info = SN_PCIDEV_INFO(pdev);
++	struct pcibus_info *pcibus_info;
++	struct pic __iomem *pic_regs;
++	u64 rrb_even, rrb_odd, dir_map, int_enable, int_status;
++	u64 wrb[4], device_reg[4];
++	int i, j;
++	nasid_t nasid;
++	int cnode, wid_num;
++	struct hubdev_info *hubinfo;
++	struct sn_flush_device_kernel *fdk;
++	u8 host_slot;
++
++	if (!pcidev_info || !pcidev_info->pdi_host_pcidev_info)
++		return;
++
++	pcibus_info = (struct pcibus_info *)
++		pcidev_info->pdi_host_pcidev_info->pdi_pcibus_info;
++	if (!pcibus_info || !IS_PIC_SOFT(pcibus_info))
++		return;
++
++	pic_regs = (struct pic __iomem *)pcibus_info->pbi_buscommon.bs_base;
++	host_slot = PCI_SLOT(pcidev_info->pdi_host_pcidev_info->
++				pdi_linux_pcidev->devfn);
++
++	printk(KERN_INFO "[SN2-PIC-DUMP] === PIC Bridge State for %s ===\n",
++	       pci_name(pdev));
++	printk(KERN_INFO "[SN2-PIC-DUMP] PIC base=0x%lx bridge_type=%d "
++	       "bridge_mode=%d\n",
++	       pcibus_info->pbi_buscommon.bs_base,
++	       pcibus_info->pbi_bridge_type,
++	       pcibus_info->pbi_bridge_mode);
++	printk(KERN_INFO "[SN2-PIC-DUMP] host_pci_dev=%s host_slot=%d "
++	       "hub_xid=0x%x\n",
++	       pci_name(pcidev_info->pdi_host_pcidev_info->pdi_linux_pcidev),
++	       host_slot, pcibus_info->pbi_hub_xid);
++	printk(KERN_INFO "[SN2-PIC-DUMP] dir_xbase=0x%llx int_ate_size=%lld "
++	       "valid_dev=0x%x enabled_dev=0x%x\n",
++	       pcibus_info->pbi_dir_xbase,
++	       pcibus_info->pbi_int_ate_size,
++	       pcibus_info->pbi_valid_devices,
++	       pcibus_info->pbi_enabled_devices);
++
++	/* Read PIC registers directly */
++	dir_map = __sn_readq_relaxed(&pic_regs->p_dir_map);
++	rrb_even = __sn_readq_relaxed(&pic_regs->p_even_resp);
++	rrb_odd = __sn_readq_relaxed(&pic_regs->p_odd_resp);
++	int_enable = __sn_readq_relaxed(&pic_regs->p_int_enable);
++	int_status = __sn_readq_relaxed(&pic_regs->p_int_status);
++
++	for (i = 0; i < 4; i++) {
++		device_reg[i] = __sn_readq_relaxed(&pic_regs->p_device[i]);
++		/* Reading p_wr_req_buf flushes WRBs — read for diagnostics */
++		wrb[i] = __sn_readq_relaxed(&pic_regs->p_wr_req_buf[i]);
++	}
++
++	printk(KERN_INFO "[SN2-PIC-DUMP] p_dir_map=0x%016llx\n", dir_map);
++	printk(KERN_INFO "[SN2-PIC-DUMP] p_rrb_map: even=0x%016llx "
++	       "odd=0x%016llx\n", rrb_even, rrb_odd);
++	printk(KERN_INFO "[SN2-PIC-DUMP] p_int_enable=0x%016llx "
++	       "p_int_status=0x%016llx\n", int_enable, int_status);
++	for (i = 0; i < 4; i++)
++		printk(KERN_INFO "[SN2-PIC-DUMP] device[%d]=0x%016llx "
++		       "wrb[%d]=0x%016llx\n",
++		       i, device_reg[i], i, wrb[i]);
++
++	/* Decode RRB allocation: each RRB map has 4-bit fields per slot */
++	printk(KERN_INFO "[SN2-PIC-DUMP] RRB decode (4 bits per slot, "
++	       "8 slots per even/odd):\n");
++	for (i = 0; i < 8; i++) {
++		u64 even_rrb = (rrb_even >> (i * 8)) & 0xff;
++		u64 odd_rrb = (rrb_odd >> (i * 8)) & 0xff;
++		printk(KERN_INFO "[SN2-PIC-DUMP]   rrb[%d]: even=0x%02llx "
++		       "odd=0x%02llx\n", i, even_rrb, odd_rrb);
++	}
++
++	/* Dump flush_nasid_list for this widget */
++	nasid = NASID_GET(pcibus_info->pbi_buscommon.bs_base);
++	cnode = nasid_to_cnodeid(nasid);
++	if (cnode >= 0) {
++		hubinfo = (struct hubdev_info *)(NODEPDA(cnode)->pdinfo);
++		wid_num = SWIN_WIDGETNUM(pcibus_info->pbi_buscommon.bs_base);
++		printk(KERN_INFO "[SN2-PIC-DUMP] nasid=0x%x cnode=%d "
++		       "widget=%d\n", nasid, cnode, wid_num);
++
++		if (hubinfo->hdi_flush_nasid_list.widget_p &&
++		    hubinfo->hdi_flush_nasid_list.widget_p[wid_num]) {
++			fdk = hubinfo->hdi_flush_nasid_list.widget_p[wid_num];
++			for (i = 0; i < DEV_PER_WIDGET; i++, fdk++) {
++				struct sn_flush_device_common *c = fdk->common;
++				if (!c || c->sfdl_slot == -1)
++					continue;
++				/* Only print entries with actual BARs */
++				if (c->sfdl_bar_list[0].start == 0)
++					continue;
++				printk(KERN_INFO "[SN2-PIC-DUMP] flush[%d]: "
++				       "slot=%d pin=%d bus=%d "
++				       "force_int=0x%lx flush_addr=%p\n",
++				       i, c->sfdl_slot, c->sfdl_pin,
++				       c->sfdl_bus,
++				       c->sfdl_force_int_addr,
++				       c->sfdl_flush_addr);
++				for (j = 0; j < 6; j++) {
++					if (c->sfdl_bar_list[j].start == 0)
++						break;
++					printk(KERN_INFO "[SN2-PIC-DUMP]   "
++					       "bar[%d]: 0x%lx - 0x%lx\n",
++					       j, c->sfdl_bar_list[j].start,
++					       c->sfdl_bar_list[j].end);
++				}
++			}
++		} else {
++			printk(KERN_WARNING "[SN2-PIC-DUMP] No flush list for "
++			       "widget %d!\n", wid_num);
++		}
++	}
++
++	printk(KERN_INFO "[SN2-PIC-DUMP] === End PIC Bridge Dump ===\n");
++}
++EXPORT_SYMBOL(sn2_pic_bridge_dump);
++
++/**
++ * sn2_pic_wrb_flush_slot - Flush WRBs for a specific PIC device slot
++ * @pdev: any PCI device whose host is on this PIC
++ * @slot: PIC device slot (0-3), where slot = PCI_SLOT(host_devfn) - 1
++ *
++ * Reads the per-slot WRB flush register on PIC. This drains write
++ * request buffers for that slot at the PIC level (but does NOT
++ * guarantee data entered the SHub coherence domain — that requires
++ * the forced-interrupt mechanism).
++ *
++ * Returns the value read (should be 0 if flush completed).
++ */
++// [DEBUG INSTRUMENTATION]
++u64 sn2_pic_wrb_flush_slot(struct pci_dev *pdev, int slot)
++{
++	struct pcidev_info *pcidev_info = SN_PCIDEV_INFO(pdev);
++	struct pcibus_info *pcibus_info;
++
++	if (!pcidev_info || !pcidev_info->pdi_host_pcidev_info)
++		return ~0ULL;
++
++	pcibus_info = (struct pcibus_info *)
++		pcidev_info->pdi_host_pcidev_info->pdi_pcibus_info;
++	if (!pcibus_info || !IS_PIC_SOFT(pcibus_info))
++		return ~0ULL;
++
++	if (slot < 0 || slot > 3)
++		return ~0ULL;
++
++	return pcireg_wrb_flush_get(pcibus_info, slot);
++}
++EXPORT_SYMBOL(sn2_pic_wrb_flush_slot);
++
++/**
++ * sn2_pic_tflush - Execute PIC Target Flush (global)
++ * @pdev: any PCI device whose host is on this PIC
++ *
++ * Reads p_wid_tflush which forces all pending PIC transactions to
++ * complete. This is a global flush, not per-slot.
++ *
++ * Returns 0 on success, non-zero if flush register returned unexpected value.
++ */
++// [DEBUG INSTRUMENTATION]
++int sn2_pic_tflush(struct pci_dev *pdev)
++{
++	struct pcidev_info *pcidev_info = SN_PCIDEV_INFO(pdev);
++	struct pcibus_info *pcibus_info;
++
++	if (!pcidev_info || !pcidev_info->pdi_host_pcidev_info)
++		return -1;
++
++	pcibus_info = (struct pcibus_info *)
++		pcidev_info->pdi_host_pcidev_info->pdi_pcibus_info;
++	if (!pcibus_info)
++		return -1;
++
++	/* pcireg_tflush_get panics if non-zero, so be careful */
++	return (int)pcireg_tflush_get(pcibus_info);
++}
++EXPORT_SYMBOL(sn2_pic_tflush);
++
++/**
++ * sn2_pic_read_wrb_status - Read WRB status for all 4 slots without flushing
++ * @pdev: any PCI device whose host is on this PIC
++ * @wrb_out: array of 4 u64 values to fill with WRB register contents
++ *
++ * NOTE: On PIC, reading p_wr_req_buf[n] also FLUSHES that slot's WRBs.
++ * So this function is both a diagnostic read AND a flush operation.
++ */
++// [DEBUG INSTRUMENTATION]
++void sn2_pic_read_wrb_all(struct pci_dev *pdev, u64 *wrb_out)
++{
++	struct pcidev_info *pcidev_info = SN_PCIDEV_INFO(pdev);
++	struct pcibus_info *pcibus_info;
++	struct pic __iomem *pic_regs;
++	int i;
++
++	if (!pcidev_info || !pcidev_info->pdi_host_pcidev_info) {
++		memset(wrb_out, 0xff, 4 * sizeof(u64));
++		return;
++	}
++
++	pcibus_info = (struct pcibus_info *)
++		pcidev_info->pdi_host_pcidev_info->pdi_pcibus_info;
++	if (!pcibus_info || !IS_PIC_SOFT(pcibus_info)) {
++		memset(wrb_out, 0xff, 4 * sizeof(u64));
++		return;
++	}
++
++	pic_regs = (struct pic __iomem *)pcibus_info->pbi_buscommon.bs_base;
++	for (i = 0; i < 4; i++)
++		wrb_out[i] = __sn_readq_relaxed(&pic_regs->p_wr_req_buf[i]);
++}
++EXPORT_SYMBOL(sn2_pic_read_wrb_all);
++
++/**
++ * sn2_pic_rrb_realloc - Reallocate PIC Read Response Buffers for a device
++ * @pdev: PCI device whose host bridge needs RRBs
++ *
++ * The PROM allocates RRBs based on the devices it knows about. Devices
++ * behind PCI-PCI bridges (PPBs) like the PLX PEX8111 may get 0 RRBs,
++ * causing DMA read starvation under heavy load.
++ *
++ * This function reads the current RRB map, checks if the device's PIC
++ * internal slot has 0 RRBs, and if so, reallocates to give it entries.
++ *
++ * New allocation: 4 RRBs to device 0, 8 RRBs to device 1 (PLX), 4 to device 2.
++ *
++ * Evidence: [dmesg: p_rrb_map shows 0 RRBs for device 1]
++ * Evidence: [pcibr_dma.c:60: internal_device = PCI_SLOT - 1 = 1 for PLX]
++ * Evidence: [pic.h:141: p_rrb_map[2] at offsets 0x280-0x288]
++ */
++// [DEBUG INSTRUMENTATION]
++int sn2_pic_rrb_realloc(struct pci_dev *pdev)
++{
++	struct pcidev_info *pcidev_info = SN_PCIDEV_INFO(pdev);
++	struct pcibus_info *pcibus_info;
++	struct pic __iomem *pic_regs;
++	u64 rrb_even, rrb_odd;
++	u64 new_even, new_odd;
++	u8 host_slot, internal_device;
++	int i, dev_rrb_count;
++
++	if (!pcidev_info || !pcidev_info->pdi_host_pcidev_info)
++		return -ENODEV;
++
++	pcibus_info = (struct pcibus_info *)
++		pcidev_info->pdi_host_pcidev_info->pdi_pcibus_info;
++	if (!pcibus_info || !IS_PIC_SOFT(pcibus_info))
++		return -ENODEV;
++
++	pic_regs = (struct pic __iomem *)pcibus_info->pbi_buscommon.bs_base;
++	host_slot = PCI_SLOT(pcidev_info->pdi_host_pcidev_info->
++				pdi_linux_pcidev->devfn);
++	internal_device = host_slot - 1;
++
++	/* Read current RRB map */
++	rrb_even = __sn_readq_relaxed(&pic_regs->p_even_resp);
++	rrb_odd = __sn_readq_relaxed(&pic_regs->p_odd_resp);
++
++	/* Count current RRBs for our device */
++	dev_rrb_count = 0;
++	for (i = 0; i < 16; i++) {
++		u8 nibble_e = (rrb_even >> (i * 4)) & 0xf;
++		u8 nibble_o = (rrb_odd >> (i * 4)) & 0xf;
++		if ((nibble_e & 0x8) && (nibble_e & 0x7) == internal_device)
++			dev_rrb_count++;
++		if ((nibble_o & 0x8) && (nibble_o & 0x7) == internal_device)
++			dev_rrb_count++;
++	}
++
++	printk(KERN_INFO "[SN2-RRB] Current: even=0x%016llx odd=0x%016llx "
++	       "host_slot=%d internal_device=%d current_rrbs=%d\n",
++	       rrb_even, rrb_odd, host_slot, internal_device, dev_rrb_count);
++
++	if (dev_rrb_count > 0) {
++		printk(KERN_INFO "[SN2-RRB] Device %d already has %d RRBs, "
++		       "no reallocation needed\n",
++		       internal_device, dev_rrb_count);
++		return 0;
++	}
++
++	/*
++	 * Device has 0 RRBs — reallocate.
++	 *
++	 * New allocation for a GPU behind a PPB on device 1:
++	 *   Even: [dev0, dev0, dev1, dev1, dev1, dev1, dev2, dev2]
++	 *   Odd:  [dev2, dev2, dev1, dev1, dev1, dev1, dev0, dev0]
++	 *
++	 * This gives: dev0=4, dev1=8, dev2=4 (total 16)
++	 * The GPU (behind PLX on device 1) gets the most RRBs since
++	 * it generates the heaviest DMA read traffic.
++	 *
++	 * Nibble values: 0x8|dev = valid + device number
++	 */
++	new_even = 0;
++	new_odd = 0;
++	{
++		/* Even: dev0, dev0, dev1, dev1, dev1, dev1, dev2, dev2 */
++		u8 even_devs[8] = {0, 0, internal_device, internal_device,
++				   internal_device, internal_device, 2, 2};
++		/* Odd: dev2, dev2, dev1, dev1, dev1, dev1, dev0, dev0 */
++		u8 odd_devs[8] = {2, 2, internal_device, internal_device,
++				  internal_device, internal_device, 0, 0};
++
++		for (i = 0; i < 8; i++) {
++			new_even |= ((u64)(0x8 | even_devs[i])) << (i * 4);
++			new_odd |= ((u64)(0x8 | odd_devs[i])) << (i * 4);
++		}
++	}
++
++	printk(KERN_INFO "[SN2-RRB] Reallocating: new_even=0x%016llx "
++	       "new_odd=0x%016llx\n", new_even, new_odd);
++	printk(KERN_INFO "[SN2-RRB] Allocation: dev0=4 dev%d=8 dev2=4\n",
++	       internal_device);
++
++	/* Write new RRB map */
++	writeq(new_even, &pic_regs->p_even_resp);
++	writeq(new_odd, &pic_regs->p_odd_resp);
++
++	/* Verify by reading back */
++	rrb_even = __sn_readq_relaxed(&pic_regs->p_even_resp);
++	rrb_odd = __sn_readq_relaxed(&pic_regs->p_odd_resp);
++
++	printk(KERN_INFO "[SN2-RRB] Readback: even=0x%016llx odd=0x%016llx\n",
++	       rrb_even, rrb_odd);
++
++	if (rrb_even != new_even || rrb_odd != new_odd) {
++		printk(KERN_ERR "[SN2-RRB] MISMATCH — RRB realloc may have "
++		       "failed!\n");
++		return -EIO;
++	}
++
++	printk(KERN_INFO "[SN2-RRB] SUCCESS — device %d now has 8 RRBs\n",
++	       internal_device);
++	return 0;
++}
++EXPORT_SYMBOL(sn2_pic_rrb_realloc);
++
++/**
++ * sn2_pic_check_errors - Read PIC error registers and log any errors
++ * @pdev: PCI device on this PIC
++ *
++ * Reads BUS1_INT_STATUS and if any error bits (bits 45:9) are set,
++ * dumps all PIC error capture registers. This catches PCI bus errors
++ * BEFORE they escalate to an MCA.
++ *
++ * Returns the raw INT_STATUS value (0 = no errors).
++ *
++ * Register map from pic_01_mmrs.pm (SGI PIC hardware register database):
++ *   p_int_status       (0x100) = BUS1_INT_STATUS
++ *   p_pci_err_upper    (0x0D0) = BUS1_PCI_ERR_UPPER_ADDR
++ *   p_pci_err_lower    (0x0D8) = BUS1_PCI_ERR_LOWER_ADDR
++ *   p_pcix_bus_err_addr(0x600) = BUS1_PCI_X_ERR_ADDR
++ *   p_pcix_bus_err_attr(0x608) = BUS1_PCI_X_ERR_ATTR
++ *   p_pcix_dma_req_err_attr(0x628) = BUS1_PCI_X_DMA_ERR_ATTR
++ *   p_pcix_dma_req_err_addr(0x630) = BUS1_PCI_X_DMA_ERR_ADDR
++ *   p_pcix_timeout     (0x638) = BUS1_PCI_X_READ_REQ_TOUT
++ *   p_resp_status      (0x290) = BUS1_RR_BUFF_STATUS
++ */
++// [DEBUG INSTRUMENTATION]
++u64 sn2_pic_check_errors(struct pci_dev *pdev)
++{
++	struct pcidev_info *pcidev_info = SN_PCIDEV_INFO(pdev);
++	struct pcibus_info *pcibus_info;
++	struct pic __iomem *p;
++	u64 int_status, err_upper, err_lower;
++	u64 pcix_err_addr, pcix_err_attr, pcix_err_data;
++	u64 dma_err_addr, dma_err_attr;
++	u64 pcix_timeout, resp_status;
++	u64 err_int_view, mult_int;
++	static int error_dump_count = 0;
++
++	if (!pcidev_info || !pcidev_info->pdi_host_pcidev_info)
++		return 0;
++
++	pcibus_info = (struct pcibus_info *)
++		pcidev_info->pdi_host_pcidev_info->pdi_pcibus_info;
++	if (!pcibus_info || !IS_PIC_SOFT(pcibus_info))
++		return 0;
++
++	p = (struct pic __iomem *)pcibus_info->pbi_buscommon.bs_base;
++
++	/* Read INT_STATUS — use relaxed read to avoid triggering sn_dma_flush
++	 * recursion (we're often called from the fence check path) */
++	int_status = __sn_readq_relaxed(&p->p_int_status);
++
++	/* Check for error bits: everything above bit 8 except reserved.
++	 * Bits 7:0 are normal device interrupt state (not errors).
++	 * Error mask: bits 45:9 */
++	#define PIC_INT_STATUS_ERR_MASK 0x00003FFFFFFFFE00ULL
++
++	if (!(int_status & PIC_INT_STATUS_ERR_MASK))
++		return int_status;  /* No errors — return quickly */
++
++	/* ERROR DETECTED — dump everything.
++	 * Limit to first 20 dumps to avoid flooding dmesg. */
++	if (error_dump_count >= 20)
++		return int_status;
++	error_dump_count++;
++
++	/* Read all error capture registers */
++	err_upper      = __sn_readq_relaxed(&p->p_pci_err_upper);
++	err_lower      = __sn_readq_relaxed(&p->p_pci_err_lower);
++	pcix_err_addr  = __sn_readq_relaxed(&p->p_pcix_bus_err_addr);
++	pcix_err_attr  = __sn_readq_relaxed(&p->p_pcix_bus_err_attr);
++	pcix_err_data  = __sn_readq_relaxed(&p->p_pcix_bus_err_data);
++	dma_err_attr   = __sn_readq_relaxed(&p->p_pcix_dma_req_err_attr);
++	dma_err_addr   = __sn_readq_relaxed(&p->p_pcix_dma_req_err_addr);
++	pcix_timeout   = __sn_readq_relaxed(&p->p_pcix_timeout);
++	resp_status    = __sn_readq_relaxed(&p->p_resp_status);
++	err_int_view   = __sn_readq_relaxed(&p->p_err_int_view);
++	mult_int       = __sn_readq_relaxed(&p->p_mult_int);
++
++	printk(KERN_CRIT "[SN2-PIC-ERR] ========== PIC ERROR #%d ==========\n",
++	       error_dump_count);
++	printk(KERN_CRIT "[SN2-PIC-ERR] INT_STATUS=0x%016llx\n", int_status);
++
++	/* Decode known error bits */
++	if (int_status & (1ULL << 39))
++		printk(KERN_CRIT "[SN2-PIC-ERR]   bit39: PCI_X_REQ_TOUT — "
++		       "Read request timeout (GPU not responding)\n");
++	if (int_status & (1ULL << 34))
++		printk(KERN_CRIT "[SN2-PIC-ERR]   bit34: PCI_X_MTOUT — "
++		       "Master timeout (PIO stuck, device no devsel)\n");
++	if (int_status & (1ULL << 30))
++		printk(KERN_CRIT "[SN2-PIC-ERR]   bit30: PMU_PAGE_FAULT — "
++		       "Invalid PCI page access (ATE miss)\n");
++	if (int_status & (1ULL << 29))
++		printk(KERN_CRIT "[SN2-PIC-ERR]   bit29: UNEXPECTED_RESP — "
++		       "Unexpected response from device\n");
++	if (int_status & (1ULL << 26))
++		printk(KERN_CRIT "[SN2-PIC-ERR]   bit26: RESP_XTALK_ERROR — "
++		       "Response had error bit or invalid sideband\n");
++	if (int_status & (1ULL << 24))
++		printk(KERN_CRIT "[SN2-PIC-ERR]   bit24: INVALID_ACCESS — "
++		       "Invalid address/access type\n");
++	if (int_status & (1ULL << 9))
++		printk(KERN_CRIT "[SN2-PIC-ERR]   bit9: XREAD_REQ_TOUT — "
++		       "PCI to Crosstalk read request timeout\n");
++
++	printk(KERN_CRIT "[SN2-PIC-ERR] ERR_INT_VIEW=0x%016llx "
++	       "MULT_INT=0x%016llx\n", err_int_view, mult_int);
++	printk(KERN_CRIT "[SN2-PIC-ERR] PCI_ERR_ADDR=0x%016llx_%016llx\n",
++	       err_upper, err_lower);
++	printk(KERN_CRIT "[SN2-PIC-ERR] PCIX_ERR: addr=0x%016llx "
++	       "attr=0x%016llx data=0x%016llx\n",
++	       pcix_err_addr, pcix_err_attr, pcix_err_data);
++	printk(KERN_CRIT "[SN2-PIC-ERR] DMA_ERR: addr=0x%016llx "
++	       "attr=0x%016llx\n", dma_err_addr, dma_err_attr);
++	printk(KERN_CRIT "[SN2-PIC-ERR] PCIX_TIMEOUT=0x%016llx "
++	       "RR_BUFF_STATUS=0x%016llx\n", pcix_timeout, resp_status);
++	printk(KERN_CRIT "[SN2-PIC-ERR] ==============================\n");
++
++	return int_status;
++}
++EXPORT_SYMBOL(sn2_pic_check_errors);
++
++/**
++ * sn2_shub_state_snapshot - Read SHub II + PI state for GPU MCA diagnosis
++ * @nasid: NASID of the SHub to read (0 for local node)
++ *
++ * Reads and logs:
++ * 1. II chiplet: WSTAT, IXSS, IPRBF (widget 15 PRB), IIEPH1/2
++ * 2. PI: FIRST_ERROR, ERROR_SUMMARY, ERROR_DETAIL_1/2
++ * 3. PI CAM: WRB states (32 entries) — the key diagnostic
++ *
++ * Call periodically from fence check during Minecraft to catch
++ * the transition from normal to GOOFY WRB state.
++ *
++ * [Evidence: ALL 32 WRBs go GOOFY during heavy 3D — errdmp]
++ * [Evidence: FSB_PROTO_ERR set during Minecraft before MCA]
++ */
++// [DEBUG INSTRUMENTATION]
++void sn2_shub_state_snapshot(int nasid, int force)
++{
++	u64 ii_wstat, ii_ixss, ii_iprbf, ii_iieph1, ii_iieph2;
++	u64 pi_first_err, pi_err_summary, pi_err_detail1, pi_err_detail2;
++	int i, wrb_free, wrb_snoop, wrb_wack, wrb_other;
++	u64 wrb_states[32];
++	u64 wrb_addrs[32];
++	static u64 last_pi_err_summary = 0;
++
++	/* 1. Read II chiplet registers */
++	ii_wstat  = REMOTE_HUB_L(nasid, IIO_WSTAT);
++	ii_ixss   = REMOTE_HUB_L(nasid, IIO_IXSS);
++	ii_iprbf  = REMOTE_HUB_L(nasid, IIO_IPRBF);  /* widget F = 15 = PIC */
++	ii_iieph1 = REMOTE_HUB_L(nasid, IIO_IIEPH1);
++	ii_iieph2 = REMOTE_HUB_L(nasid, IIO_IIEPH2);
++
++	/* 2. Read PI error registers (SHub1 addresses) */
++	pi_first_err   = HUB_L((u64 *)LOCAL_MMR_ADDR(0x0000000120060780));
++	pi_err_summary = HUB_L((u64 *)LOCAL_MMR_ADDR(0x0000000120060680));
++	pi_err_detail1 = HUB_L((u64 *)LOCAL_MMR_ADDR(0x0000000120060500));
++	pi_err_detail2 = HUB_L((u64 *)LOCAL_MMR_ADDR(0x0000000120060580));
++
++	/* 3. Read PI CAM — all 32 WRB entries
++	 * CAM_CONTROL index: [6:5]=type (1=WRB), [4:0]=entry
++	 * After writing control, read address and state. */
++	wrb_free = wrb_snoop = wrb_wack = wrb_other = 0;
++	for (i = 0; i < 32; i++) {
++		u64 cam_idx = (1 << 5) | i;  /* type=1 (WRB), entry=i */
++		u64 state_raw, addr_raw;
++		int state;
++
++		HUB_L((u64 *)LOCAL_MMR_ADDR(SH1_PI_CAM_CONTROL));  /* sync */
++		*(volatile u64 *)LOCAL_MMR_ADDR(SH1_PI_CAM_CONTROL) = cam_idx;
++		/* Read back to ensure write completed */
++		(void)HUB_L((u64 *)LOCAL_MMR_ADDR(SH1_PI_CAM_CONTROL));
++
++		addr_raw  = HUB_L((u64 *)LOCAL_MMR_ADDR(0x0000000120060100));
++		state_raw = HUB_L((u64 *)LOCAL_MMR_ADDR(0x0000000120060200));
++		state = state_raw & 0xf;
++
++		wrb_states[i] = state_raw;
++		wrb_addrs[i] = addr_raw;
++
++		if (state == 0) wrb_free++;
++		else if (state == 12 || state == 13) wrb_snoop++;
++		else if (state == 8) wrb_wack++;
++		else wrb_other++;
++	}
++
++	/* Only log if something interesting is happening:
++	 * - PI error bits changed
++	 * - WRBs not all FREE
++	 * - II CRB in error
++	 * - II_WSTAT errors (NOT ii_ixss — it's 0x34 from boot, constant) */
++	{
++		int ii_crb_errors = 0;
++		int ii_crb_active = 0;
++		u64 crb_a[15], crb_e[15];
++
++		/* Read all 15 II CRBs — these track PIC↔SHub transactions */
++		for (i = 0; i < IIO_NUM_CRBS; i++) {
++			crb_a[i] = REMOTE_HUB_L(nasid, IIO_ICRB_A(i));
++			crb_e[i] = REMOTE_HUB_L(nasid, IIO_ICRB_E(i));
++			if (crb_a[i] != 0) ii_crb_active++;
++			/* _B register bit 0 (mark) indicates error */
++			{
++				u64 crb_b = REMOTE_HUB_L(nasid, IIO_ICRB_B(i));
++				if (crb_b & 1) ii_crb_errors++;
++			}
++		}
++
++		if (force ||
++		    pi_err_summary != last_pi_err_summary ||
++		    wrb_free < 32 ||
++		    ii_crb_errors > 0 ||
++		    (ii_wstat & 0x130)) {
++
++			last_pi_err_summary = pi_err_summary;
++
++			printk(KERN_WARNING "[SN2-SHUB] === SHub State Snapshot ===\n");
++
++			/* II state */
++			printk(KERN_WARNING "[SN2-SHUB] II_WSTAT=0x%016llx "
++			       "II_IXSS=0x%016llx II_IPRBF=0x%016llx\n",
++			       ii_wstat, ii_ixss, ii_iprbf);
++			if (ii_iieph1 || ii_iieph2)
++				printk(KERN_WARNING "[SN2-SHUB] II_IIEPH1="
++				       "0x%016llx II_IIEPH2=0x%016llx\n",
++				       ii_iieph1, ii_iieph2);
++
++			/* PI error state */
++			printk(KERN_WARNING "[SN2-SHUB] PI_FIRST_ERR=0x%016llx "
++			       "PI_ERR_SUMMARY=0x%016llx\n",
++			       pi_first_err, pi_err_summary);
++			if (pi_err_detail1 || pi_err_detail2)
++				printk(KERN_WARNING "[SN2-SHUB] PI_DETAIL1="
++				       "0x%016llx DETAIL2=0x%016llx\n",
++				       pi_err_detail1, pi_err_detail2);
++
++			/* WRB summary */
++			printk(KERN_WARNING "[SN2-SHUB] WRB: free=%d snoop=%d "
++			       "wack=%d other=%d\n",
++			       wrb_free, wrb_snoop, wrb_wack, wrb_other);
++
++			/* Print non-FREE WRBs */
++			for (i = 0; i < 32; i++) {
++				int st = wrb_states[i] & 0xf;
++				if (st != 0) {
++					const char *sn;
++					switch (st) {
++					case 8: sn = "WACK"; break;
++					case 12: sn = "SNOOP"; break;
++					case 13: sn = "SNPP"; break;
++					case 14: sn = "SNPRY"; break;
++					case 15: sn = "SNPRR"; break;
++					default: sn = "UNK"; break;
++					}
++					printk(KERN_WARNING "[SN2-SHUB]   WRB[%d] "
++					       "state=%d(%s) addr=0x%016llx\n",
++					       i, st, sn, wrb_addrs[i]);
++				}
++			}
++
++			/* II CRBs — active/error */
++			printk(KERN_WARNING "[SN2-SHUB] II_CRB: active=%d "
++			       "errors=%d\n", ii_crb_active, ii_crb_errors);
++			for (i = 0; i < IIO_NUM_CRBS; i++) {
++				if (crb_a[i] != 0 || (crb_e[i] & 0xffff)) {
++					u64 crb_b = REMOTE_HUB_L(nasid,
++						IIO_ICRB_B(i));
++					u64 crb_c = REMOTE_HUB_L(nasid,
++						IIO_ICRB_C(i));
++					printk(KERN_WARNING "[SN2-SHUB]   "
++					       "IICRB[%d] A=0x%016llx "
++					       "B=0x%016llx C=0x%016llx "
++					       "E=0x%016llx\n",
++					       i, crb_a[i], crb_b,
++					       crb_c, crb_e[i]);
++				}
++			}
++
++			printk(KERN_WARNING "[SN2-SHUB] === End Snapshot ===\n");
++		}
++	}
++}
++EXPORT_SYMBOL(sn2_shub_state_snapshot);
+diff --git a/drivers/gpu/drm/radeon/ni.c b/drivers/gpu/drm/radeon/ni.c
+index 3890911..532ed49 100644
+--- a/drivers/gpu/drm/radeon/ni.c
++++ b/drivers/gpu/drm/radeon/ni.c
+@@ -1482,14 +1482,26 @@ u32 cayman_gfx_get_wptr(struct radeon_device *rdev,
+ void cayman_gfx_set_wptr(struct radeon_device *rdev,
+ 			 struct radeon_ring *ring)
+ {
++#ifdef CONFIG_IA64_SGI_SN2
++	extern void __sn_mmiowb(void);
++#endif
+ 	if (ring->idx == RADEON_RING_TYPE_GFX_INDEX) {
+ 		WREG32(CP_RB0_WPTR, ring->wptr);
++#ifdef CONFIG_IA64_SGI_SN2
++		__sn_mmiowb(); /* [SN2] Drain PIO write buffer — fglrx pattern */
++#endif
+ 		(void)RREG32(CP_RB0_WPTR);
+ 	} else if (ring->idx == CAYMAN_RING_TYPE_CP1_INDEX) {
+ 		WREG32(CP_RB1_WPTR, ring->wptr);
++#ifdef CONFIG_IA64_SGI_SN2
++		__sn_mmiowb();
++#endif
+ 		(void)RREG32(CP_RB1_WPTR);
+ 	} else {
+ 		WREG32(CP_RB2_WPTR, ring->wptr);
++#ifdef CONFIG_IA64_SGI_SN2
++		__sn_mmiowb();
++#endif
+ 		(void)RREG32(CP_RB2_WPTR);
+ 	}
+ }
+diff --git a/drivers/gpu/drm/radeon/ni_dma.c b/drivers/gpu/drm/radeon/ni_dma.c
+index 38bc017..2eba24f 100644
+--- a/drivers/gpu/drm/radeon/ni_dma.c
++++ b/drivers/gpu/drm/radeon/ni_dma.c
+@@ -110,6 +110,12 @@ void cayman_dma_set_wptr(struct radeon_device *rdev,
+ 		reg = DMA_RB_WPTR + DMA1_REGISTER_OFFSET;
+ 
+ 	WREG32(reg, (ring->wptr << 2) & 0x3fffc);
++#ifdef CONFIG_IA64_SGI_SN2
++	{
++		extern void __sn_mmiowb(void);
++		__sn_mmiowb(); /* [SN2] Drain PIO write buffer — fglrx pattern */
++	}
++#endif
+ 
+ 	// [DEBUG INSTRUMENTATION] Log DMA ring usage + add PIO read flush
+ 	// per [PDF §Posted PIO write Calls, Page 11]
+diff --git a/drivers/gpu/drm/radeon/radeon_cs.c b/drivers/gpu/drm/radeon/radeon_cs.c
+index 2db819a..9bbba53 100644
+--- a/drivers/gpu/drm/radeon/radeon_cs.c
++++ b/drivers/gpu/drm/radeon/radeon_cs.c
+@@ -28,6 +28,8 @@
+ #include <linux/list_sort.h>
+ #include <linux/pci.h>
+ #include <linux/uaccess.h>
++#include <linux/dma-mapping.h>
++#include <drm/ttm/ttm_tt.h>
+ 
+ #include <drm/drm_device.h>
+ #include <drm/drm_file.h>
+diff --git a/drivers/gpu/drm/radeon/radeon_fence.c b/drivers/gpu/drm/radeon/radeon_fence.c
+index 220ff27..ba0e26e 100644
+--- a/drivers/gpu/drm/radeon/radeon_fence.c
++++ b/drivers/gpu/drm/radeon/radeon_fence.c
+@@ -307,22 +307,156 @@ static void radeon_fence_check_lockup(struct work_struct *work)
+ 	}
+ 
+ #ifdef CONFIG_IA64_SGI_SN2
+-	/* SN2: Flush PIC bridge posted DMA write buffers.
+-	 * With WB enabled, fence polling reads system memory — no PIO reads
+-	 * happen, so sn_dma_flush() is never called. Without flush, GPU DMA
+-	 * writes pile up in PIC WRBs under heavy load → bus error → MCA.
+-	 * RREG32 triggers readl() → sn_dma_flush() on SN2.
+-	 * [PDF §PIO Read Flushing Posted DMA Buffers, Page 73]
+-	 * [PDF §Device Interrupts and Posted DMAs, Page 5]
++	/* [DEBUG INSTRUMENTATION] Comprehensive SN2 diagnostics.
++	 *
++	 * Three monitoring systems:
++	 * 1. SHub state snapshot — reads II chiplet + PI CAM (WRB states)
++	 *    directly from OS, self-filters to only log on error/non-FREE
++	 * 2. DMA write counting — tracks GPU command completion rate via
++	 *    fence sequence number advances
++	 * 3. PIO/PIC monitoring — existing: PIO pending count, PIC errors,
++	 *    PIC WRB flush
+ 	 */
+ 	if (ring == 0) {
+ 		static int flush_logged = 0;
++		static int pio_max_seen = 0;
++		static int pio_high_count = 0;
++		static u64 last_fence_seq = 0;
++		static int fence_advance_count = 0;
++		static int fence_advance_last_report = 0;
+ 		extern int sn2_gpu_flush_trace;
++		extern void sn2_pic_bridge_dump(struct pci_dev *);
++		extern void sn2_pic_read_wrb_all(struct pci_dev *, u64 *);
++		extern int sn2_pio_write_status(u64 *, int *, int);
++		extern u64 sn2_pic_check_errors(struct pci_dev *);
++		extern void sn2_shub_state_snapshot(int, int);
++		extern void sn_dma_flush(unsigned long);
++		extern void __sn_mmiowb(void);
++		u64 wrb_vals[4];
++		u64 pio_counts[4] = {0};
++		int pio_deadlock[4] = {0};
++		int pio_max;
++
++		/* First time: RRB realloc + PIC dump + flush diagnostics */
+ 		if (!flush_logged) {
+-			sn2_gpu_flush_trace = 1; /* arm trace for sn_dma_flush */
++			extern int sn2_pic_rrb_realloc(struct pci_dev *);
++			sn2_gpu_flush_trace = 1;
++			sn2_pic_rrb_realloc(rdev->pdev);
++			sn2_pic_bridge_dump(rdev->pdev);
++
++			/* [DEBUG INSTRUMENTATION] Print GPU MMIO address
++			 * for cross-reference with PROM flush BAR list.
++			 * If rdev->rmmio doesn't fall within any flush
++			 * entry's bar_list, BAR match fails and we use
++			 * the fallback path every time. */
++			printk(KERN_CRIT "[SN2-GPU-MMIO] rmmio=%p "
++			       "rmmio_base=0x%lx rmmio_size=0x%lx\n",
++			       rdev->rmmio,
++			       (unsigned long)rdev->rmmio_base,
++			       (unsigned long)rdev->rmmio_size);
++			printk(KERN_CRIT "[SN2-GPU-MMIO] SCRATCH_REG0 "
++			       "addr=%p (rmmio+0x%x)\n",
++			       (void *)((char *)rdev->rmmio + 0x15e0),
++			       0x15e0);
++			/* Test: does a flush with GPU MMIO addr work? */
++			{
++				unsigned long test_addr =
++					(unsigned long)rdev->rmmio + 0x15e0;
++				printk(KERN_CRIT "[SN2-GPU-MMIO] Calling "
++				       "sn_dma_flush(0x%lx) directly...\n",
++				       test_addr);
++				sn_dma_flush(test_addr);
++				printk(KERN_CRIT "[SN2-GPU-MMIO] "
++				       "sn_dma_flush returned OK\n");
++			}
++
+ 			flush_logged = 1;
+ 		}
+-		(void)RREG32(RADEON_SCRATCH_REG0);
++
++		/* === #1: SHub State Snapshot (II + PI + II CRBs) ===
++		 * force=1 every 20th check for periodic baseline.
++		 * force=0 otherwise — only prints on error/anomaly. */
++		sn2_shub_state_snapshot(0, (check_count % 20) == 1 ? 1 : 0);
++
++		/* === #2: DMA Write Counting ===
++		 * Track GPU command completion rate via fence sequence.
++		 * Each fence advance = one GPU command completed = at least
++		 * one DMA write (fence value) to system memory.
++		 * High rate during Minecraft tells us DMA pressure. */
++		{
++			u64 cur_seq = (u64)atomic64_read(
++				&rdev->fence_drv[0].last_seq);
++			if (cur_seq != last_fence_seq) {
++				fence_advance_count +=
++					(int)(cur_seq - last_fence_seq);
++				last_fence_seq = cur_seq;
++			}
++		}
++
++		/* === #3: PIO Pending Count (corrected for SHub1) === */
++		pio_max = sn2_pio_write_status(pio_counts, pio_deadlock, 4);
++		if (pio_max > pio_max_seen)
++			pio_max_seen = pio_max;
++		if (pio_max > 50 && pio_high_count < 200) {
++			pio_high_count++;
++			printk(KERN_WARNING "[SN2-PIO-PENDING] #%d: "
++			       "cpu0=%llu cpu1=%llu max_pending=%d "
++			       "max_ever=%d deadlock=[%d,%d]\n",
++			       pio_high_count,
++			       pio_counts[0], pio_counts[1],
++			       pio_max, pio_max_seen,
++			       pio_deadlock[0], pio_deadlock[1]);
++		}
++		if (pio_max > 60)
++			printk(KERN_CRIT "[SN2-PIO-CRITICAL] pending=%d "
++			       "cpu0=%llu cpu1=%llu\n",
++			       pio_max, pio_counts[0], pio_counts[1]);
++		if (pio_deadlock[0] || pio_deadlock[1])
++			printk(KERN_CRIT "[SN2-PIO-DEADLOCK] cpu0=%d cpu1=%d\n",
++			       pio_deadlock[0], pio_deadlock[1]);
++
++		/* SN2: Direct mmiowb + sn_dma_flush (fglrx pattern)
++		 * Instead of relying on RREG32 → readl → sn_dma_flush,
++		 * call both barriers explicitly with GPU MMIO address. */
++		__sn_mmiowb();
++		sn_dma_flush((unsigned long)rdev->rmmio);
++
++		/* PIC error check */
++		{
++			u64 pic_err = sn2_pic_check_errors(rdev->pdev);
++			if ((check_count % 20) == 1)
++				printk(KERN_INFO "[SN2-PIC-STATUS] "
++				       "INT_STATUS=0x%016llx\n", pic_err);
++		}
++
++		/* PIC WRB flush for all slots */
++		sn2_pic_read_wrb_all(rdev->pdev, wrb_vals);
++
++		/* Periodic summary (every 20 checks = ~10 sec) */
++		if ((check_count % 20) == 1) {
++			int rate = fence_advance_count -
++				   fence_advance_last_report;
++			fence_advance_last_report = fence_advance_count;
++			printk(KERN_INFO "[SN2-WRB] wrb[0]=0x%llx "
++			       "wrb[1]=0x%llx wrb[2]=0x%llx wrb[3]=0x%llx\n",
++			       wrb_vals[0], wrb_vals[1],
++			       wrb_vals[2], wrb_vals[3]);
++			printk(KERN_INFO "[SN2-SUMMARY] pio_max_ever=%d "
++			       "pio_events=%d fence_total=%d "
++			       "fence_rate=%d/10s\n",
++			       pio_max_seen, pio_high_count,
++			       fence_advance_count, rate);
++			{
++				extern int sn2_flush_fallback_count;
++				extern int sn2_flush_total_count;
++				printk(KERN_INFO "[SN2-FLUSH-STATS] "
++				       "total=%d fallback=%d bar_match=%d\n",
++				       sn2_flush_total_count,
++				       sn2_flush_fallback_count,
++				       sn2_flush_total_count -
++				       sn2_flush_fallback_count);
++			}
++		}
+ 	}
+ #endif
+ 
+diff --git a/drivers/gpu/drm/radeon/radeon_ring.c b/drivers/gpu/drm/radeon/radeon_ring.c
+index 581ae20..316092f 100644
+--- a/drivers/gpu/drm/radeon/radeon_ring.c
++++ b/drivers/gpu/drm/radeon/radeon_ring.c
+@@ -201,6 +201,30 @@ void radeon_ring_unlock_commit(struct radeon_device *rdev, struct radeon_ring *r
+ 			       bool hdp_flush)
+ {
+ 	radeon_ring_commit(rdev, ring, hdp_flush);
++#ifdef CONFIG_IA64_SGI_SN2
++	/* [SN2 FLOW CONTROL] Direct mmiowb + dma_flush after ring commit.
++	 *
++	 * fglrx (only working GPU driver on SN2) calls:
++	 *   __sn_mmiowb() after EVERY PIO write  (drain PIO write buffers)
++	 *   sn_dma_flush() after EVERY PIO read   (flush device DMA writes)
++	 *
++	 * radeon_ring_commit → cayman_gfx_set_wptr does:
++	 *   WREG32(CP_RB0_WPTR, wptr) → writel (NO mmiowb!)
++	 *   RREG32(CP_RB0_WPTR)       → readl  (calls sn_dma_flush)
++	 *
++	 * But the readl-triggered sn_dma_flush may not work correctly
++	 * for the GPU — its BARs may not be in the PROM's flush list.
++	 * Call both barriers directly with the GPU's known MMIO address.
++	 */
++	{
++		extern void __sn_mmiowb(void);
++		extern void sn_dma_flush(unsigned long);
++		/* 1. Drain CPU→GPU PIO writes (mmiowb) */
++		__sn_mmiowb();
++		/* 2. Flush GPU→memory DMA writes (force interrupt on PIC) */
++		sn_dma_flush((unsigned long)rdev->rmmio);
++	}
++#endif
+ 	mutex_unlock(&rdev->ring_lock);
+ }
+ 
+diff --git a/drivers/gpu/drm/ttm/ttm_bo_util.c b/drivers/gpu/drm/ttm/ttm_bo_util.c
+index 5b4842b..7d6653a 100644
+--- a/drivers/gpu/drm/ttm/ttm_bo_util.c
++++ b/drivers/gpu/drm/ttm/ttm_bo_util.c
+@@ -308,15 +308,14 @@ pgprot_t ttm_io_prot(struct ttm_buffer_object *bo, struct ttm_resource *res,
+ 	}
+ 
+ #ifdef CONFIG_IA64_SGI_SN2
+-	/* SN2: Device memory (VRAM, doorbell, MMIO) is accessed via PIO.
+-	 * Write-combining (_PAGE_MA_WC) causes CPU write buffers to never
+-	 * flush through the SN2 PIO path (CPU→SHub→PIC→device).
+-	 * Write-back (_PAGE_MA_WB) risks stale cache reads of device memory.
+-	 * Force uncacheable (_PAGE_MA_UC) for all device memory mappings.
+-	 * System memory (GTT, use_tt=true) is unaffected.
+-	 * See SGI Altix Porting Guide (007-4520-007) page 67. */
+-	if (!man->use_tt)
+-		return pgprot_noncached(tmp);
++	/* SN2: Force uncacheable for ALL buffer types:
++	 * - Device memory (VRAM, !use_tt): WC causes PIO write buffers
++	 *   to never flush through the SHub→PIC path.
++	 * - System memory (GTT, use_tt): WB creates Modified cache lines
++	 *   that trigger RDEXC directory interventions when the GPU reads
++	 *   via DMA, overflowing the FSB → FSB_PROTO_ERR → MCA.
++	 * UC writes go directly to memory — no cache, no interventions. */
++	return pgprot_noncached(tmp);
+ #endif
+ 
+ 	return ttm_prot_from_caching(caching, tmp);
+@@ -369,7 +368,15 @@ static int ttm_bo_kmap_ttm(struct ttm_buffer_object *bo,
+ 		return ret;
+ 
+ 	if (num_pages == 1 && ttm->caching == ttm_cached &&
+-	    !(man->use_tt && (ttm->page_flags & TTM_TT_FLAG_DECRYPTED))) {
++	    !(man->use_tt && (ttm->page_flags & TTM_TT_FLAG_DECRYPTED))
++#ifdef CONFIG_IA64_SGI_SN2
++	    /* SN2: Never use the WB kmap shortcut. Single-page GTT BOs
++	     * must also go through vmap + ttm_io_prot → pgprot_noncached
++	     * to get UC mapping. WB kmap creates Modified cache lines
++	     * that trigger RDEXC interventions → FSB_PROTO_ERR → MCA. */
++	    && 0
++#endif
++	    ) {
+ 		/*
+ 		 * We're mapping a single page, and the desired
+ 		 * page protection is consistent with the bo.
+
+		 

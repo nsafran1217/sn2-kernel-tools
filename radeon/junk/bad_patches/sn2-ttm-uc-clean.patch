@@ -1,0 +1,144 @@
+diff --git a/drivers/gpu/drm/ttm/ttm_bo_util.c b/drivers/gpu/drm/ttm/ttm_bo_util.c
+index 5b4842b..fae3591 100644
+--- a/drivers/gpu/drm/ttm/ttm_bo_util.c
++++ b/drivers/gpu/drm/ttm/ttm_bo_util.c
+@@ -308,15 +308,23 @@ pgprot_t ttm_io_prot(struct ttm_buffer_object *bo, struct ttm_resource *res,
+ 	}
+ 
+ #ifdef CONFIG_IA64_SGI_SN2
+-	/* SN2: Device memory (VRAM, doorbell, MMIO) is accessed via PIO.
+-	 * Write-combining (_PAGE_MA_WC) causes CPU write buffers to never
+-	 * flush through the SN2 PIO path (CPU→SHub→PIC→device).
+-	 * Write-back (_PAGE_MA_WB) risks stale cache reads of device memory.
+-	 * Force uncacheable (_PAGE_MA_UC) for all device memory mappings.
+-	 * System memory (GTT, use_tt=true) is unaffected.
+-	 * See SGI Altix Porting Guide (007-4520-007) page 67. */
+-	if (!man->use_tt)
+-		return pgprot_noncached(tmp);
++	/* SN2: Force uncacheable for ALL buffer types.
++	 * [PDF pages 89-90]: pgprot_noncached() must be used for
++	 * memory-mapped resources into userspace. */
++	{
++		static int log_count = 0;
++		pgprot_t result = pgprot_noncached(tmp);
++		if (log_count < 20) {
++			printk(KERN_INFO "[SN2-PROT] ttm_io_prot: use_tt=%d "
++			       "caching=%d in=0x%lx out=0x%lx "
++			       "MA_bits=0x%lx\n",
++			       man->use_tt, caching,
++			       pgprot_val(tmp), pgprot_val(result),
++			       (pgprot_val(result) >> 2) & 0x7);
++			log_count++;
++		}
++		return result;
++	}
+ #endif
+ 
+ 	return ttm_prot_from_caching(caching, tmp);
+@@ -369,7 +377,15 @@ static int ttm_bo_kmap_ttm(struct ttm_buffer_object *bo,
+ 		return ret;
+ 
+ 	if (num_pages == 1 && ttm->caching == ttm_cached &&
+-	    !(man->use_tt && (ttm->page_flags & TTM_TT_FLAG_DECRYPTED))) {
++	    !(man->use_tt && (ttm->page_flags & TTM_TT_FLAG_DECRYPTED))
++#ifdef CONFIG_IA64_SGI_SN2
++	    /* SN2: Never use the WB kmap shortcut. Single-page GTT BOs
++	     * must also go through vmap + ttm_io_prot → pgprot_noncached
++	     * to get UC mapping. WB kmap creates Modified cache lines
++	     * that trigger RDEXC interventions → FSB_PROTO_ERR → MCA. */
++	    && 0
++#endif
++	    ) {
+ 		/*
+ 		 * We're mapping a single page, and the desired
+ 		 * page protection is consistent with the bo.
+diff --git a/drivers/gpu/drm/ttm/ttm_module.c b/drivers/gpu/drm/ttm/ttm_module.c
+index aa137ea..f616017 100644
+--- a/drivers/gpu/drm/ttm/ttm_module.c
++++ b/drivers/gpu/drm/ttm/ttm_module.c
+@@ -61,6 +61,14 @@
+  */
+ pgprot_t ttm_prot_from_caching(enum ttm_caching caching, pgprot_t tmp)
+ {
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: ALL GPU-accessible memory must use UC page protection.
++	 * WB creates Modified cache lines → RDEXC interventions → MCA.
++	 * This catches ttm_kmap_iter (used by ttm_move_memcpy) which
++	 * calls ttm_prot_from_caching directly, bypassing ttm_io_prot.
++	 * [PDF pages 89-90: pgprot_noncached required] */
++	return pgprot_noncached(tmp);
++#endif
+ 	/* Cached mappings need no adjustment */
+ 	if (caching == ttm_cached)
+ 		return tmp;
+diff --git a/drivers/gpu/drm/ttm/ttm_pool.c b/drivers/gpu/drm/ttm/ttm_pool.c
+index c0d9555..54797d7 100644
+--- a/drivers/gpu/drm/ttm/ttm_pool.c
++++ b/drivers/gpu/drm/ttm/ttm_pool.c
+@@ -46,6 +46,9 @@
+ #include <drm/ttm/ttm_pool.h>
+ #include <drm/ttm/ttm_tt.h>
+ #include <drm/ttm/ttm_bo.h>
++#ifdef CONFIG_IA64_SGI_SN2
++#include <asm/sn/arch.h>
++#endif
+ 
+ #include "ttm_module.h"
+ #include "ttm_pool_internal.h"
+@@ -159,8 +162,36 @@ static struct page *ttm_pool_alloc_page(struct ttm_pool *pool, gfp_t gfp_flags,
+ 
+ 	if (!ttm_pool_uses_dma_alloc(pool)) {
+ 		p = alloc_pages_node(pool->nid, gfp_flags, order);
+-		if (p)
++		if (p) {
+ 			p->private = order;
++#ifdef CONFIG_IA64_SGI_SN2
++			/* SN2: Flush WB dirty cache lines from page zeroing.
++			 *
++			 * The page allocator zeros pages through the WB
++			 * identity map (region 7), creating Modified cache
++			 * lines. These pages will be UC vmap/mmaped for GPU
++			 * DMA access. Without flushing, GPU DMA reads see
++			 * Modified lines → RDEXC interventions → FSB_PROTO_ERR.
++			 *
++			 * [PDF pages 89-90: pgprot_noncached required for
++			 *  memory-mapped resources into userspace]
++			 * [Confirmed: UC vmap working (MA_bits=0x4) but RDEXC
++			 *  persists from page-zero dirty lines]
++			 *
++			 * sn_flush_all_caches uses fc.i to writeback dirty
++			 * lines. One page = 32 cache lines — small enough
++			 * to not overload FSB. */
++			{
++				unsigned int i, nr = 1U << order;
++				for (i = 0; i < nr; i++) {
++					void *addr = page_address(p + i);
++					if (addr)
++						sn_flush_all_caches((long)addr,
++								    PAGE_SIZE);
++				}
++			}
++#endif
++		}
+ 		return p;
+ 	}
+ 
+@@ -293,6 +324,16 @@ static void ttm_pool_type_give(struct ttm_pool_type *pt, struct page *p)
+ 			clear_page(page_address(p + i));
+ 	}
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: clear_page above uses WB identity map → dirty cache lines.
++	 * Flush them so GPU DMA reads don't trigger RDEXC interventions. */
++	for (i = 0; i < num_pages; ++i) {
++		void *addr = page_address(p + i);
++		if (addr)
++			sn_flush_all_caches((long)addr, PAGE_SIZE);
++	}
++#endif
++
+ 	spin_lock(&pt->lock);
+ 	list_add(&p->lru, &pt->pages);
+ 	spin_unlock(&pt->lock);
+
+	

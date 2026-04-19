@@ -1,0 +1,164 @@
+--- a/drivers/gpu/drm/radeon/radeon.h
++++ b/drivers/gpu/drm/radeon/radeon.h
+@@ -2460,13 +2460,34 @@
+ 	else
+ 		return r100_mm_rreg_slow(rdev, reg);
+ }
++#ifdef CONFIG_IA64_SGI_SN2
++extern u32 sn2_pio_trace_reg[];
++extern u32 sn2_pio_trace_val[];
++extern u64 sn2_pio_trace_cnt[];
++extern unsigned int sn2_pio_trace_idx;
++extern u64 sn2_pio_trace_total;
++extern void __sn_mmiowb(void);
++#endif
++
+ static inline void r100_mm_wreg(struct radeon_device *rdev, uint32_t reg, uint32_t v,
+ 				bool always_indirect)
+ {
++#ifdef CONFIG_IA64_SGI_SN2
++	{
++		unsigned int idx = sn2_pio_trace_idx;
++		sn2_pio_trace_reg[idx] = reg;
++		sn2_pio_trace_val[idx] = v;
++		sn2_pio_trace_cnt[idx] = ++sn2_pio_trace_total;
++		sn2_pio_trace_idx = (idx + 1) & 31;
++	}
++#endif
+ 	if ((reg < rdev->rmmio_size || reg < RADEON_MIN_MMIO_SIZE) && !always_indirect)
+ 		writel(v, ((void __iomem *)rdev->rmmio) + reg);
+ 	else
+ 		r100_mm_wreg_slow(rdev, reg, v);
++#ifdef CONFIG_IA64_SGI_SN2
++	__sn_mmiowb();
++#endif
+ }
+ 
+ u32 r100_io_rreg(struct radeon_device *rdev, u32 reg);
+--- a/drivers/gpu/drm/radeon/radeon_i2c.c
++++ b/drivers/gpu/drm/radeon/radeon_i2c.c
+@@ -36,6 +36,8 @@
+ 
+ bool radeon_ddc_probe(struct radeon_connector *radeon_connector, bool use_aux)
+ {
++	pr_info("SN2_FLOW: ddc_probe connector=%s use_aux=%d\n",
++		radeon_connector->base.name, use_aux);
+ 	u8 out = 0x0;
+ 	u8 buf[8];
+ 	int ret;
+@@ -84,6 +86,7 @@
+ 
+ static int pre_xfer(struct i2c_adapter *i2c_adap)
+ {
++	pr_info("SN2_FLOW: i2c pre_xfer adapter=%s\n", i2c_adap->name);
+ 	struct radeon_i2c_chan *i2c = i2c_get_adapdata(i2c_adap);
+ 	struct radeon_device *rdev = i2c->dev->dev_private;
+ 	struct radeon_i2c_bus_rec *rec = &i2c->rec;
+@@ -154,6 +157,7 @@
+ 
+ static void post_xfer(struct i2c_adapter *i2c_adap)
+ {
++	pr_info("SN2_FLOW: i2c post_xfer adapter=%s\n", i2c_adap->name);
+ 	struct radeon_i2c_chan *i2c = i2c_get_adapdata(i2c_adap);
+ 	struct radeon_device *rdev = i2c->dev->dev_private;
+ 	struct radeon_i2c_bus_rec *rec = &i2c->rec;
+--- a/drivers/gpu/drm/radeon/radeon_connectors.c
++++ b/drivers/gpu/drm/radeon/radeon_connectors.c
+@@ -982,6 +982,7 @@
+ static enum drm_connector_status
+ radeon_vga_detect(struct drm_connector *connector, bool force)
+ {
++	pr_info("SN2_FLOW: vga_detect connector=%s force=%d\n", connector->name, force);
+ 	struct drm_device *dev = connector->dev;
+ 	struct radeon_device *rdev = dev->dev_private;
+ 	struct radeon_connector *radeon_connector = to_radeon_connector(connector);
+@@ -1206,6 +1207,7 @@
+ static enum drm_connector_status
+ radeon_dvi_detect(struct drm_connector *connector, bool force)
+ {
++	pr_info("SN2_FLOW: dvi_detect connector=%s force=%d\n", connector->name, force);
+ 	struct drm_device *dev = connector->dev;
+ 	struct radeon_device *rdev = dev->dev_private;
+ 	struct radeon_connector *radeon_connector = to_radeon_connector(connector);
+@@ -1614,6 +1616,7 @@
+ static enum drm_connector_status
+ radeon_dp_detect(struct drm_connector *connector, bool force)
+ {
++	pr_info("SN2_FLOW: dp_detect connector=%s force=%d\n", connector->name, force);
+ 	struct drm_device *dev = connector->dev;
+ 	struct radeon_device *rdev = dev->dev_private;
+ 	struct radeon_connector *radeon_connector = to_radeon_connector(connector);
+--- a/drivers/gpu/drm/radeon/radeon_display.c
++++ b/drivers/gpu/drm/radeon/radeon_display.c
+@@ -620,6 +620,8 @@
+ 
+ static int
+ radeon_crtc_set_config(struct drm_mode_set *set,
++		       /* SN2 flow trace */
++
+ 		       struct drm_modeset_acquire_ctx *ctx)
+ {
+ 	struct drm_device *dev;
+--- a/arch/ia64/sn/pci/pcibr/pcibr_provider.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_provider.c
+@@ -21,6 +21,8 @@
+ #include <asm/sn/sn2/sn_hwperf.h>
+ #include "xtalk/xwidgetdev.h"
+ #include "xtalk/hubdev.h"
++#include <asm/sn/shub_mmr.h>
++#include <asm/sn/pda.h>
+ 
+ int
+ sal_pcibr_slot_enable(struct pcibus_info *soft, int device, void *resp,
+@@ -95,6 +97,36 @@
+ 	return ioboard;
+ }
+ 
++u32 sn2_pio_trace_reg[32];
++u32 sn2_pio_trace_val[32];
++u64 sn2_pio_trace_cnt[32];
++unsigned int sn2_pio_trace_idx;
++u64 sn2_pio_trace_total;
++EXPORT_SYMBOL(sn2_pio_trace_reg);
++EXPORT_SYMBOL(sn2_pio_trace_val);
++EXPORT_SYMBOL(sn2_pio_trace_cnt);
++EXPORT_SYMBOL(sn2_pio_trace_idx);
++EXPORT_SYMBOL(sn2_pio_trace_total);
++
++static void sn2_pio_trace_dump(void)
++{
++	int i, idx;
++	unsigned long pio_status = 0;
++	if (pda->pio_write_status_addr)
++		pio_status = *(volatile unsigned long *)pda->pio_write_status_addr;
++	pr_crit("SN2_PIO: SHUB PIO_WRITE_STATUS=0x%lx (pending=%lu deadlock=%lu)\n",
++		pio_status, (pio_status >> 56) & 0x3f, (pio_status >> 1) & 1);
++	if (!sn2_pio_trace_total) return;
++	pr_crit("SN2_PIO: Last 32 GPU reg writes (total=%llu):\n", sn2_pio_trace_total);
++	idx = sn2_pio_trace_idx;
++	for (i = 0; i < 32; i++) {
++		int j = (idx + i) & 31;
++		if (sn2_pio_trace_cnt[j])
++			pr_crit("SN2_PIO:  [%llu] reg=0x%04x val=0x%08x\n",
++				sn2_pio_trace_cnt[j], sn2_pio_trace_reg[j], sn2_pio_trace_val[j]);
++	}
++}
++
+ /* 
+  * PCI Bridge Error interrupt handler.  Gets invoked whenever a PCI 
+  * bridge sends an error interrupt.
+@@ -104,8 +136,11 @@
+ {
+ 	struct pcibus_info *soft = arg;
+ 
+-	if (sal_pcibr_error_interrupt(soft) < 0)
+-		panic("pcibr_error_intr_handler(): Fatal Bridge Error");
++	if (sal_pcibr_error_interrupt(soft) < 0) {
++		pr_crit("pcibr_error_intr_handler(): Bridge Error (non-fatal)\n");
++		sn2_pio_trace_dump();
++		dump_stack();
++	}
+ 
+ 	return IRQ_HANDLED;
+ }
+

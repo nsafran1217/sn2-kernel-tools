@@ -1,0 +1,234 @@
+From bda78f88d54a5a34b87ddae112b4f596c4bb35c7 Mon Sep 17 00:00:00 2001
+From: SN2 Debug <debug@sn2>
+Date: Sat, 11 Apr 2026 22:30:59 +0000
+Subject: [PATCH] radeon: add SN2 debug instrumentation for MC, GART, CP, and
+ DMA addresses
+
+Adds [SN2-DBG] printk instrumentation to diagnose GPU acceleration
+failure on SGI Altix (SN2) systems. Logs:
+
+- MC register values (MC_FB_LOCATION, MC_AGP_LOCATION) and source 64-bit
+  addresses before truncation to 32-bit
+- AIC register values (PCI GART range, table base address)
+- CP ring buffer address and what gets written to CP_RB_BASE
+- Writeback buffer addresses
+- GART table DMA allocation address and DMA masks
+- First GART page entries and DMA addresses from TTM
+- Ring test pre-flight: dumps GART entries for ring pages, reads back
+  AIC/MC/BUS_CNTL registers
+- Warning when aper_base exceeds GPU's 32-bit mc_mask
+- Dummy page physical and DMA addresses
+
+All instrumentation tagged with // [DEBUG INSTRUMENTATION]
+---
+ drivers/gpu/drm/radeon/r100.c          | 69 ++++++++++++++++++++++++--
+ drivers/gpu/drm/radeon/radeon_device.c | 13 +++++
+ drivers/gpu/drm/radeon/radeon_gart.c   | 18 +++++++
+ 3 files changed, 96 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/radeon/r100.c b/drivers/gpu/drm/radeon/r100.c
+index 24c8db6..7bfb0ef 100644
+--- a/drivers/gpu/drm/radeon/r100.c
++++ b/drivers/gpu/drm/radeon/r100.c
+@@ -661,6 +661,14 @@ int r100_pci_gart_enable(struct radeon_device *rdev)
+ {
+ 	uint32_t tmp;
+ 
++	// [DEBUG INSTRUMENTATION] — log GART register values
++	printk(KERN_INFO "[SN2-DBG] r100_pci_gart_enable: gtt_start=0x%016llx (AIC_LO truncated=0x%08x)\n",
++	       (unsigned long long)rdev->mc.gtt_start, (u32)rdev->mc.gtt_start);
++	printk(KERN_INFO "[SN2-DBG] r100_pci_gart_enable: gtt_end=0x%016llx (AIC_HI truncated=0x%08x)\n",
++	       (unsigned long long)rdev->mc.gtt_end, (u32)rdev->mc.gtt_end);
++	printk(KERN_INFO "[SN2-DBG] r100_pci_gart_enable: table_addr=0x%016llx (AIC_PT_BASE truncated=0x%08x)\n",
++	       (unsigned long long)rdev->gart.table_addr, (u32)rdev->gart.table_addr);
++
+ 	/* discard memory request outside of configured range */
+ 	tmp = RREG32(RADEON_AIC_CNTL) | RADEON_DIS_OUT_OF_PCI_GART_ACCESS;
+ 	WREG32(RADEON_AIC_CNTL, tmp);
+@@ -699,6 +707,10 @@ void r100_pci_gart_set_page(struct radeon_device *rdev, unsigned i,
+ 			    uint64_t entry)
+ {
+ 	u32 *gtt = rdev->gart.ptr;
++	// [DEBUG INSTRUMENTATION] — log first 4 and every 16th GART entry
++	if (i < 4 || (i < 64 && (i % 16 == 0)))
++		printk(KERN_INFO "[SN2-DBG] gart_set_page[%u]: entry=0x%016llx -> le32=0x%08x\n",
++		       i, (unsigned long long)entry, (u32)lower_32_bits(entry));
+ 	gtt[i] = cpu_to_le32(lower_32_bits(entry));
+ }
+ 
+@@ -1176,6 +1188,9 @@ int r100_cp_init(struct radeon_device *rdev, unsigned ring_size)
+ 
+ 	/* Set ring address */
+ 	DRM_INFO("radeon: ring at 0x%016lX\n", (unsigned long)ring->gpu_addr);
++	// [DEBUG INSTRUMENTATION] — log what actually goes into CP_RB_BASE
++	printk(KERN_INFO "[SN2-DBG] r100_cp_init: ring->gpu_addr=0x%016llx CP_RB_BASE(truncated)=0x%08x\n",
++	       (unsigned long long)ring->gpu_addr, (u32)ring->gpu_addr);
+ 	WREG32(RADEON_CP_RB_BASE, ring->gpu_addr);
+ 	/* Force read & write ptr to 0 */
+ 	WREG32(RADEON_CP_RB_CNTL, tmp | RADEON_RB_RPTR_WR_ENA | RADEON_RB_NO_UPDATE);
+@@ -1184,6 +1199,12 @@ int r100_cp_init(struct radeon_device *rdev, unsigned ring_size)
+ 	WREG32(RADEON_CP_RB_WPTR, ring->wptr);
+ 
+ 	/* set the wb address whether it's enabled or not */
++	// [DEBUG INSTRUMENTATION] — log writeback addresses
++	printk(KERN_INFO "[SN2-DBG] r100_cp_init: wb.gpu_addr=0x%016llx wb.enabled=%d\n",
++	       (unsigned long long)rdev->wb.gpu_addr, rdev->wb.enabled);
++	printk(KERN_INFO "[SN2-DBG] r100_cp_init: RPTR_ADDR=0x%08x SCRATCH_ADDR=0x%08x\n",
++	       (u32)S_00070C_RB_RPTR_ADDR((rdev->wb.gpu_addr + RADEON_WB_CP_RPTR_OFFSET) >> 2),
++	       (u32)(rdev->wb.gpu_addr + RADEON_WB_SCRATCH_OFFSET));
+ 	WREG32(R_00070C_CP_RB_RPTR_ADDR,
+ 		S_00070C_RB_RPTR_ADDR((rdev->wb.gpu_addr + RADEON_WB_CP_RPTR_OFFSET) >> 2));
+ 	WREG32(R_000774_SCRATCH_ADDR, rdev->wb.gpu_addr + RADEON_WB_SCRATCH_OFFSET);
+@@ -3655,6 +3676,28 @@ int r100_ring_test(struct radeon_device *rdev, struct radeon_ring *ring)
+ 	unsigned i;
+ 	int r;
+ 
++	// [DEBUG INSTRUMENTATION] — dump GART entries around ring buffer
++	{
++		u32 *gtt = rdev->gart.ptr;
++		unsigned ring_gpu_pg = (unsigned)((ring->gpu_addr - rdev->mc.gtt_start) / RADEON_GPU_PAGE_SIZE);
++		printk(KERN_INFO "[SN2-DBG] ring_test: ring->gpu_addr=0x%016llx gtt_start=0x%016llx\n",
++		       (unsigned long long)ring->gpu_addr,
++		       (unsigned long long)rdev->mc.gtt_start);
++		printk(KERN_INFO "[SN2-DBG] ring_test: ring gart_index=%u\n", ring_gpu_pg);
++		if (gtt && ring_gpu_pg < rdev->gart.num_gpu_pages) {
++			for (i = 0; i < 4 && (ring_gpu_pg + i) < rdev->gart.num_gpu_pages; i++)
++				printk(KERN_INFO "[SN2-DBG] ring_test: GART[%u]=0x%08x\n",
++				       ring_gpu_pg + i, le32_to_cpu(gtt[ring_gpu_pg + i]));
++		}
++		// Also read back AIC registers to verify what GPU sees
++		printk(KERN_INFO "[SN2-DBG] ring_test: AIC_CNTL=0x%08x AIC_LO=0x%08x AIC_HI=0x%08x AIC_PT_BASE=0x%08x\n",
++		       RREG32(RADEON_AIC_CNTL), RREG32(RADEON_AIC_LO_ADDR),
++		       RREG32(RADEON_AIC_HI_ADDR), RREG32(RADEON_AIC_PT_BASE));
++		printk(KERN_INFO "[SN2-DBG] ring_test: MC_FB_LOC=0x%08x MC_AGP_LOC=0x%08x BUS_CNTL=0x%08x\n",
++		       RREG32(R_000148_MC_FB_LOCATION), RREG32(R_00014C_MC_AGP_LOCATION),
++		       RREG32(R_000030_BUS_CNTL));
++	}
++
+ 	r = radeon_scratch_get(rdev, &scratch);
+ 	if (r) {
+ 		DRM_ERROR("radeon: cp failed to get scratch reg (%d).\n", r);
+@@ -3846,6 +3889,19 @@ static void r100_debugfs(struct radeon_device *rdev)
+ static void r100_mc_program(struct radeon_device *rdev)
+ {
+ 	struct r100_mc_save save;
++	u32 fb_loc, agp_loc; // [DEBUG INSTRUMENTATION]
++
++	// [DEBUG INSTRUMENTATION] — log full 64-bit values before truncation
++	printk(KERN_INFO "[SN2-DBG] r100_mc_program: aper_base=0x%016llx\n",
++	       (unsigned long long)rdev->mc.aper_base);
++	printk(KERN_INFO "[SN2-DBG] r100_mc_program: vram_start=0x%016llx vram_end=0x%016llx\n",
++	       (unsigned long long)rdev->mc.vram_start,
++	       (unsigned long long)rdev->mc.vram_end);
++	printk(KERN_INFO "[SN2-DBG] r100_mc_program: gtt_start=0x%016llx gtt_end=0x%016llx\n",
++	       (unsigned long long)rdev->mc.gtt_start,
++	       (unsigned long long)rdev->mc.gtt_end);
++	printk(KERN_INFO "[SN2-DBG] r100_mc_program: mc_mask=0x%016llx\n",
++	       (unsigned long long)rdev->mc.mc_mask);
+ 
+ 	/* Stops all mc clients */
+ 	r100_mc_stop(rdev, &save);
+@@ -3858,7 +3914,9 @@ static void r100_mc_program(struct radeon_device *rdev)
+ 			WREG32(R_00015C_AGP_BASE_2,
+ 				upper_32_bits(rdev->mc.agp_base) & 0xff);
+ 	} else {
+-		WREG32(R_00014C_MC_AGP_LOCATION, 0x0FFFFFFF);
++		agp_loc = 0x0FFFFFFF; // [DEBUG INSTRUMENTATION]
++		printk(KERN_INFO "[SN2-DBG] r100_mc_program: MC_AGP_LOCATION=0x%08x (PCI mode, disabled)\n", agp_loc); // [DEBUG INSTRUMENTATION]
++		WREG32(R_00014C_MC_AGP_LOCATION, agp_loc);
+ 		WREG32(R_000170_AGP_BASE, 0);
+ 		if (rdev->family > CHIP_RV200)
+ 			WREG32(R_00015C_AGP_BASE_2, 0);
+@@ -3867,9 +3925,12 @@ static void r100_mc_program(struct radeon_device *rdev)
+ 	if (r100_mc_wait_for_idle(rdev))
+ 		dev_warn(rdev->dev, "Wait for MC idle timeout.\n");
+ 	/* Program MC, should be a 32bits limited address space */
+-	WREG32(R_000148_MC_FB_LOCATION,
+-		S_000148_MC_FB_START(rdev->mc.vram_start >> 16) |
+-		S_000148_MC_FB_TOP(rdev->mc.vram_end >> 16));
++	fb_loc = S_000148_MC_FB_START(rdev->mc.vram_start >> 16) |
++		 S_000148_MC_FB_TOP(rdev->mc.vram_end >> 16); // [DEBUG INSTRUMENTATION]
++	printk(KERN_INFO "[SN2-DBG] r100_mc_program: MC_FB_LOCATION=0x%08x (start>>16=0x%llx top>>16=0x%llx)\n",
++	       fb_loc, (unsigned long long)(rdev->mc.vram_start >> 16),
++	       (unsigned long long)(rdev->mc.vram_end >> 16)); // [DEBUG INSTRUMENTATION]
++	WREG32(R_000148_MC_FB_LOCATION, fb_loc);
+ 	r100_mc_resume(rdev, &save);
+ }
+ 
+diff --git a/drivers/gpu/drm/radeon/radeon_device.c b/drivers/gpu/drm/radeon/radeon_device.c
+index 266e3cb..1b758a9 100644
+--- a/drivers/gpu/drm/radeon/radeon_device.c
++++ b/drivers/gpu/drm/radeon/radeon_device.c
+@@ -567,6 +567,15 @@ void radeon_vram_location(struct radeon_device *rdev, struct radeon_mc *mc, u64
+ {
+ 	uint64_t limit = (uint64_t)radeon_vram_limit << 20;
+ 
++	// [DEBUG INSTRUMENTATION] — detect address space overflow
++	printk(KERN_INFO "[SN2-DBG] radeon_vram_location: base=0x%016llx mc_mask=0x%016llx\n",
++	       (unsigned long long)base, (unsigned long long)rdev->mc.mc_mask);
++	if (base > rdev->mc.mc_mask) {
++		printk(KERN_WARNING "[SN2-DBG] WARNING: base (0x%llx) exceeds mc_mask (0x%llx)! "
++		       "GPU has 32-bit internal address space but aper_base is 64-bit SN2 PIO addr.\n",
++		       (unsigned long long)base, (unsigned long long)rdev->mc.mc_mask);
++	}
++
+ 	mc->vram_start = base;
+ 	if (mc->mc_vram_size > (rdev->mc.mc_mask - base + 1)) {
+ 		dev_warn(rdev->dev, "limiting VRAM to PCI aperture size\n");
+@@ -786,6 +795,10 @@ int radeon_dummy_page_init(struct radeon_device *rdev)
+ 		return -ENOMEM;
+ 	rdev->dummy_page.addr = pci_map_page(rdev->pdev, rdev->dummy_page.page,
+ 					0, PAGE_SIZE, PCI_DMA_BIDIRECTIONAL);
++	// [DEBUG INSTRUMENTATION] — log dummy page DMA address
++	printk(KERN_INFO "[SN2-DBG] dummy_page: phys=0x%016llx dma_addr=0x%016llx PAGE_SIZE=%lu\n",
++	       (unsigned long long)page_to_phys(rdev->dummy_page.page),
++	       (unsigned long long)rdev->dummy_page.addr, PAGE_SIZE);
+ 	if (pci_dma_mapping_error(rdev->pdev, rdev->dummy_page.addr)) {
+ 		dev_err(&rdev->pdev->dev, "Failed to DMA MAP the dummy page\n");
+ 		__free_page(rdev->dummy_page.page);
+diff --git a/drivers/gpu/drm/radeon/radeon_gart.c b/drivers/gpu/drm/radeon/radeon_gart.c
+index 3808a75..5bea822 100644
+--- a/drivers/gpu/drm/radeon/radeon_gart.c
++++ b/drivers/gpu/drm/radeon/radeon_gart.c
+@@ -77,6 +77,12 @@ int radeon_gart_table_ram_alloc(struct radeon_device *rdev)
+ 	if (ptr == NULL) {
+ 		return -ENOMEM;
+ 	}
++	// [DEBUG INSTRUMENTATION] — log GART table allocation
++	printk(KERN_INFO "[SN2-DBG] gart_table_ram_alloc: ptr=%px table_addr(dma)=0x%016llx size=%u\n",
++	       ptr, (unsigned long long)rdev->gart.table_addr, rdev->gart.table_size);
++	printk(KERN_INFO "[SN2-DBG] gart_table_ram_alloc: dma_mask=0x%016llx coherent_mask=0x%016llx\n",
++	       (unsigned long long)*rdev->pdev->dev.dma_mask,
++	       (unsigned long long)rdev->pdev->dev.coherent_dma_mask);
+ #ifdef CONFIG_X86
+ 	if (rdev->family == CHIP_RS400 || rdev->family == CHIP_RS480 ||
+ 	    rdev->family == CHIP_RS690 || rdev->family == CHIP_RS740) {
+@@ -292,6 +298,7 @@ int radeon_gart_bind(struct radeon_device *rdev, unsigned offset,
+ 	unsigned p;
+ 	uint64_t page_base, page_entry;
+ 	int i, j;
++	static int bind_call_count = 0; // [DEBUG INSTRUMENTATION]
+ 
+ 	if (!rdev->gart.ready) {
+ 		WARN(1, "trying to bind memory to uninitialized GART !\n");
+@@ -300,6 +307,17 @@ int radeon_gart_bind(struct radeon_device *rdev, unsigned offset,
+ 	t = offset / RADEON_GPU_PAGE_SIZE;
+ 	p = t / (PAGE_SIZE / RADEON_GPU_PAGE_SIZE);
+ 
++	// [DEBUG INSTRUMENTATION] — log first 3 bind calls
++	if (bind_call_count < 3) {
++		printk(KERN_INFO "[SN2-DBG] radeon_gart_bind[%d]: offset=0x%x pages=%d t=%u p=%u\n",
++		       bind_call_count, offset, pages, t, p);
++		for (i = 0; i < min(pages, 4); i++) {
++			printk(KERN_INFO "[SN2-DBG]   dma_addr[%d]=0x%016llx page=%px\n",
++			       i, (unsigned long long)dma_addr[i], pagelist[i]);
++		}
++		bind_call_count++;
++	}
++
+ 	for (i = 0; i < pages; i++, p++) {
+ 		rdev->gart.pages[p] = pagelist[i];
+ 		page_base = dma_addr[i];
+-- 
+2.43.0
+

@@ -1,0 +1,1 @@
+savedcmd_sn2_fsb_test.ko := ia64-linux-ld -r -z noexecstack --no-warn-rwx-segments --build-id=sha1  -T /home/nathan/altix_cross/src/mainline/linux-sn2/scripts/module.lds -o sn2_fsb_test.ko sn2_fsb_test.o sn2_fsb_test.mod.o .module-common.o

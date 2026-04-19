@@ -1,0 +1,305 @@
+From a05752b39c934a3e6802a02798ffd194d95f8eca Mon Sep 17 00:00:00 2001
+From: Debug <debug@sn2>
+Date: Fri, 10 Apr 2026 17:25:14 +0000
+Subject: [PATCH 1/2] amdgpu: add SN2 debug instrumentation for init and ring
+ tests
+
+Add printk instrumentation to trace the exact hang point during
+amdgpu initialization on SGI Altix SN2 with PLX PEX8111 bridge.
+
+Instruments:
+- IRQ allocation: MSI vs INTx, allocated IRQ number
+- IP block late_init progression
+- Delayed init work handler entry/exit
+- IB ring test per-ring progress
+- GFX v6 and SI DMA ring test: ib_get, ib_schedule, fence_wait
+- Probe function post-init steps after drm_dev_register
+
+All messages prefixed with SN2_DEBUG for easy grep.
+---
+ drivers/gpu/drm/amd/amdgpu/amdgpu_device.c | 11 +++++++++++
+ drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c    | 11 +++++++++++
+ drivers/gpu/drm/amd/amdgpu/amdgpu_ib.c     |  9 +++++++--
+ drivers/gpu/drm/amd/amdgpu/amdgpu_irq.c    | 12 +++++++++++-
+ drivers/gpu/drm/amd/amdgpu/gfx_v6_0.c      | 20 ++++++++++++++++++--
+ drivers/gpu/drm/amd/amdgpu/si_dma.c        | 16 +++++++++++++++-
+ 6 files changed, 73 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
+index d9789e0..bbba067 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
+@@ -3368,6 +3368,8 @@ static int amdgpu_device_ip_late_init(struct amdgpu_device *adev)
+ 		if (!adev->ip_blocks[i].status.hw)
+ 			continue;
+ 		if (adev->ip_blocks[i].version->funcs->late_init) {
++			dev_info(adev->dev, "SN2_DEBUG: late_init block %d <%s> starting\n",
++				 i, adev->ip_blocks[i].version->funcs->name);
+ 			r = adev->ip_blocks[i].version->funcs->late_init(&adev->ip_blocks[i]);
+ 			if (r) {
+ 				dev_err(adev->dev,
+@@ -3376,6 +3378,8 @@ static int amdgpu_device_ip_late_init(struct amdgpu_device *adev)
+ 					r);
+ 				return r;
+ 			}
++			dev_info(adev->dev, "SN2_DEBUG: late_init block %d <%s> done\n",
++				 i, adev->ip_blocks[i].version->funcs->name);
+ 		}
+ 		adev->ip_blocks[i].status.late_initialized = true;
+ 	}
+@@ -3618,9 +3622,13 @@ static void amdgpu_device_delayed_init_work_handler(struct work_struct *work)
+ 		container_of(work, struct amdgpu_device, delayed_init_work.work);
+ 	int r;
+ 
++	dev_info(adev->dev, "SN2_DEBUG: delayed_init_work ENTERED - about to run ib_ring_tests\n");
++
+ 	r = amdgpu_ib_ring_tests(adev);
+ 	if (r)
+ 		dev_err(adev->dev, "ib ring test failed (%d).\n", r);
++
++	dev_info(adev->dev, "SN2_DEBUG: delayed_init_work EXITING r=%d\n", r);
+ }
+ 
+ static void amdgpu_device_delay_enable_gfx_off(struct work_struct *work)
+@@ -4757,12 +4765,15 @@ fence_driver_init:
+ 	 * explicit gating rather than handling it automatically.
+ 	 */
+ 	if (adev->init_lvl->level != AMDGPU_INIT_LEVEL_MINIMAL_XGMI) {
++		dev_info(adev->dev, "SN2_DEBUG: calling ip_late_init\n");
+ 		r = amdgpu_device_ip_late_init(adev);
+ 		if (r) {
+ 			dev_err(adev->dev, "amdgpu_device_ip_late_init failed\n");
+ 			amdgpu_vf_error_put(adev, AMDGIM_ERROR_VF_AMDGPU_LATE_INIT_FAIL, 0, r);
+ 			goto release_ras_con;
+ 		}
++		dev_info(adev->dev, "SN2_DEBUG: ip_late_init done, scheduling delayed_init_work in %dms\n",
++			 AMDGPU_RESUME_MS);
+ 		/* must succeed. */
+ 		amdgpu_ras_resume(adev);
+ 		queue_delayed_work(system_wq, &adev->delayed_init_work,
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
+index 95d26f0..db59498 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
+@@ -2469,10 +2469,14 @@ retry_init:
+ 	if (ret)
+ 		goto err_pci;
+ 
++	dev_info(adev->dev, "SN2_DEBUG: probe: xcp_dev_register done\n");
++
+ 	ret = amdgpu_amdkfd_drm_client_create(adev);
+ 	if (ret)
+ 		goto err_pci;
+ 
++	dev_info(adev->dev, "SN2_DEBUG: probe: amdkfd_drm_client_create done\n");
++
+ 	/*
+ 	 * 1. don't init fbdev on hw without DCE
+ 	 * 2. don't init fbdev if there are no connectors
+@@ -2487,9 +2491,14 @@ retry_init:
+ 		else
+ 			format = NULL;
+ 
++		dev_info(adev->dev, "SN2_DEBUG: probe: calling drm_client_setup (fbdev)\n");
+ 		drm_client_setup(adev_to_drm(adev), format);
++		dev_info(adev->dev, "SN2_DEBUG: probe: drm_client_setup done\n");
++	} else {
++		dev_info(adev->dev, "SN2_DEBUG: probe: skipping fbdev init\n");
+ 	}
+ 
++	dev_info(adev->dev, "SN2_DEBUG: probe: calling debugfs_init\n");
+ 	ret = amdgpu_debugfs_init(adev);
+ 	if (ret)
+ 		DRM_ERROR("Creating debugfs files failed (%d).\n", ret);
+@@ -2537,6 +2546,8 @@ retry_init:
+ 			amdgpu_get_secondary_funcs(adev);
+ 	}
+ 
++	dev_info(adev->dev, "SN2_DEBUG: probe function returning SUCCESS\n");
++
+ 	return 0;
+ 
+ err_pci:
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_ib.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_ib.c
+index 3a7bab8..35078b7 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_ib.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_ib.c
+@@ -457,14 +457,19 @@ int amdgpu_ib_ring_tests(struct amdgpu_device *adev)
+ 		else
+ 			tmo = tmo_gfx;
+ 
++		dev_info(adev->dev, "SN2_DEBUG: ib_ring_tests: testing ring '%s' type=%d tmo=%ld\n",
++			 ring->name, ring->funcs->type, tmo);
++
+ 		r = amdgpu_ring_test_ib(ring, tmo);
+ 		if (!r) {
+-			DRM_DEV_DEBUG(adev->dev, "ib test on %s succeeded\n",
+-				      ring->name);
++			dev_info(adev->dev, "SN2_DEBUG: ib test on %s SUCCEEDED\n",
++				 ring->name);
+ 			continue;
+ 		}
+ 
+ 		ring->sched.ready = false;
++		dev_info(adev->dev, "SN2_DEBUG: IB test FAILED on %s r=%d\n",
++			 ring->name, r);
+ 		DRM_DEV_ERROR(adev->dev, "IB test failed on %s (%d).\n",
+ 			  ring->name, r);
+ 
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_irq.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_irq.c
+index 254a4e9..c18fa0f 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_irq.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_irq.c
+@@ -319,6 +319,9 @@ int amdgpu_irq_init(struct amdgpu_device *adev)
+ 	else
+ 		flags = PCI_IRQ_ALL_TYPES;
+ 
++	dev_info(adev->dev, "SN2_DEBUG: irq_init: msi_ok=%d flags=0x%x pdev->irq=%u\n",
++		 amdgpu_msi_ok(adev), flags, adev->pdev->irq);
++
+ 	/* we only need one vector */
+ 	r = pci_alloc_irq_vectors(adev->pdev, 1, 1, flags);
+ 	if (r < 0) {
+@@ -326,6 +329,8 @@ int amdgpu_irq_init(struct amdgpu_device *adev)
+ 		return r;
+ 	}
+ 
++	dev_info(adev->dev, "SN2_DEBUG: pci_alloc_irq_vectors returned %d vectors\n", r);
++
+ 	if (amdgpu_msi_ok(adev)) {
+ 		adev->irq.msi_enabled = true;
+ 		dev_dbg(adev->dev, "using MSI/MSI-X.\n");
+@@ -344,8 +349,13 @@ int amdgpu_irq_init(struct amdgpu_device *adev)
+ 	/* PCI devices require shared interrupts. */
+ 	r = request_irq(irq, amdgpu_irq_handler, IRQF_SHARED, adev_to_drm(adev)->driver->name,
+ 			adev_to_drm(adev));
+-	if (r)
++	if (r) {
++		dev_info(adev->dev, "SN2_DEBUG: request_irq(%u) FAILED r=%d\n", irq, r);
+ 		goto free_vectors;
++	}
++
++	dev_info(adev->dev, "SN2_DEBUG: IRQ installed: irq=%u msi_enabled=%d\n",
++		 irq, adev->irq.msi_enabled);
+ 
+ 	adev->irq.installed = true;
+ 	adev->irq.irq = irq;
+diff --git a/drivers/gpu/drm/amd/amdgpu/gfx_v6_0.c b/drivers/gpu/drm/amd/amdgpu/gfx_v6_0.c
+index 73223d9..7c18e6c 100644
+--- a/drivers/gpu/drm/amd/amdgpu/gfx_v6_0.c
++++ b/drivers/gpu/drm/amd/amdgpu/gfx_v6_0.c
+@@ -1899,22 +1899,36 @@ static int gfx_v6_0_ring_test_ib(struct amdgpu_ring *ring, long timeout)
+ 	uint32_t tmp = 0;
+ 	long r;
+ 
++	dev_info(adev->dev, "SN2_DEBUG: gfx_v6_ring_test_ib ENTER ring=%s timeout=%ld\n",
++		 ring->name, timeout);
++
+ 	WREG32(mmSCRATCH_REG0, 0xCAFEDEAD);
+ 	memset(&ib, 0, sizeof(ib));
+ 	r = amdgpu_ib_get(adev, NULL, 256, AMDGPU_IB_POOL_DIRECT, &ib);
+-	if (r)
++	if (r) {
++		dev_info(adev->dev, "SN2_DEBUG: gfx_v6 ib_get FAILED r=%ld\n", r);
+ 		return r;
++	}
++
++	dev_info(adev->dev, "SN2_DEBUG: gfx_v6 ib_get ok gpu_addr=0x%llx ptr=%px\n",
++		 ib.gpu_addr, ib.ptr);
+ 
+ 	ib.ptr[0] = PACKET3(PACKET3_SET_CONFIG_REG, 1);
+ 	ib.ptr[1] = mmSCRATCH_REG0 - PACKET3_SET_CONFIG_REG_START;
+ 	ib.ptr[2] = 0xDEADBEEF;
+ 	ib.length_dw = 3;
+ 
++	dev_info(adev->dev, "SN2_DEBUG: gfx_v6 calling ib_schedule\n");
+ 	r = amdgpu_ib_schedule(ring, 1, &ib, NULL, &f);
+-	if (r)
++	if (r) {
++		dev_info(adev->dev, "SN2_DEBUG: gfx_v6 ib_schedule FAILED r=%ld\n", r);
+ 		goto error;
++	}
+ 
++	dev_info(adev->dev, "SN2_DEBUG: gfx_v6 ib_schedule ok, calling dma_fence_wait_timeout(%ld)\n",
++		 timeout);
+ 	r = dma_fence_wait_timeout(f, false, timeout);
++	dev_info(adev->dev, "SN2_DEBUG: gfx_v6 dma_fence_wait returned %ld\n", r);
+ 	if (r == 0) {
+ 		r = -ETIMEDOUT;
+ 		goto error;
+@@ -1922,6 +1936,7 @@ static int gfx_v6_0_ring_test_ib(struct amdgpu_ring *ring, long timeout)
+ 		goto error;
+ 	}
+ 	tmp = RREG32(mmSCRATCH_REG0);
++	dev_info(adev->dev, "SN2_DEBUG: gfx_v6 SCRATCH_REG0=0x%x (expect 0xDEADBEEF)\n", tmp);
+ 	if (tmp == 0xDEADBEEF)
+ 		r = 0;
+ 	else
+@@ -1930,6 +1945,7 @@ static int gfx_v6_0_ring_test_ib(struct amdgpu_ring *ring, long timeout)
+ error:
+ 	amdgpu_ib_free(&ib, NULL);
+ 	dma_fence_put(f);
++	dev_info(adev->dev, "SN2_DEBUG: gfx_v6_ring_test_ib EXIT r=%ld\n", r);
+ 	return r;
+ }
+ 
+diff --git a/drivers/gpu/drm/amd/amdgpu/si_dma.c b/drivers/gpu/drm/amd/amdgpu/si_dma.c
+index 74fcaa3..f3ee8e1 100644
+--- a/drivers/gpu/drm/amd/amdgpu/si_dma.c
++++ b/drivers/gpu/drm/amd/amdgpu/si_dma.c
+@@ -266,6 +266,9 @@ static int si_dma_ring_test_ib(struct amdgpu_ring *ring, long timeout)
+ 	u64 gpu_addr;
+ 	long r;
+ 
++	dev_info(adev->dev, "SN2_DEBUG: si_dma_ring_test_ib ENTER ring=%s timeout=%ld\n",
++		 ring->name, timeout);
++
+ 	r = amdgpu_device_wb_get(adev, &index);
+ 	if (r)
+ 		return r;
+@@ -279,16 +282,25 @@ static int si_dma_ring_test_ib(struct amdgpu_ring *ring, long timeout)
+ 	if (r)
+ 		goto err0;
+ 
++	dev_info(adev->dev, "SN2_DEBUG: si_dma ib.gpu_addr=0x%llx wb_gpu_addr=0x%llx\n",
++		 ib.gpu_addr, gpu_addr);
++
+ 	ib.ptr[0] = DMA_PACKET(DMA_PACKET_WRITE, 0, 0, 0, 1);
+ 	ib.ptr[1] = lower_32_bits(gpu_addr);
+ 	ib.ptr[2] = upper_32_bits(gpu_addr) & 0xff;
+ 	ib.ptr[3] = 0xDEADBEEF;
+ 	ib.length_dw = 4;
++
++	dev_info(adev->dev, "SN2_DEBUG: si_dma calling ib_schedule\n");
+ 	r = amdgpu_ib_schedule(ring, 1, &ib, NULL, &f);
+-	if (r)
++	if (r) {
++		dev_info(adev->dev, "SN2_DEBUG: si_dma ib_schedule FAILED r=%ld\n", r);
+ 		goto err1;
++	}
+ 
++	dev_info(adev->dev, "SN2_DEBUG: si_dma calling dma_fence_wait_timeout(%ld)\n", timeout);
+ 	r = dma_fence_wait_timeout(f, false, timeout);
++	dev_info(adev->dev, "SN2_DEBUG: si_dma dma_fence_wait returned %ld\n", r);
+ 	if (r == 0) {
+ 		r = -ETIMEDOUT;
+ 		goto err1;
+@@ -296,6 +308,7 @@ static int si_dma_ring_test_ib(struct amdgpu_ring *ring, long timeout)
+ 		goto err1;
+ 	}
+ 	tmp = le32_to_cpu(adev->wb.wb[index]);
++	dev_info(adev->dev, "SN2_DEBUG: si_dma wb[%u]=0x%x (expect 0xDEADBEEF)\n", index, tmp);
+ 	if (tmp == 0xDEADBEEF)
+ 		r = 0;
+ 	else
+@@ -306,6 +319,7 @@ err1:
+ 	dma_fence_put(f);
+ err0:
+ 	amdgpu_device_wb_free(adev, index);
++	dev_info(adev->dev, "SN2_DEBUG: si_dma_ring_test_ib EXIT r=%ld\n", r);
+ 	return r;
+ }
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,660 @@
+diff --git a/arch/ia64/sn/pci/pcibr/pcibr_ate.c b/arch/ia64/sn/pci/pcibr/pcibr_ate.c
+index b67bb4c..87ae2a4 100644
+--- a/arch/ia64/sn/pci/pcibr/pcibr_ate.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_ate.c
+@@ -175,3 +175,86 @@ void pcibr_ate_free(struct pcibus_info *pcibus_info, int index)
+ 	free_ate_resource(&pcibus_info->pbi_int_ate_resource, index);
+ 	spin_unlock_irqrestore(&pcibus_info->pbi_lock, flags);
+ }
++
++/**
++ * pcibr_ate_force - Write an ATE entry at a specific index
++ *
++ * @pcibus_info: PIC bus info structure
++ * @index: exact ATE index to write (must match GPU GART page index)
++ * @phys_addr: physical address of the page to map
++ *
++ * Used by GPU drivers on SN2 where the GPU's rendering/display engines
++ * bypass the GPU's own GART table and issue PCIe transactions using the
++ * raw GPU MC address (PCI32_MAPPED_BASE + index * IOPGSIZE).  The PIC
++ * must have an ATE at that exact index to translate the transaction to
++ * the correct physical page.
++ *
++ * Unlike pcibr_ate_alloc(), this function writes at a caller-specified
++ * index rather than the next free index, ensuring ATE index == GART page
++ * index so both GART-using and GART-bypassing GPU engines see the same
++ * translation.
++ *
++ * Returns 0 on success, -EINVAL if index is out of range.
++ */
++int pcibr_ate_force(struct pcibus_info *pcibus_info, int index,
++		    unsigned long phys_addr)
++{
++	u64 xio_addr;
++	u64 ate;
++	unsigned long flags;
++
++	if (index < 0 || index >= pcibus_info->pbi_int_ate_size)
++		return -EINVAL;
++
++	/* Convert physical address to XIO (NUMAlink fabric) address */
++	xio_addr = IS_PIC_SOFT(pcibus_info) ? PHYS_TO_DMA(phys_addr) :
++					      PHYS_TO_TIODMA(phys_addr);
++
++	/*
++	 * Build ATE value: XIO base address (page-aligned) | flags.
++	 * Use PCI32_ATE_PREF (prefetch) not PCI32_ATE_BAR (barrier) —
++	 * BAR generates WrReqWithResp xtalk packets which crash the PIC
++	 * for devices behind secondary buses (e.g. GPU behind PLX bridge).
++	 */
++	ate = PCI32_ATE_V | PCI32_ATE_PREF | (xio_addr & ~IOPGOFF(~0ULL));
++
++	/* PIC requires target node ID in bits 15:8 of the ATE */
++	if (IS_PIC_SOFT(pcibus_info))
++		ate |= (pcibus_info->pbi_hub_xid << PIC_ATE_TARGETID_SHFT);
++
++	/* Mark in the software allocation bitmap to prevent double-use */
++	spin_lock_irqsave(&pcibus_info->pbi_lock, flags);
++	pcibus_info->pbi_int_ate_resource.ate[index] = 1;
++	spin_unlock_irqrestore(&pcibus_info->pbi_lock, flags);
++
++	/* Write the ATE to hardware and flush */
++	ate_write(pcibus_info, index, 1, ate);
++
++	return 0;
++}
++EXPORT_SYMBOL(pcibr_ate_force);
++
++/**
++ * pcibr_ate_force_free - Release an ATE written by pcibr_ate_force
++ *
++ * @pcibus_info: PIC bus info structure
++ * @index: ATE index to release
++ */
++void pcibr_ate_force_free(struct pcibus_info *pcibus_info, int index)
++{
++	unsigned long flags;
++
++	if (index < 0 || index >= pcibus_info->pbi_int_ate_size)
++		return;
++
++	/* Optionally invalidate the ATE in hardware */
++	if (pcibr_invalidate_ate) {
++		u64 ate = *pcibr_ate_addr(pcibus_info, index);
++		ate_write(pcibus_info, index, 1, ate & ~PCI32_ATE_V);
++	}
++
++	spin_lock_irqsave(&pcibus_info->pbi_lock, flags);
++	pcibus_info->pbi_int_ate_resource.ate[index] = 0;
++	spin_unlock_irqrestore(&pcibus_info->pbi_lock, flags);
++}
++EXPORT_SYMBOL(pcibr_ate_force_free);
+\ No newline at end of file
+diff --git a/arch/ia64/sn/pci/pcibr/pcibr_dma.c b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
+index 8a4a67b..07e8bf1 100644
+--- a/arch/ia64/sn/pci/pcibr/pcibr_dma.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
+@@ -82,7 +82,7 @@ pcibr_dmamap_ate32(struct pcidev_info *info,
+ 	if (IS_PCIX(pcibus_info))
+ 		ate_flags &= ~(PCI32_ATE_PREF);
+ 
+-	if (SN_DMA_ADDRTYPE(dma_flags == SN_DMA_ADDR_PHYS))
++	if (SN_DMA_ADDRTYPE(dma_flags) == SN_DMA_ADDR_PHYS)
+ 		xio_addr = IS_PIC_SOFT(pcibus_info) ? PHYS_TO_DMA(paddr) :
+ 	    					      PHYS_TO_TIODMA(paddr);
+ 	else
+@@ -362,6 +362,7 @@ pcibr_dma_map(struct pci_dev * hwdev, unsigned long phys_addr, size_t size, int
+ {
+ 	dma_addr_t dma_handle;
+ 	struct pcidev_info *pcidev_info = SN_PCIDEV_INFO(hwdev);
++	const char *path;
+ 
+ 	if (!pcidev_info)
+ 		return 0;
+@@ -379,6 +380,7 @@ pcibr_dma_map(struct pci_dev * hwdev, unsigned long phys_addr, size_t size, int
+ 
+ 		dma_handle = pcibr_dmatrans_direct64(pcidev_info, phys_addr,
+ 						     PCI64_ATTR_PREF, dma_flags);
++		path = "direct64";
+ 	} else {
+ 		/* Handle 32-63 bit cards via direct mapping */
+ 		dma_handle = pcibr_dmatrans_direct32(pcidev_info, phys_addr,
+@@ -392,9 +394,19 @@ pcibr_dma_map(struct pci_dev * hwdev, unsigned long phys_addr, size_t size, int
+ 			dma_handle = pcibr_dmamap_ate32(pcidev_info, phys_addr,
+ 							size, PCI32_ATE_PREF,
+ 							dma_flags);
++			path = "ate32";
++		} else {
++			path = "direct32";
+ 		}
+ 	}
+ 
++	/* Log DMA mappings for devices on secondary buses (behind bridges) */
++	if (hwdev->bus->number != 0)
++		dev_info_ratelimited(&hwdev->dev,
++			"SN2: pcibr_dma_map %s phys=0x%lx size=%zu dma=0x%llx path=%s mask=0x%llx\n",
++			pci_name(hwdev), phys_addr, size,
++			(unsigned long long)dma_handle, path, hwdev->dma_mask);
++
+ 	return dma_handle;
+ }
+ 
+@@ -417,6 +429,14 @@ pcibr_dma_map_consistent(struct pci_dev * hwdev, unsigned long phys_addr,
+ 						    PCI32_ATE_BAR, dma_flags);
+ 	}
+ 
++	/* Log coherent DMA mappings for devices on secondary buses */
++	if (hwdev->bus->number != 0)
++		dev_info_ratelimited(&hwdev->dev,
++			"SN2: pcibr_dma_map_consistent %s phys=0x%lx size=%zu dma=0x%llx coherent_mask=0x%llx\n",
++			pci_name(hwdev), phys_addr, size,
++			(unsigned long long)dma_handle,
++			hwdev->dev.coherent_dma_mask);
++
+ 	return dma_handle;
+ }
+ 
+diff --git a/arch/ia64/sn/pci/pcibr/pcibr_provider.c b/arch/ia64/sn/pci/pcibr/pcibr_provider.c
+index ae0ff27..3744ff3 100644
+--- a/arch/ia64/sn/pci/pcibr/pcibr_provider.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_provider.c
+@@ -95,17 +95,50 @@ u16 sn_ioboard_to_pci_bus(struct pci_bus *pci_bus)
+ 	return ioboard;
+ }
+ 
+-/* 
+- * PCI Bridge Error interrupt handler.  Gets invoked whenever a PCI 
++/*
++ * PCI Bridge Error interrupt handler.  Gets invoked whenever a PCI
+  * bridge sends an error interrupt.
+  */
++
++/* Global PIO freeze flag - set on bridge error to stop all device PIO */
++atomic_t pcibr_pio_frozen = ATOMIC_INIT(0);
++EXPORT_SYMBOL(pcibr_pio_frozen);
++
++/* Hook for GPU driver to dump PIO trace on bridge errors */
++void (*pcibr_error_dump_hook)(const char *reason);
++EXPORT_SYMBOL(pcibr_error_dump_hook);
++
++static atomic_t pcibr_error_count = ATOMIC_INIT(0);
++
+ static irqreturn_t
+ pcibr_error_intr_handler(int irq, void *arg)
+ {
+ 	struct pcibus_info *soft = arg;
++	int ret;
++	int count;
++
++	ret = sal_pcibr_error_interrupt(soft);
++	count = atomic_inc_return(&pcibr_error_count);
++
++	if (ret < 0) {
++		/* SAL says fatal — freeze all PIO to prevent MCA cascade */
++		atomic_set(&pcibr_pio_frozen, 1);
++		pr_err("pcibr_error_intr_handler(): Fatal Bridge Error #%d (SAL=%d) - PIO FROZEN\n",
++		       count, ret);
++	} else {
++		/* Non-fatal — log and dump but do NOT freeze PIO.
++		 * Freezing on non-fatal errors (e.g. bit 30 PMU Access Fault)
++		 * blocks all GPU register writes, preventing clean teardown
++		 * and causing ATOMBIOS timeout loops. */
++		pr_warn("pcibr_error_intr_handler(): Bridge Error #%d (non-fatal, SAL=%d)\n",
++			count, ret);
++	}
++
++	/* Dump GPU PIO trace if a driver registered a hook */
++	if (pcibr_error_dump_hook)
++		pcibr_error_dump_hook("PIC_BRIDGE_ERROR");
+ 
+-	if (sal_pcibr_error_interrupt(soft) < 0)
+-		panic("pcibr_error_intr_handler(): Fatal Bridge Error");
++	dump_stack();
+ 
+ 	return IRQ_HANDLED;
+ }
+diff --git a/drivers/gpu/drm/radeon/ni_dma.c b/drivers/gpu/drm/radeon/ni_dma.c
+index bd515ad..f80db87 100644
+--- a/drivers/gpu/drm/radeon/ni_dma.c
++++ b/drivers/gpu/drm/radeon/ni_dma.c
+@@ -108,6 +108,10 @@ void cayman_dma_set_wptr(struct radeon_device *rdev,
+ 		reg = DMA_RB_WPTR + DMA1_REGISTER_OFFSET;
+ 
+ 	WREG32(reg, (ring->wptr << 2) & 0x3fffc);
++	/* Flush posted PIO write — required on ia64/SN2 where PIO writes
++	 * are posted and the GPU may not see the updated wptr before the
++	 * next ring submission check. */
++	(void)RREG32(reg);
+ }
+ 
+ /**
+diff --git a/drivers/gpu/drm/radeon/r100.c b/drivers/gpu/drm/radeon/r100.c
+index 3ac1a79..01f59ed 100644
+--- a/drivers/gpu/drm/radeon/r100.c
++++ b/drivers/gpu/drm/radeon/r100.c
+@@ -4119,15 +4119,88 @@ int r100_init(struct radeon_device *rdev)
+ 	return 0;
+ }
+ 
++/*
++ * SN2 PIO Trace Ring Buffer
++ *
++ * Records the last 256 register writes for post-mortem debugging.
++ * Dumped via radeon_pio_trace_dump() which is registered as
++ * pcibr_error_dump_hook so it fires on every PIC bridge error.
++ */
++#ifdef CONFIG_IA64_SGI_SN2
++
++#define RADEON_PIO_TRACE_SIZE 256
++#define RADEON_PIO_TRACE_MASK (RADEON_PIO_TRACE_SIZE - 1)
++
++struct radeon_pio_trace_entry {
++	u32 reg;
++	u32 val;
++	u8  rw;   /* 0=write, 1=read */
++	unsigned long jiffies;
++	void *caller;
++};
++
++static struct radeon_pio_trace_entry radeon_pio_trace_buf[RADEON_PIO_TRACE_SIZE];
++static atomic_t radeon_pio_trace_idx = ATOMIC_INIT(0);
++
++static inline void radeon_pio_trace_record(u32 reg, u32 val, u8 rw)
++{
++	int idx = atomic_inc_return(&radeon_pio_trace_idx) & RADEON_PIO_TRACE_MASK;
++	radeon_pio_trace_buf[idx].reg    = reg;
++	radeon_pio_trace_buf[idx].val    = val;
++	radeon_pio_trace_buf[idx].rw     = rw;
++	radeon_pio_trace_buf[idx].jiffies = jiffies;
++	radeon_pio_trace_buf[idx].caller = __builtin_return_address(0);
++}
++
++void radeon_pio_trace_dump(const char *reason)
++{
++	int cur = atomic_read(&radeon_pio_trace_idx);
++	int i, idx;
++
++	pr_err("=== RADEON PIO TRACE DUMP (%s) last %d ops ===\n",
++	       reason, RADEON_PIO_TRACE_SIZE);
++	for (i = 0; i < RADEON_PIO_TRACE_SIZE; i++) {
++		idx = (cur - RADEON_PIO_TRACE_SIZE + 1 + i) & RADEON_PIO_TRACE_MASK;
++		if (radeon_pio_trace_buf[idx].jiffies == 0)
++			continue;
++		pr_err("  PIO[%03d] %s reg=0x%05x val=0x%08x j=%lu [%pS]\n",
++		       i,
++		       radeon_pio_trace_buf[idx].rw ? " RD" : " WR",
++		       radeon_pio_trace_buf[idx].reg,
++		       radeon_pio_trace_buf[idx].val,
++		       radeon_pio_trace_buf[idx].jiffies,
++		       radeon_pio_trace_buf[idx].caller);
++	}
++	pr_err("=== RADEON PIO TRACE DUMP END ===\n");
++}
++EXPORT_SYMBOL(radeon_pio_trace_dump);
++
++/* Check if PIC bridge error has frozen PIO — if so, abort silently */
++static inline bool radeon_pio_is_frozen(void)
++{
++	extern atomic_t pcibr_pio_frozen;
++	return atomic_read(&pcibr_pio_frozen) != 0;
++}
++
++#endif /* CONFIG_IA64_SGI_SN2 */
++
+ uint32_t r100_mm_rreg_slow(struct radeon_device *rdev, uint32_t reg)
+ {
+ 	unsigned long flags;
+ 	uint32_t ret;
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	if (radeon_pio_is_frozen())
++		return 0;
++#endif
++
+ 	spin_lock_irqsave(&rdev->mmio_idx_lock, flags);
+ 	writel(reg, ((void __iomem *)rdev->rmmio) + RADEON_MM_INDEX);
+ 	ret = readl(((void __iomem *)rdev->rmmio) + RADEON_MM_DATA);
+ 	spin_unlock_irqrestore(&rdev->mmio_idx_lock, flags);
++#ifdef CONFIG_IA64_SGI_SN2
++	radeon_pio_trace_record(reg, ret, 1);
++#endif
+ 	return ret;
+ }
+ 
+@@ -4135,6 +4208,12 @@ void r100_mm_wreg_slow(struct radeon_device *rdev, uint32_t reg, uint32_t v)
+ {
+ 	unsigned long flags;
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	if (radeon_pio_is_frozen())
++		return;
++	radeon_pio_trace_record(reg, v, 0);
++#endif
++
+ 	spin_lock_irqsave(&rdev->mmio_idx_lock, flags);
+ 	writel(reg, ((void __iomem *)rdev->rmmio) + RADEON_MM_INDEX);
+ 	writel(v, ((void __iomem *)rdev->rmmio) + RADEON_MM_DATA);
+diff --git a/drivers/gpu/drm/radeon/r600_dma.c b/drivers/gpu/drm/radeon/r600_dma.c
+index 89ca273..8836378 100644
+--- a/drivers/gpu/drm/radeon/r600_dma.c
++++ b/drivers/gpu/drm/radeon/r600_dma.c
+@@ -86,6 +86,8 @@ void r600_dma_set_wptr(struct radeon_device *rdev,
+ 		       struct radeon_ring *ring)
+ {
+ 	WREG32(DMA_RB_WPTR, (ring->wptr << 2) & 0x3fffc);
++	/* Flush posted PIO write on ia64/SN2 */
++	(void)RREG32(DMA_RB_WPTR);
+ }
+ 
+ /**
+diff --git a/drivers/gpu/drm/radeon/radeon.h b/drivers/gpu/drm/radeon/radeon.h
+index 527b9d1..b00ad9d 100644
+--- a/drivers/gpu/drm/radeon/radeon.h
++++ b/drivers/gpu/drm/radeon/radeon.h
+@@ -128,6 +128,17 @@ extern int radeon_cik_support;
+  * symbol;
+  */
+ #define RADEON_MAX_USEC_TIMEOUT			100000	/* 100 ms */
++
++#ifdef CONFIG_IA64_SGI_SN2
++/*
++ * On SN2, the PIC ASIC has 1024 ATEs (pic.h: p_int_ate_ram[1024]).
++ * Each ATE covers one IOPGSIZE page (4KB with 4KB kernel pages).
++ * GPU GART pages must stay within this range so pcibr_ate_force()
++ * can write ATE[T] for GART page T — ensuring GPU engines that bypass
++ * the GPU's own GART table (display, rendering) still hit valid PIC ATEs.
++ */
++#define SN2_MAX_GTT_PAGES	1024
++#endif
+ #define RADEON_FENCE_JIFFIES_TIMEOUT		(HZ / 2)
+ #define RADEON_USEC_IB_TEST_TIMEOUT		1000000 /* 1s */
+ /* RADEON_IB_POOL_SIZE must be a power of 2 */
+@@ -2463,6 +2474,13 @@ static inline uint32_t r100_mm_rreg(struct radeon_device *rdev, uint32_t reg,
+ static inline void r100_mm_wreg(struct radeon_device *rdev, uint32_t reg, uint32_t v,
+ 				bool always_indirect)
+ {
++#ifdef CONFIG_IA64_SGI_SN2
++	{
++		extern atomic_t pcibr_pio_frozen;
++		if (atomic_read(&pcibr_pio_frozen))
++			return;
++	}
++#endif
+ 	if ((reg < rdev->rmmio_size || reg < RADEON_MIN_MMIO_SIZE) && !always_indirect)
+ 		writel(v, ((void __iomem *)rdev->rmmio) + reg);
+ 	else
+diff --git a/drivers/gpu/drm/radeon/radeon_device.c b/drivers/gpu/drm/radeon/radeon_device.c
+index 5d523d5..5acae1b 100644
+--- a/drivers/gpu/drm/radeon/radeon_device.c
++++ b/drivers/gpu/drm/radeon/radeon_device.c
+@@ -1376,6 +1376,23 @@ int radeon_device_init(struct radeon_device *rdev,
+ 	}
+ 	rdev->pdev->msi_addr_mask = DMA_BIT_MASK(dma_bits);
+ 	rdev->need_swiotlb = drm_need_swiotlb(dma_bits);
++#ifdef CONFIG_IA64_SGI_SN2
++	/*
++	 * SN2's NASID-encoded physical addresses (e.g. 0x302xxxxxxx) push
++	 * max_pfn above the DMA bits threshold, causing a false positive.
++	 * The PIC ASIC already handles address translation via direct32
++	 * (0x8xxxxxxx) or ATE mappings — swiotlb bounce buffers are not
++	 * needed and would cause TTM to use dma_alloc_coherent for every
++	 * page, allocating ATEs with PCI32_ATE_BAR (barrier).  GPU DMA
++	 * writes through ATE+BAR generate WrReqWithResp xtalk packets that
++	 * crash the PIC for devices behind secondary buses.  With this
++	 * override, TTM uses alloc_pages + dma_map_page (streaming) which
++	 * routes to pcibr_dma_map → direct32 → plain WrReq.
++	 */
++	dev_info(rdev->dev, "SN2: drm_need_swiotlb(%d) = %d, overriding false\n",
++		 dma_bits, rdev->need_swiotlb);
++	rdev->need_swiotlb = false;
++#endif
+ 
+ 	/* Registers mapping */
+ 	/* TODO: block userspace mapping of io register */
+diff --git a/drivers/gpu/drm/radeon/radeon_gem.c b/drivers/gpu/drm/radeon/radeon_gem.c
+index 20fc874..1e9d23a 100644
+--- a/drivers/gpu/drm/radeon/radeon_gem.c
++++ b/drivers/gpu/drm/radeon/radeon_gem.c
+@@ -846,8 +846,19 @@ int radeon_mode_dumb_create(struct drm_file *file_priv,
+ 	args->size = ALIGN(args->size, PAGE_SIZE);
+ 
+ 	r = radeon_gem_object_create(rdev, args->size, 0,
+-				     RADEON_GEM_DOMAIN_VRAM, 0,
+-				     false, &gobj);
++#ifdef CONFIG_IA64_SGI_SN2
++				     /* On SN2+PLX, CPU writes to VRAM go through
++				      * SHUB PIO with no write-combining — every
++				      * 4-byte store serializes through the SHUB,
++				      * making a 5MB framebuffer write take minutes.
++				      * Use GTT so the CPU writes to system RAM at
++				      * full speed; the display engine reads via GART
++				      * (proven by ring/IB tests). */
++				     RADEON_GEM_DOMAIN_GTT,
++#else
++				     RADEON_GEM_DOMAIN_VRAM,
++#endif
++				     0, false, &gobj);
+ 	if (r)
+ 		return -ENOMEM;
+ 
+diff --git a/drivers/gpu/drm/radeon/radeon_irq_kms.c b/drivers/gpu/drm/radeon/radeon_irq_kms.c
+index 839d619..999a12f 100644
+--- a/drivers/gpu/drm/radeon/radeon_irq_kms.c
++++ b/drivers/gpu/drm/radeon/radeon_irq_kms.c
+@@ -205,14 +205,31 @@ static int radeon_irq_install(struct radeon_device *rdev, int irq)
+ 
+ 	radeon_driver_irq_preinstall_kms(dev);
+ 
++	dev_info(rdev->dev, "SN2: irq_install: irq=%d msi_enabled=%d\n",
++		 irq, rdev->msi_enabled);
++
+ 	/* PCI devices require shared interrupts. */
+ 	ret = request_irq(irq, radeon_driver_irq_handler_kms,
+ 			  IRQF_SHARED, dev->driver->name, dev);
+-	if (ret)
++	if (ret) {
++		dev_err(rdev->dev, "SN2: request_irq(%d) FAILED ret=%d\n",
++			irq, ret);
+ 		return ret;
++	}
++
++	dev_info(rdev->dev, "SN2: request_irq(%d) succeeded\n", irq);
+ 
+ 	radeon_driver_irq_postinstall_kms(dev);
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	{
++		extern void (*pcibr_error_dump_hook)(const char *reason);
++		extern void radeon_pio_trace_dump(const char *reason);
++		pcibr_error_dump_hook = radeon_pio_trace_dump;
++		dev_info(rdev->dev, "SN2: registered PIO trace dump hook\n");
++	}
++#endif
++
+ 	return 0;
+ }
+ 
+@@ -221,6 +238,13 @@ static void radeon_irq_uninstall(struct radeon_device *rdev)
+ 	struct drm_device *dev = rdev_to_drm(rdev);
+ 	struct pci_dev *pdev = to_pci_dev(dev->dev);
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	{
++		extern void (*pcibr_error_dump_hook)(const char *reason);
++		pcibr_error_dump_hook = NULL;
++	}
++#endif
++
+ 	radeon_driver_irq_uninstall_kms(dev);
+ 	free_irq(pdev->irq, dev);
+ }
+diff --git a/drivers/gpu/drm/radeon/radeon_object.c b/drivers/gpu/drm/radeon/radeon_object.c
+index a0fc080..e930dc9 100644
+--- a/drivers/gpu/drm/radeon/radeon_object.c
++++ b/drivers/gpu/drm/radeon/radeon_object.c
+@@ -98,6 +98,16 @@ void radeon_ttm_placement_from_domain(struct radeon_bo *rbo, u32 domain)
+ 	if (domain & RADEON_GEM_DOMAIN_GTT) {
+ 		rbo->placements[c].fpfn = 0;
+ 		rbo->placements[c].mem_type = TTM_PL_TT;
++#ifdef CONFIG_IA64_SGI_SN2
++		/*
++		 * Constrain GTT allocations to the first SN2_MAX_GTT_PAGES
++		 * (1024) pages.  The PIC only has 1024 ATEs, and
++		 * pcibr_ate_force() in radeon_ttm_backend_bind writes ATE[T]
++		 * for each GART page T.  Allocations beyond page 1023 have no
++		 * ATE and will fault when GPU engines bypass the GART.
++		 */
++		rbo->placements[c].lpfn = SN2_MAX_GTT_PAGES;
++#endif
+ 		rbo->placements[c++].flags = 0;
+ 	}
+ 
+diff --git a/drivers/gpu/drm/radeon/radeon_ttm.c b/drivers/gpu/drm/radeon/radeon_ttm.c
+index e7ab816..cbba64d 100644
+--- a/drivers/gpu/drm/radeon/radeon_ttm.c
++++ b/drivers/gpu/drm/radeon/radeon_ttm.c
+@@ -51,6 +51,34 @@
+ #include "radeon.h"
+ #include "radeon_ttm.h"
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++#include <asm/sn/pcibr_provider.h>
++#include <asm/sn/pcidev.h>
++
++/*
++ * sn2_get_pcibus_info - retrieve the PIC bus info for the GPU's PCI device.
++ *
++ * For devices behind a secondary bus (GPU behind PLX bridge), the host
++ * pcidev_info carries the PIC provider that owns the ATE pool.
++ */
++static struct pcibus_info *sn2_get_pcibus_info(struct radeon_device *rdev)
++{
++	struct pcidev_info *pcidev_info = SN_PCIDEV_INFO(rdev->pdev);
++
++	if (!pcidev_info)
++		return NULL;
++	return (struct pcibus_info *)
++		pcidev_info->pdi_host_pcidev_info->pdi_pcibus_info;
++}
++
++/*
++ * Maximum number of GPU GART pages we can cover with PIC ATEs.
++ * 1024 ATEs × IOPGSIZE (4KB) = 4MB.  All GTT allocations must
++ * stay within this range so that pcibr_ate_force() has a valid slot.
++ */
++#define SN2_MAX_GTT_PAGES	1024
++#endif /* CONFIG_IA64_SGI_SN2 */
++
+ static void radeon_ttm_debugfs_init(struct radeon_device *rdev);
+ 
+ static int radeon_ttm_tt_bind(struct ttm_device *bdev, struct ttm_tt *ttm,
+@@ -442,15 +470,108 @@ static int radeon_ttm_backend_bind(struct ttm_device *bdev,
+ 	}
+ 	if (ttm->caching == ttm_cached)
+ 		flags |= RADEON_GART_PAGE_SNOOP;
++
++#ifdef CONFIG_IA64_SGI_SN2
++	/*
++	 * On SN2, the Evergreen/NI GPU's rendering and display engines
++	 * bypass the GPU's own GART table and issue PCIe transactions
++	 * directly using the GPU MC address: PCI32_MAPPED_BASE + T * IOPGSIZE
++	 * (i.e. 0x40000000 + T * 4096).  The PIC receives this address and
++	 * looks up ATE index T.  With streaming DMA (direct32, 0x8xxxxxxx)
++	 * stored in the GPU GART table, the PIC finds no ATE → crash.
++	 *
++	 * Fix: for each GART page T, write PIC ATE[T] pointing to the
++	 * correct physical page, then store the ATE-range PCI bus address
++	 * (0x40000000 + T * 4096) in the GPU GART entry.  Now both paths
++	 * are consistent:
++	 *   - GART-using engines: translate GART → ATE address → PIC ATE T → RAM
++	 *   - GART-bypassing engines: send ATE address directly → PIC ATE T → RAM
++	 *
++	 * ATE index == GPU GART page index is guaranteed by the formula:
++	 *   ATE index = (pci_addr - PCI32_MAPPED_BASE) >> IOPFNSHIFT = T
++	 * (porting guide Figure 9-6, page 82).
++	 *
++	 * Constraint: only 1024 ATEs available (pic.h: p_int_ate_ram[1024]),
++	 * so GTT allocations must stay within pages 0-1023 (4MB).
++	 */
++	{
++		struct pcibus_info *pcibus_info = sn2_get_pcibus_info(rdev);
++
++		if (pcibus_info) {
++			unsigned int t = bo_mem->start;
++			int i;
++
++			for (i = 0; i < ttm->num_pages; i++, t++) {
++				unsigned long phys =
++					page_to_phys(ttm->pages[i]);
++				int ret;
++
++				if (t >= SN2_MAX_GTT_PAGES) {
++					dev_err_once(rdev->dev,
++						"SN2: GART page %u exceeds ATE pool (max %d) — "
++						"GPU writes to this page will fault\n",
++						t, SN2_MAX_GTT_PAGES);
++					break;
++				}
++
++				ret = pcibr_ate_force(pcibus_info, t, phys);
++				if (ret) {
++					dev_err(rdev->dev,
++						"SN2: pcibr_ate_force(%u) failed: %d\n",
++						t, ret);
++					goto ate_err;
++				}
++
++				/*
++				 * Override the DMA address with the ATE-range
++				 * PCI bus address.  The GPU GART entry will
++				 * store this so GART-using engines also issue
++				 * PCIe transactions to the ATE range, keeping
++				 * both code paths consistent.
++				 */
++				ttm->dma_address[i] =
++					PCI32_MAPPED_BASE + (dma_addr_t)t * IOPGSIZE;
++			}
++
++			dev_info_ratelimited(rdev->dev,
++				"SN2: bound %u GART pages at offset 0x%llx "
++				"via PIC ATEs [%lu-%u]\n",
++				ttm->num_pages, (u64)gtt->offset,
++				bo_mem->start,
++				(unsigned int)(bo_mem->start + ttm->num_pages - 1));
++		}
++	}
++#endif /* CONFIG_IA64_SGI_SN2 */
++
+ 	r = radeon_gart_bind(rdev, gtt->offset, ttm->num_pages,
+-			     ttm->pages, gtt->ttm.dma_address, flags);
++			     ttm->pages, ttm->dma_address, flags);
+ 	if (r) {
+ 		DRM_ERROR("failed to bind %u pages at 0x%08X\n",
+ 			  ttm->num_pages, (unsigned)gtt->offset);
++#ifdef CONFIG_IA64_SGI_SN2
++		goto ate_err;
++#endif
+ 		return r;
+ 	}
+ 	gtt->bound = true;
+ 	return 0;
++
++#ifdef CONFIG_IA64_SGI_SN2
++ate_err:
++	{
++		struct pcibus_info *pcibus_info = sn2_get_pcibus_info(rdev);
++		if (pcibus_info) {
++			unsigned int t = bo_mem->start;
++			int i;
++			for (i = 0; i < ttm->num_pages; i++, t++) {
++				if (t >= SN2_MAX_GTT_PAGES)
++					break;
++				pcibr_ate_force_free(pcibus_info, t);
++			}
++		}
++	}
++	return r ? r : -EIO;
++#endif
+ }
+ 
+ static void radeon_ttm_backend_unbind(struct ttm_device *bdev, struct ttm_tt *ttm)

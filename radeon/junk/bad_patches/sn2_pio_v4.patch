@@ -1,0 +1,124 @@
+--- a/drivers/gpu/drm/radeon/radeon.h
++++ b/drivers/gpu/drm/radeon/radeon.h
+@@ -2460,13 +2460,44 @@
+ 	else
+ 		return r100_mm_rreg_slow(rdev, reg);
+ }
++#ifdef CONFIG_IA64_SGI_SN2
++/* SN2 PIO write trace + barrier */
++extern u32 sn2_pio_trace_reg[];
++extern u32 sn2_pio_trace_val[];
++extern u64 sn2_pio_trace_cnt[];
++extern unsigned int sn2_pio_trace_idx;
++extern u64 sn2_pio_trace_total;
++extern void __sn_mmiowb(void);
++#endif
++
+ static inline void r100_mm_wreg(struct radeon_device *rdev, uint32_t reg, uint32_t v,
+ 				bool always_indirect)
+ {
++#ifdef CONFIG_IA64_SGI_SN2
++	{
++		unsigned int idx = sn2_pio_trace_idx;
++		sn2_pio_trace_reg[idx] = reg;
++		sn2_pio_trace_val[idx] = v;
++		sn2_pio_trace_cnt[idx] = ++sn2_pio_trace_total;
++		sn2_pio_trace_idx = (idx + 1) & 31;
++	}
++#endif
+ 	if ((reg < rdev->rmmio_size || reg < RADEON_MIN_MMIO_SIZE) && !always_indirect)
+ 		writel(v, ((void __iomem *)rdev->rmmio) + reg);
+ 	else
+ 		r100_mm_wreg_slow(rdev, reg, v);
++#ifdef CONFIG_IA64_SGI_SN2
++	/*
++	 * SN2: Drain SHUB PIO write buffers after every GPU register write.
++	 * The SHUB posts PIO writes through xtalk to the PIC ASIC. If writes
++	 * accumulate faster than the PIC can process them (especially through
++	 * the PLX PCI-to-PCIe bridge), the xtalk command words get corrupted,
++	 * causing PIC bridge errors and MCAs. __sn_mmiowb() spins on the
++	 * SHUB PIO_WRITE_STATUS register until all pending writes complete.
++	 * This is the proper SN2 PIO write barrier per SGI docs (007-4520-007).
++	 */
++	__sn_mmiowb();
++#endif
+ }
+ 
+ u32 r100_io_rreg(struct radeon_device *rdev, u32 reg);
+--- a/arch/ia64/sn/pci/pcibr/pcibr_provider.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_provider.c
+@@ -21,6 +21,8 @@
+ #include <asm/sn/sn2/sn_hwperf.h>
+ #include "xtalk/xwidgetdev.h"
+ #include "xtalk/hubdev.h"
++#include <asm/sn/shub_mmr.h>
++#include <asm/sn/pda.h>
+ 
+ int
+ sal_pcibr_slot_enable(struct pcibus_info *soft, int device, void *resp,
+@@ -95,6 +97,50 @@
+ 	return ioboard;
+ }
+ 
++/*
++ * SN2 GPU PIO write trace ring buffer.
++ */
++u32 sn2_pio_trace_reg[32];
++u32 sn2_pio_trace_val[32];
++u64 sn2_pio_trace_cnt[32];
++unsigned int sn2_pio_trace_idx;
++u64 sn2_pio_trace_total;
++EXPORT_SYMBOL(sn2_pio_trace_reg);
++EXPORT_SYMBOL(sn2_pio_trace_val);
++EXPORT_SYMBOL(sn2_pio_trace_cnt);
++EXPORT_SYMBOL(sn2_pio_trace_idx);
++EXPORT_SYMBOL(sn2_pio_trace_total);
++
++static void sn2_pio_trace_dump(void)
++{
++	int i, idx;
++	unsigned long pio_status = 0;
++
++	/* Read SHUB PIO write status */
++	if (pda->pio_write_status_addr)
++		pio_status = *(volatile unsigned long *)pda->pio_write_status_addr;
++	pr_crit("SN2_PIO: SHUB PIO_WRITE_STATUS=0x%lx (pending=%lu deadlock=%lu)\n",
++		pio_status,
++		(pio_status >> 56) & 0x3f,
++		(pio_status >> 1) & 1);
++
++	if (!sn2_pio_trace_total) {
++		pr_crit("SN2_PIO: No GPU register writes recorded\n");
++		return;
++	}
++	pr_crit("SN2_PIO: Last 32 GPU register writes (total=%llu):\n",
++		sn2_pio_trace_total);
++	idx = sn2_pio_trace_idx;
++	for (i = 0; i < 32; i++) {
++		int j = (idx + i) & 31;
++		if (sn2_pio_trace_cnt[j])
++			pr_crit("SN2_PIO:  [%llu] reg=0x%04x val=0x%08x\n",
++				sn2_pio_trace_cnt[j],
++				sn2_pio_trace_reg[j],
++				sn2_pio_trace_val[j]);
++	}
++}
++
+ /* 
+  * PCI Bridge Error interrupt handler.  Gets invoked whenever a PCI 
+  * bridge sends an error interrupt.
+@@ -104,8 +150,11 @@
+ {
+ 	struct pcibus_info *soft = arg;
+ 
+-	if (sal_pcibr_error_interrupt(soft) < 0)
+-		panic("pcibr_error_intr_handler(): Fatal Bridge Error");
++	if (sal_pcibr_error_interrupt(soft) < 0) {
++		pr_crit("pcibr_error_intr_handler(): Bridge Error (non-fatal)\n");
++		sn2_pio_trace_dump();
++		dump_stack();
++	}
+ 
+ 	return IRQ_HANDLED;
+ }
+

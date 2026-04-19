@@ -1,0 +1,1 @@
+savedcmd_Module.symvers :=  /home/nathan/altix_cross/src/mainline/linux-sn2/scripts/mod/modpost -M -m -b  -a      -o Module.symvers -T modules.order -i /home/nathan/altix_cross/src/mainline/linux-sn2/Module.symvers -e 

@@ -1,0 +1,72 @@
+diff --git a/drivers/gpu/drm/radeon/radeon_cs.c b/drivers/gpu/drm/radeon/radeon_cs.c
+index 2db819a..cf1c880 100644
+--- a/drivers/gpu/drm/radeon/radeon_cs.c
++++ b/drivers/gpu/drm/radeon/radeon_cs.c
+@@ -152,6 +152,21 @@ static int radeon_cs_parser_relocs(struct radeon_cs_parser *p)
+ 				return -EINVAL;
+ 			}
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++			/* SN2: Keep user BOs in GTT during command submission.
++			 * Without this, TTM would try to move BOs back to VRAM
++			 * (the preferred domain from Mesa), re-introducing CPU
++			 * PIO writes when Mesa next maps the BO for upload.
++			 * The GPU can read GTT via GART just as well as VRAM.
++			 *
++			 * [Evidence: SH_PIO_WRITE_STATUS=63 under heavy 3D]
++			 * [Evidence: FSB_PROTO_ERR MCA from PIO saturation] */
++			if (domain & RADEON_GEM_DOMAIN_VRAM) {
++				domain = (domain & ~RADEON_GEM_DOMAIN_VRAM)
++					 | RADEON_GEM_DOMAIN_GTT;
++			}
++#endif
++
+ 			p->relocs[i].preferred_domains = domain;
+ 			if (domain == RADEON_GEM_DOMAIN_VRAM)
+ 				domain |= RADEON_GEM_DOMAIN_GTT;
+diff --git a/drivers/gpu/drm/radeon/radeon_object.c b/drivers/gpu/drm/radeon/radeon_object.c
+index a0fc080..fa18e8e 100644
+--- a/drivers/gpu/drm/radeon/radeon_object.c
++++ b/drivers/gpu/drm/radeon/radeon_object.c
+@@ -160,6 +160,39 @@ int radeon_bo_create(struct radeon_device *rdev,
+ 				       RADEON_GEM_DOMAIN_GTT |
+ 				       RADEON_GEM_DOMAIN_CPU);
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: CPU writes to VRAM go through PIO (uncached stores through
++	 * CPU → SHub → NUMAlink → PIC → PLX → GPU). The SHub has only 63
++	 * PIO write buffer slots per CPU. Under heavy 3D rendering, Mesa
++	 * uploads vertex/texture data to mmap'd VRAM BOs, each CPU store
++	 * becoming a PIO write. This saturates the SHub write buffers
++	 * (SH_PIO_WRITE_STATUS count=63) → FSB_PROTO_ERR → fatal MCA.
++	 *
++	 * Fix: Route non-kernel (userspace) BOs to GTT (system memory).
++	 * CPU writes go to local RAM at native speed (~6 GB/s, no PIO).
++	 * GPU reads via GART DMA (~200 MB/s, same PCIe x1 bottleneck).
++	 *
++	 * Kernel BOs (framebuffer, cursor, ring buffers) stay in VRAM —
++	 * they're written by GPU or by small kernel ioremap writes that
++	 * the SHub can sustain.
++	 *
++	 * [Evidence: SH_PIO_WRITE_STATUS=63 from first framebuffer init]
++	 * [Evidence: errdmp FSB_PROTO_ERR + FSB_TBL_MISS after MCA]
++	 * [Evidence: ALL PRBs/WRBs flooded with PIO writes to VRAM]
++	 * [PDF §PCI-X Memory Resource, Page 67: pgprot_noncached required]
++	 */
++	if (!kernel && (domain & RADEON_GEM_DOMAIN_VRAM)) {
++		static int sn2_gtt_logged = 0;
++		domain = (domain & ~RADEON_GEM_DOMAIN_VRAM) | RADEON_GEM_DOMAIN_GTT;
++		if (sn2_gtt_logged < 5) {
++			dev_info(rdev->dev, "[SN2] Redirecting user BO (%lu bytes) "
++				 "from VRAM to GTT to avoid SHub PIO saturation\n",
++				 size);
++			sn2_gtt_logged++;
++		}
++	}
++#endif
++
+ 	bo->flags = flags;
+ 	/* PCI GART is always snooped */
+ 	if (!(rdev->flags & RADEON_IS_PCIE))
+
+	

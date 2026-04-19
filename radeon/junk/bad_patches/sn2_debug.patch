@@ -1,0 +1,235 @@
+--- a/arch/ia64/sn/pci/pcibr/pcibr_dma.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
+@@ -23,6 +23,13 @@
+ 
+ extern int sn_ioif_inited;
+ 
++/* Only trace GPU domain (0002) to reduce noise */
++static inline bool pcibr_is_gpu_domain(struct pci_dev *pdev)
++{
++	return pci_domain_nr(pdev->bus) == 2;
++}
++
++
+ /* =====================================================================
+  *    DMA MANAGEMENT
+  *
+@@ -60,6 +67,8 @@
+ 
+ 	/* PIC in PCI-X mode does not supports 32bit PageMap mode */
+ 	if (IS_PIC_SOFT(pcibus_info) && IS_PCIX(pcibus_info)) {
++		pr_info_ratelimited("SN2_DMA: ate32 REJECTED (PIC+PCI-X) dev=%s\n",
++			dev_name(&info->pdi_linux_pcidev->dev));
+ 		return 0;
+ 	}
+ 
+@@ -121,6 +130,11 @@
+ 		ATE_SWAP_ON(pci_addr);
+ 
+ 
++	if (pcibr_is_gpu_domain(info->pdi_linux_pcidev))
++		pr_info("SN2_DMA: ate32 dev=%s paddr=0x%llx size=%zu idx=%d cnt=%d ate=0x%llx -> pci=0x%llx\n",
++			dev_name(&info->pdi_linux_pcidev->dev), (u64)paddr, req_size,
++			ate_index, ate_count, (u64)ate, (u64)pci_addr);
++
+ 	return pci_addr;
+ }
+ 
+@@ -176,6 +190,9 @@
+ 	u64 endoff;
+ 
+ 	if (IS_PCIX(pcibus_info)) {
++		if (pcibr_is_gpu_domain(info->pdi_linux_pcidev))
++			pr_info_ratelimited("SN2_DMA: direct32 REJECTED (PCI-X) dev=%s\n",
++				dev_name(&info->pdi_linux_pcidev->dev));
+ 		return 0;
+ 	}
+ 
+@@ -362,6 +379,7 @@
+ {
+ 	dma_addr_t dma_handle;
+ 	struct pcidev_info *pcidev_info = SN_PCIDEV_INFO(hwdev);
++	const char *method = "none";
+ 
+ 	if (!pcidev_info)
+ 		return 0;
+@@ -379,10 +397,12 @@
+ 
+ 		dma_handle = pcibr_dmatrans_direct64(pcidev_info, phys_addr,
+ 						     PCI64_ATTR_PREF, dma_flags);
++		method = "direct64";
+ 	} else {
+ 		/* Handle 32-63 bit cards via direct mapping */
+ 		dma_handle = pcibr_dmatrans_direct32(pcidev_info, phys_addr,
+ 						     size, 0, dma_flags);
++		method = "direct32";
+ 		if (!dma_handle) {
+ 			/*
+ 			 * It is a 32 bit card and we cannot do direct mapping,
+@@ -392,9 +412,15 @@
+ 			dma_handle = pcibr_dmamap_ate32(pcidev_info, phys_addr,
+ 							size, PCI32_ATE_PREF,
+ 							dma_flags);
++			method = "ate32";
+ 		}
+ 	}
+ 
++	if (pcibr_is_gpu_domain(hwdev))
++		pr_info("SN2_DMA: map dev=%s phys=0x%lx size=%zu mask=0x%llx method=%s -> dma=0x%llx%s\n",
++			dev_name(&hwdev->dev), phys_addr, size, (u64)hwdev->dma_mask,
++			method, (u64)dma_handle, dma_handle ? "" : " FAILED");
++
+ 	return dma_handle;
+ }
+ 
+@@ -417,6 +443,12 @@
+ 						    PCI32_ATE_BAR, dma_flags);
+ 	}
+ 
++	if (pcibr_is_gpu_domain(hwdev))
++		pr_info("SN2_DMA: map_consistent dev=%s phys=0x%lx size=%zu coh_mask=0x%llx -> dma=0x%llx%s\n",
++			dev_name(&hwdev->dev), phys_addr, size,
++			(u64)hwdev->dev.coherent_dma_mask,
++			(u64)dma_handle, dma_handle ? "" : " FAILED");
++
+ 	return dma_handle;
+ }
+ 
+--- a/arch/ia64/sn/pci/pcibr/pcibr_provider.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_provider.c
+@@ -104,8 +104,10 @@
+ {
+ 	struct pcibus_info *soft = arg;
+ 
+-	if (sal_pcibr_error_interrupt(soft) < 0)
+-		panic("pcibr_error_intr_handler(): Fatal Bridge Error");
++	if (sal_pcibr_error_interrupt(soft) < 0) {
++		pr_crit("pcibr_error_intr_handler(): Bridge Error (non-fatal, continuing)\n");
++		dump_stack();
++	}
+ 
+ 	return IRQ_HANDLED;
+ }
+--- a/arch/ia64/sn/pci/pci_dma.c
++++ b/arch/ia64/sn/pci/pci_dma.c
+@@ -19,6 +19,13 @@
+ #include <asm/sn/pcidev.h>
+ #include <asm/sn/sn_sal.h>
+ 
++/* Only trace GPU domain (0002) to reduce noise */
++static inline bool sn_is_gpu_domain(struct device *dev)
++{
++	if (!dev_is_pci(dev)) return false;
++	return pci_domain_nr(to_pci_dev(dev)->bus) == 2;
++}
++
+ /*
+  * DMA_ATTR_WRITE_BARRIER was a DMA attribute (bit 0) originally defined in
+  * include/linux/dma-mapping.h. It was an SN2-specific attribute that caused
+@@ -150,6 +157,10 @@
+ 		return NULL;
+ 	}
+ 
++	if (sn_is_gpu_domain(dev))
++		pr_info("SN2_DMA: alloc_coherent dev=%s size=%zu phys=0x%lx -> dma=0x%llx\n",
++			dev_name(dev), size, phys_addr, (u64)*dma_handle);
++
+ 	return cpuaddr;
+ }
+ 
+@@ -236,6 +247,11 @@
+ 		printk(KERN_ERR "%s: out of ATEs\n", __func__);
+ 		return DMA_MAPPING_ERROR;
+ 	}
++
++	if (sn_is_gpu_domain(dev))
++		pr_info("SN2_DMA: map_phys dev=%s phys=0x%llx size=%zu -> dma=0x%llx\n",
++			dev_name(dev), (u64)phys, size, (u64)dma_addr);
++
+ 	return dma_addr;
+ }
+ 
+@@ -268,6 +284,10 @@
+ 		return;
+ 	provider = pcidev_info->pdi_provider;
+ 
++	if (sn_is_gpu_domain(dev))
++		pr_info("SN2_DMA: unmap_phys dev=%s dma=0x%llx size=%zu\n",
++			dev_name(dev), (u64)dma_addr, size);
++
+ 	provider->dma_unmap(pdev, dma_addr, dir);
+ }
+ 
+--- a/arch/ia64/sn/pci/pcibr/pcibr_ate.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_ate.c
+@@ -12,7 +12,7 @@
+ #include <asm/sn/pcibus_provider_defs.h>
+ #include <asm/sn/pcidev.h>
+ 
+-int pcibr_invalidate_ate;	/* by default don't invalidate ATE on free */
++int pcibr_invalidate_ate = 1;	/* GPU debug: invalidate ATEs on free */
+ 
+ /*
+  * mark_ate: Mark the ate as either free or inuse.
+@@ -121,6 +121,9 @@
+ 	status = alloc_ate_resource(&pcibus_info->pbi_int_ate_resource, count);
+ 	spin_unlock_irqrestore(&pcibus_info->pbi_lock, flags);
+ 
++	pr_info("SN2_ATE: alloc count=%d -> index=%d (total=%llu)\n",
++		count, status, (unsigned long long)pcibus_info->pbi_int_ate_size);
++
+ 	return status;
+ }
+ 
+@@ -164,10 +167,14 @@
+ 	int count;
+ 	unsigned long flags;
+ 
++	ate = *pcibr_ate_addr(pcibus_info, index);
++	count = pcibus_info->pbi_int_ate_resource.ate[index];
++
++	pr_info("SN2_ATE: free index=%d count=%d ate=0x%llx\n",
++		index, count, (u64)ate);
++
+ 	if (pcibr_invalidate_ate) {
+ 		/* For debugging purposes, clear the valid bit in the ATE */
+-		ate = *pcibr_ate_addr(pcibus_info, index);
+-		count = pcibus_info->pbi_int_ate_resource.ate[index];
+ 		ate_write(pcibus_info, index, count, (ate & ~PCI32_ATE_V));
+ 	}
+ 
+--- a/drivers/gpu/drm/radeon/radeon_device.c
++++ b/drivers/gpu/drm/radeon/radeon_device.c
+@@ -1370,6 +1370,9 @@
+ #endif
+ 
+ 	r = dma_set_mask_and_coherent(&rdev->pdev->dev, DMA_BIT_MASK(dma_bits));
++	pr_info("radeon: DMA bits=%d mask=0x%llx coherent=0x%llx result=%d\n",
++		dma_bits, (u64)rdev->pdev->dma_mask,
++		(u64)rdev->pdev->dev.coherent_dma_mask, r);
+ 	if (r) {
+ 		pr_warn("radeon: No suitable DMA available\n");
+ 		return r;
+--- a/drivers/gpu/drm/radeon/radeon_gart.c
++++ b/drivers/gpu/drm/radeon/radeon_gart.c
+@@ -244,6 +244,8 @@
+ 	unsigned int t, p;
+ 	int i, j;
+ 
++	pr_info("radeon_gart: unbind offset=0x%x pages=%d\n", offset, pages);
++
+ 	if (!rdev->gart.ready) {
+ 		WARN(1, "trying to unbind memory from uninitialized GART !\n");
+ 		return;
+@@ -301,6 +303,11 @@
+ 		rdev->gart.pages[p] = pagelist ? pagelist[i] :
+ 			rdev->dummy_page.page;
+ 		page_base = dma_addr[i];
++		if (i < 3 || i == pages - 1)
++			pr_info("radeon_gart: bind[%d/%d] dma=0x%llx\n",
++				i, pages, (u64)page_base);
++		else if (i == 3)
++			pr_info("radeon_gart: bind ... (%d more)\n", pages - 4);
+ 		for (j = 0; j < (PAGE_SIZE / RADEON_GPU_PAGE_SIZE); j++, t++) {
+ 			page_entry = radeon_gart_get_page_entry(page_base, flags);
+ 			rdev->gart.pages_entry[t] = page_entry;

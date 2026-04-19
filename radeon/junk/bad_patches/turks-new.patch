@@ -1,0 +1,66 @@
+diff --git a/drivers/gpu/drm/radeon/radeon_device.c b/drivers/gpu/drm/radeon/radeon_device.c
+index 5d523d5..89662c8 100644
+--- a/drivers/gpu/drm/radeon/radeon_device.c
++++ b/drivers/gpu/drm/radeon/radeon_device.c
+@@ -512,11 +512,21 @@ int radeon_wb_init(struct radeon_device *rdev)
+ 			}
+ 		}
+ 	}
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: Disable WB to force PIO reads for fence polling, which
++	 * triggers sn_dma_flush() to drain PIC write request buffers.
++	 * With WB enabled, fence reads go to system memory and never
++	 * trigger the DMA flush, causing WRB exhaustion under heavy load.
++	 * [PDF §Device Interrupts and Posted DMAs, Page 5] */
++	rdev->wb.enabled = false;
++	rdev->wb.use_event = false;
++#else
+ 	/* always use writeback/events on NI, APUs */
+ 	if (rdev->family >= CHIP_PALM) {
+ 		rdev->wb.enabled = true;
+ 		rdev->wb.use_event = true;
+ 	}
++#endif
+ 
+ 	dev_info(rdev->dev, "WB %sabled\n", rdev->wb.enabled ? "en" : "dis");
+ 
+@@ -1375,7 +1385,14 @@ int radeon_device_init(struct radeon_device *rdev,
+ 		return r;
+ 	}
+ 	rdev->pdev->msi_addr_mask = DMA_BIT_MASK(dma_bits);
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: Force swiotlb off. The ATE pool is only 16MB (1024 × 16KB).
++	 * With swiotlb enabled, TTM uses it for all allocations and exhausts
++	 * the pool rapidly under heavy GPU load. Direct PCI32 path works. */
++	rdev->need_swiotlb = false;
++#else
+ 	rdev->need_swiotlb = drm_need_swiotlb(dma_bits);
++#endif
+ 
+ 	/* Registers mapping */
+ 	/* TODO: block userspace mapping of io register */
+diff --git a/drivers/gpu/drm/ttm/ttm_bo_util.c b/drivers/gpu/drm/ttm/ttm_bo_util.c
+index f83b7d5..5b4842b 100644
+--- a/drivers/gpu/drm/ttm/ttm_bo_util.c
++++ b/drivers/gpu/drm/ttm/ttm_bo_util.c
+@@ -307,6 +307,18 @@ pgprot_t ttm_io_prot(struct ttm_buffer_object *bo, struct ttm_resource *res,
+ 		caching = res->bus.caching;
+ 	}
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: Device memory (VRAM, doorbell, MMIO) is accessed via PIO.
++	 * Write-combining (_PAGE_MA_WC) causes CPU write buffers to never
++	 * flush through the SN2 PIO path (CPU→SHub→PIC→device).
++	 * Write-back (_PAGE_MA_WB) risks stale cache reads of device memory.
++	 * Force uncacheable (_PAGE_MA_UC) for all device memory mappings.
++	 * System memory (GTT, use_tt=true) is unaffected.
++	 * See SGI Altix Porting Guide (007-4520-007) page 67. */
++	if (!man->use_tt)
++		return pgprot_noncached(tmp);
++#endif
++
+ 	return ttm_prot_from_caching(caching, tmp);
+ }
+ EXPORT_SYMBOL(ttm_io_prot);
+
+ 

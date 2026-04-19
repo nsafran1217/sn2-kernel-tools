@@ -1,0 +1,224 @@
+diff --git a/arch/ia64/sn/pci/pcibr/pcibr_dma.c b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
+index 8a4a67b..8d2c527 100644
+--- a/arch/ia64/sn/pci/pcibr/pcibr_dma.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
+@@ -311,8 +311,20 @@ void sn_dma_flush(unsigned long addr)
+ 	}
+ 
+ 	/* if no matching BAR, return without doing anything. */
+-	if (i == DEV_PER_WIDGET)
++	if (i == DEV_PER_WIDGET) {
++		/*
++		 * Fall back to first registered device on this widget.
++		 * On PIC, forcing an interrupt on ANY device on the widget
++		 * drains ALL posted DMA write buffers for the widget, so
++		 * this is safe. This handles devices behind PCI-PCI bridges
++		 * (PPBs) whose BARs are not in the flush list.
++		 */
++		p = &flush_nasid_list->widget_p[wid_num][0];
++		common = p->common;
++		if (common->sfdl_bar_list[0].start != 0)
++			goto do_flush;
+ 		return;
++	}
+ 
+ 	/*
+ 	 * For TIOCP use the Device(x) Write Request Buffer Flush Bridge
+@@ -336,20 +348,23 @@ void sn_dma_flush(unsigned long addr)
+ 			pcireg_wrb_flush_get(common->sfdl_pcibus_info,
+ 					     (common->sfdl_slot - 1));
+ 		}
+-	} else {
+-		spin_lock_irqsave(&p->sfdl_flush_lock, flags);
+-		*common->sfdl_flush_addr = 0;
++		return;
++	}
+ 
+-		/* force an interrupt. */
+-		*(volatile u32 *)(common->sfdl_force_int_addr) = 1;
++	/* PIC flush — also reached via fallback for devices behind PPBs */
++do_flush:
++	spin_lock_irqsave(&p->sfdl_flush_lock, flags);
++	*common->sfdl_flush_addr = 0;
+ 
+-		/* wait for the interrupt to come back. */
+-		while (*(common->sfdl_flush_addr) != 0x10f)
+-			cpu_relax();
++	/* force an interrupt. */
++	*(volatile u32 *)(common->sfdl_force_int_addr) = 1;
+ 
+-		/* okay, everything is synched up. */
+-		spin_unlock_irqrestore(&p->sfdl_flush_lock, flags);
+-	}
++	/* wait for the interrupt to come back. */
++	while (*(common->sfdl_flush_addr) != 0x10f)
++		cpu_relax();
++
++	/* okay, everything is synched up. */
++	spin_unlock_irqrestore(&p->sfdl_flush_lock, flags);
+ 	return;
+ }
+ 
+diff --git a/drivers/gpu/drm/radeon/radeon_device.c b/drivers/gpu/drm/radeon/radeon_device.c
+index 5d523d5..576f4c0 100644
+--- a/drivers/gpu/drm/radeon/radeon_device.c
++++ b/drivers/gpu/drm/radeon/radeon_device.c
+@@ -1377,6 +1377,14 @@ int radeon_device_init(struct radeon_device *rdev,
+ 	rdev->pdev->msi_addr_mask = DMA_BIT_MASK(dma_bits);
+ 	rdev->need_swiotlb = drm_need_swiotlb(dma_bits);
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: drm_need_swiotlb() false positive from NASID-encoded phys addrs.
++	 * With need_swiotlb=true, TTM uses dma_alloc_coherent which creates
++	 * barrier ATEs (PCI32_ATE_BAR). The PIC has only 1024 ATEs (16MB),
++	 * quickly exhausted under GPU load. Force streaming DMA (direct32). */
++	rdev->need_swiotlb = false;
++#endif
++
+ 	/* Registers mapping */
+ 	/* TODO: block userspace mapping of io register */
+ 	spin_lock_init(&rdev->mmio_idx_lock);
+diff --git a/drivers/gpu/drm/radeon/radeon_fence.c b/drivers/gpu/drm/radeon/radeon_fence.c
+index 02a40e4..bf2455b 100644
+--- a/drivers/gpu/drm/radeon/radeon_fence.c
++++ b/drivers/gpu/drm/radeon/radeon_fence.c
+@@ -290,6 +290,16 @@ static void radeon_fence_check_lockup(struct work_struct *work)
+ 		spin_unlock_irqrestore(&rdev->irq.lock, irqflags);
+ 	}
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: Flush PIC posted DMA write buffers during fence polling.
++	 * With WB enabled, fence checks read system memory directly — no
++	 * PIO reads happen, so sn_dma_flush() is never triggered. Without
++	 * periodic flushing, GPU DMA writes may remain buffered in the PIC.
++	 * RREG32 triggers readl() → sn_dma_flush() on SN2 platform. */
++	if (ring == 0)
++		(void)RREG32(RADEON_SCRATCH_REG0);
++#endif
++
+ 	if (radeon_fence_activity(rdev, ring))
+ 		wake_up_all(&rdev->fence_queue);
+ 
+diff --git a/drivers/gpu/drm/ttm/ttm_bo_util.c b/drivers/gpu/drm/ttm/ttm_bo_util.c
+index f83b7d5..7189721 100644
+--- a/drivers/gpu/drm/ttm/ttm_bo_util.c
++++ b/drivers/gpu/drm/ttm/ttm_bo_util.c
+@@ -307,6 +307,18 @@ pgprot_t ttm_io_prot(struct ttm_buffer_object *bo, struct ttm_resource *res,
+ 		caching = res->bus.caching;
+ 	}
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: Force uncacheable for ALL buffer types:
++	 * - Device memory (VRAM, !use_tt): WC causes PIO write buffers
++	 *   to never flush through the SHub→PIC path.
++	 * - System memory (GTT, use_tt): WB creates Modified cache lines
++	 *   that trigger RDEXC directory interventions when the GPU reads
++	 *   via DMA, overflowing the FSB → FSB_PROTO_ERR → MCA.
++	 * UC writes go directly to memory — no cache, no interventions.
++	 * See SGI Altix Porting Guide (007-4520-007) pages 89-90. */
++	return pgprot_noncached(tmp);
++#endif
++
+ 	return ttm_prot_from_caching(caching, tmp);
+ }
+ EXPORT_SYMBOL(ttm_io_prot);
+@@ -357,7 +369,15 @@ static int ttm_bo_kmap_ttm(struct ttm_buffer_object *bo,
+ 		return ret;
+ 
+ 	if (num_pages == 1 && ttm->caching == ttm_cached &&
+-	    !(man->use_tt && (ttm->page_flags & TTM_TT_FLAG_DECRYPTED))) {
++	    !(man->use_tt && (ttm->page_flags & TTM_TT_FLAG_DECRYPTED))
++#ifdef CONFIG_IA64_SGI_SN2
++	    /* SN2: Never use the WB kmap shortcut. Single-page GTT BOs
++	     * must also go through vmap + ttm_io_prot → pgprot_noncached
++	     * to get UC mapping. WB kmap creates Modified cache lines
++	     * that trigger RDEXC interventions → FSB_PROTO_ERR → MCA. */
++	    && 0
++#endif
++	    ) {
+ 		/*
+ 		 * We're mapping a single page, and the desired
+ 		 * page protection is consistent with the bo.
+diff --git a/drivers/gpu/drm/ttm/ttm_module.c b/drivers/gpu/drm/ttm/ttm_module.c
+index aa137ea..65e60c0 100644
+--- a/drivers/gpu/drm/ttm/ttm_module.c
++++ b/drivers/gpu/drm/ttm/ttm_module.c
+@@ -61,6 +61,14 @@
+  */
+ pgprot_t ttm_prot_from_caching(enum ttm_caching caching, pgprot_t tmp)
+ {
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: ALL GPU-accessible memory must use UC page protection.
++	 * WB creates Modified cache lines → RDEXC interventions → MCA.
++	 * This catches ttm_kmap_iter (used by ttm_move_memcpy) which
++	 * calls ttm_prot_from_caching directly, bypassing ttm_io_prot.
++	 * See SGI Altix Porting Guide (007-4520-007) pages 89-90. */
++	return pgprot_noncached(tmp);
++#endif
+ 	/* Cached mappings need no adjustment */
+ 	if (caching == ttm_cached)
+ 		return tmp;
+diff --git a/drivers/gpu/drm/ttm/ttm_pool.c b/drivers/gpu/drm/ttm/ttm_pool.c
+index c0d9555..4d22a3b 100644
+--- a/drivers/gpu/drm/ttm/ttm_pool.c
++++ b/drivers/gpu/drm/ttm/ttm_pool.c
+@@ -46,6 +46,9 @@
+ #include <drm/ttm/ttm_pool.h>
+ #include <drm/ttm/ttm_tt.h>
+ #include <drm/ttm/ttm_bo.h>
++#ifdef CONFIG_IA64_SGI_SN2
++#include <asm/sn/arch.h>
++#endif
+ 
+ #include "ttm_module.h"
+ #include "ttm_pool_internal.h"
+@@ -159,8 +162,31 @@ static struct page *ttm_pool_alloc_page(struct ttm_pool *pool, gfp_t gfp_flags,
+ 
+ 	if (!ttm_pool_uses_dma_alloc(pool)) {
+ 		p = alloc_pages_node(pool->nid, gfp_flags, order);
+-		if (p)
++		if (p) {
+ 			p->private = order;
++#ifdef CONFIG_IA64_SGI_SN2
++			/* SN2: Flush WB dirty cache lines from page zeroing.
++			 *
++			 * The page allocator zeros pages through the WB
++			 * identity map (region 7), creating Modified cache
++			 * lines. These pages will be UC vmap/mmaped for GPU
++			 * DMA access. Without flushing, GPU DMA reads see
++			 * Modified lines → RDEXC interventions → FSB_PROTO_ERR.
++			 *
++			 * sn_flush_all_caches uses fc.i to writeback dirty
++			 * lines. One page = 32 cache lines — small enough
++			 * to not overload FSB. */
++			{
++				unsigned int i, nr = 1U << order;
++				for (i = 0; i < nr; i++) {
++					void *addr = page_address(p + i);
++					if (addr)
++						sn_flush_all_caches((long)addr,
++								    PAGE_SIZE);
++				}
++			}
++#endif
++		}
+ 		return p;
+ 	}
+ 
+@@ -293,6 +319,16 @@ static void ttm_pool_type_give(struct ttm_pool_type *pt, struct page *p)
+ 			clear_page(page_address(p + i));
+ 	}
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: clear_page above uses WB identity map → dirty cache lines.
++	 * Flush them so GPU DMA reads don't trigger RDEXC interventions. */
++	for (i = 0; i < num_pages; ++i) {
++		void *addr = page_address(p + i);
++		if (addr)
++			sn_flush_all_caches((long)addr, PAGE_SIZE);
++	}
++#endif
++
+ 	spin_lock(&pt->lock);
+ 	list_add(&p->lru, &pt->pages);
+ 	spin_unlock(&pt->lock);

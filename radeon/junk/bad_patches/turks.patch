@@ -1,0 +1,44 @@
+diff --git a/drivers/gpu/drm/radeon/radeon_device.c b/drivers/gpu/drm/radeon/radeon_device.c
+index 5d523d5..51b0aae 100644
+--- a/drivers/gpu/drm/radeon/radeon_device.c
++++ b/drivers/gpu/drm/radeon/radeon_device.c
+@@ -1377,6 +1374,15 @@ int radeon_device_init(struct radeon_device *rdev,
+ 	rdev->pdev->msi_addr_mask = DMA_BIT_MASK(dma_bits);
+ 	rdev->need_swiotlb = drm_need_swiotlb(dma_bits);
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: drm_need_swiotlb() false positive from NASID-encoded phys addrs.
++	 * With need_swiotlb=true, TTM uses dma_alloc_coherent which creates
++	 * barrier ATEs (PCI32_ATE_BAR) causing WrReqWithResp xtalk packets.
++	 * The PIC bridge rejects WrReqWithResp for devices behind PLX bridge.
++	 * Force streaming DMA (direct32 path, no barrier ATEs). */
++	rdev->need_swiotlb = false;
++#endif
++
+ 	/* Registers mapping */
+ 	/* TODO: block userspace mapping of io register */
+ 	spin_lock_init(&rdev->mmio_idx_lock);
+
+diff --git a/drivers/gpu/drm/ttm/ttm_bo_util.c b/drivers/gpu/drm/ttm/ttm_bo_util.c
+index f83b7d5..5b4842b 100644
+--- a/drivers/gpu/drm/ttm/ttm_bo_util.c
++++ b/drivers/gpu/drm/ttm/ttm_bo_util.c
+@@ -307,6 +307,18 @@ pgprot_t ttm_io_prot(struct ttm_buffer_object *bo, struct ttm_resource *res,
+ 		caching = res->bus.caching;
+ 	}
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: Device memory (VRAM, doorbell, MMIO) is accessed via PIO.
++	 * Write-combining (_PAGE_MA_WC) causes CPU write buffers to never
++	 * flush through the SN2 PIO path (CPU→SHub→PIC→device).
++	 * Write-back (_PAGE_MA_WB) risks stale cache reads of device memory.
++	 * Force uncacheable (_PAGE_MA_UC) for all device memory mappings.
++	 * System memory (GTT, use_tt=true) is unaffected.
++	 * See SGI Altix Porting Guide (007-4520-007) page 67. */
++	if (!man->use_tt)
++		return pgprot_noncached(tmp);
++#endif
++
+ 	return ttm_prot_from_caching(caching, tmp);
+ }
+ EXPORT_SYMBOL(ttm_io_prot);

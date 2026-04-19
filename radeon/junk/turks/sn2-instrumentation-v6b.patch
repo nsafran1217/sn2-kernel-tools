@@ -1,0 +1,483 @@
+diff --git a/arch/ia64/kernel/mca.c b/arch/ia64/kernel/mca.c
+index caa3ef6..3aa1f52 100644
+--- a/arch/ia64/kernel/mca.c
++++ b/arch/ia64/kernel/mca.c
+@@ -478,6 +478,21 @@ ia64_mca_log_sal_error_record(int sal_info_type)
+ 	if (!size)
+ 		return;
+ 
++	/* [DEBUG INSTRUMENTATION] Dump SAL error record details during MCA */
++	rh = (sal_log_record_header_t *)buffer;
++	if (sal_info_type == SAL_INFO_TYPE_MCA) {
++		int i;
++		u64 *raw = (u64 *)buffer;
++		mprintk(KERN_CRIT "[SN2-MCA] SAL record: id=%llu severity=%d "
++			"len=%u\n", rh->id, rh->severity, rh->len);
++		/* Dump first 2048 bytes — platform error section is 5456 bytes */
++		mprintk(KERN_CRIT "[SN2-MCA] SAL raw (first 2048 bytes):\n");
++		for (i = 0; i < 256 && i * 8 < rh->len; i += 2) {
++			mprintk(KERN_CRIT "[SN2-MCA]  +%03x: %016llx %016llx\n",
++				i * 8, raw[i], raw[i+1]);
++		}
++	}
++
+ 	salinfo_log_wakeup(sal_info_type, buffer, size, irq_safe);
+ 
+ 	if (irq_safe)
+@@ -1328,6 +1343,16 @@ ia64_mca_handler(struct pt_regs *regs, struct switch_stack *sw,
+ 
+ 	NOTIFY_MCA(DIE_MCA_MONARCH_PROCESS, regs, (long)&nd, 1);
+ 
++	/* [DEBUG INSTRUMENTATION] Dump MCA processor state */
++	if (sos->pal_min_state) {
++		struct pal_min_state_area *ms = sos->pal_min_state;
++		mprintk(KERN_CRIT "[SN2-MCA] pmsa_iip=0x%lx pmsa_ipsr=0x%lx "
++			"proc_state=0x%lx\n",
++			(unsigned long)ms->pmsa_iip,
++			(unsigned long)ms->pmsa_ipsr,
++			sos->proc_state_param);
++	}
++
+ 	/* Get the MCA error record and log it */
+ 	ia64_mca_log_sal_error_record(SAL_INFO_TYPE_MCA);
+ 
+diff --git a/arch/ia64/sn/pci/pcibr/pcibr_dma.c b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
+index 8a4a67b..3ecaab6 100644
+--- a/arch/ia64/sn/pci/pcibr/pcibr_dma.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
+@@ -23,6 +23,15 @@
+ 
+ extern int sn_ioif_inited;
+ 
++/* [DEBUG INSTRUMENTATION] Set by radeon to trace sn_dma_flush */
++int sn2_gpu_flush_trace = 0;
++EXPORT_SYMBOL(sn2_gpu_flush_trace);
++/* Counters for GPU-specific (fallback) vs total flushes */
++int sn2_flush_fallback_count = 0;
++EXPORT_SYMBOL(sn2_flush_fallback_count);
++int sn2_flush_total_count = 0;
++EXPORT_SYMBOL(sn2_flush_total_count);
++
+ /* =====================================================================
+  *    DMA MANAGEMENT
+  *
+@@ -252,6 +261,15 @@ void sn_dma_flush(unsigned long addr)
+ 	struct sn_flush_device_common *common;
+ 	struct sn_flush_nasid_entry *flush_nasid_list;
+ 
++	/* [DEBUG INSTRUMENTATION] Track flush for GPU MMIO address.
++	 * sn2_gpu_flush_trace is set by radeon fence check before RREG32. */
++	extern int sn2_gpu_flush_trace;
++	extern int sn2_flush_fallback_count;
++	extern int sn2_flush_total_count;
++	int do_trace = (sn2_gpu_flush_trace > 0);
++	if (do_trace)
++		sn2_gpu_flush_trace--;
++
+ 	if (!sn_ioif_inited)
+ 		return;
+ 
+@@ -264,8 +282,11 @@ void sn_dma_flush(unsigned long addr)
+ 	BUG_ON(!hubinfo);
+ 
+ 	flush_nasid_list = &hubinfo->hdi_flush_nasid_list;
+-	if (flush_nasid_list->widget_p == NULL)
++	if (flush_nasid_list->widget_p == NULL) {
++		if (do_trace)
++			printk(KERN_ERR "[SN2-FLUSH] widget_p=NULL for addr 0x%lx nasid=0x%x\n", addr, nasid);
+ 		return;
++	}
+ 
+ 	is_tio = (nasid & 1);
+ 	if (is_tio) {
+@@ -292,8 +313,11 @@ void sn_dma_flush(unsigned long addr)
+ 		} else
+ 			wid_num = SWIN_WIDGETNUM(addr);
+ 	}
+-	if (flush_nasid_list->widget_p[wid_num] == NULL)
++	if (flush_nasid_list->widget_p[wid_num] == NULL) {
++		if (do_trace)
++			printk(KERN_ERR "[SN2-FLUSH] widget_p[%d]=NULL for addr 0x%lx\n", wid_num, addr);
+ 		return;
++	}
+ 	p = &flush_nasid_list->widget_p[wid_num][0];
+ 
+ 	/* find a matching BAR */
+@@ -311,8 +335,46 @@ void sn_dma_flush(unsigned long addr)
+ 	}
+ 
+ 	/* if no matching BAR, return without doing anything. */
+-	if (i == DEV_PER_WIDGET)
++	if (i == DEV_PER_WIDGET) {
++		if (do_trace) {
++			/* Dump what BARs ARE in the list for this widget */
++			struct sn_flush_device_kernel *pp =
++				&flush_nasid_list->widget_p[wid_num][0];
++			printk(KERN_ERR "[SN2-FLUSH] NO BAR MATCH for addr 0x%lx "
++			       "nasid=0x%x wid=%d\n", addr, nasid, wid_num);
++			for (i = 0; i < DEV_PER_WIDGET; i++, pp++) {
++				struct sn_flush_device_common *c = pp->common;
++				for (j = 0; j < PCI_ROM_RESOURCE; j++) {
++					if (c->sfdl_bar_list[j].start == 0)
++						break;
++					printk(KERN_ERR "[SN2-FLUSH]   dev=%d bar=%d "
++					       "start=0x%lx end=0x%lx\n",
++					       i, j,
++					       c->sfdl_bar_list[j].start,
++					       c->sfdl_bar_list[j].end);
++				}
++			}
++		}
++		sn2_flush_fallback_count++;
++		/*
++		 * Fall back to first registered device on this widget.
++		 * On PIC, forcing an interrupt on ANY device on the widget
++		 * drains ALL posted DMA write buffers for the widget, so
++		 * this is safe. This handles devices behind PCI-PCI bridges
++		 * (PPBs) whose BARs are not in the flush list.
++		 * [PDF §Device Interrupts and Posted DMAs, Page 5]
++		 */
++		p = &flush_nasid_list->widget_p[wid_num][0];
++		common = p->common;
++		if (common->sfdl_bar_list[0].start != 0) {
++			if (do_trace)
++				printk(KERN_INFO "[SN2-FLUSH] FALLBACK: using "
++				       "dev=0 slot=%d for widget %d flush\n",
++				       common->sfdl_slot, wid_num);
++			goto do_flush;
++		}
+ 		return;
++	}
+ 
+ 	/*
+ 	 * For TIOCP use the Device(x) Write Request Buffer Flush Bridge
+@@ -336,20 +398,30 @@ void sn_dma_flush(unsigned long addr)
+ 			pcireg_wrb_flush_get(common->sfdl_pcibus_info,
+ 					     (common->sfdl_slot - 1));
+ 		}
+-	} else {
+-		spin_lock_irqsave(&p->sfdl_flush_lock, flags);
+-		*common->sfdl_flush_addr = 0;
++		return;
++	}
++
++	/* PIC flush — also reached via fallback for devices behind PPBs */
++do_flush:
++	if (do_trace) {
++		printk(KERN_INFO "[SN2-FLUSH] PIC flush for addr 0x%lx "
++		       "wid=%d slot=%d force_int=0x%lx\n",
++		       addr, wid_num, common->sfdl_slot,
++		       (unsigned long)common->sfdl_force_int_addr);
++	}
++	sn2_flush_total_count++;
++	spin_lock_irqsave(&p->sfdl_flush_lock, flags);
++	*common->sfdl_flush_addr = 0;
+ 
+-		/* force an interrupt. */
+-		*(volatile u32 *)(common->sfdl_force_int_addr) = 1;
++	/* force an interrupt. */
++	*(volatile u32 *)(common->sfdl_force_int_addr) = 1;
+ 
+-		/* wait for the interrupt to come back. */
+-		while (*(common->sfdl_flush_addr) != 0x10f)
+-			cpu_relax();
++	/* wait for the interrupt to come back. */
++	while (*(common->sfdl_flush_addr) != 0x10f)
++		cpu_relax();
+ 
+-		/* okay, everything is synched up. */
+-		spin_unlock_irqrestore(&p->sfdl_flush_lock, flags);
+-	}
++	/* okay, everything is synched up. */
++	spin_unlock_irqrestore(&p->sfdl_flush_lock, flags);
+ 	return;
+ }
+ 
+@@ -362,6 +434,10 @@ pcibr_dma_map(struct pci_dev * hwdev, unsigned long phys_addr, size_t size, int
+ {
+ 	dma_addr_t dma_handle;
+ 	struct pcidev_info *pcidev_info = SN_PCIDEV_INFO(hwdev);
++	/* [DEBUG INSTRUMENTATION] GPU-only DMA tracing (vendor 0x1002 = ATI/AMD) */
++	int is_gpu = (hwdev->vendor == 0x1002);
++	static int gpu_dma_count = 0;
++	static int gpu_dma_fail = 0;
+ 
+ 	if (!pcidev_info)
+ 		return 0;
+@@ -371,12 +447,18 @@ pcibr_dma_map(struct pci_dev * hwdev, unsigned long phys_addr, size_t size, int
+ 		return 0;
+ 	}
+ 
+-	if (hwdev->dma_mask == ~0UL) {
+-		/*
+-		 * Handle the most common case: 64 bit cards.  This
+-		 * call should always succeed.
+-		 */
++	if (is_gpu && gpu_dma_count == 0) {
++		/* Log direct32 window info on first GPU DMA call */
++		struct pcibus_info *_pbi = (struct pcibus_info *)
++		    pcidev_info->pdi_host_pcidev_info->pdi_pcibus_info;
++		printk(KERN_INFO "[SN2-GPU-DMA] INIT: dma_mask=0x%llx "
++		       "IS_PIC=%d IS_PCIX=%d dir_xbase=0x%llx\n",
++		       (unsigned long long)hwdev->dma_mask,
++		       IS_PIC_SOFT(_pbi), IS_PCIX(_pbi),
++		       (unsigned long long)_pbi->pbi_dir_xbase);
++	}
+ 
++	if (hwdev->dma_mask == ~0UL) {
+ 		dma_handle = pcibr_dmatrans_direct64(pcidev_info, phys_addr,
+ 						     PCI64_ATTR_PREF, dma_flags);
+ 	} else {
+@@ -384,17 +466,30 @@ pcibr_dma_map(struct pci_dev * hwdev, unsigned long phys_addr, size_t size, int
+ 		dma_handle = pcibr_dmatrans_direct32(pcidev_info, phys_addr,
+ 						     size, 0, dma_flags);
+ 		if (!dma_handle) {
+-			/*
+-			 * It is a 32 bit card and we cannot do direct mapping,
+-			 * so we use an ATE.
+-			 */
+-
+ 			dma_handle = pcibr_dmamap_ate32(pcidev_info, phys_addr,
+ 							size, PCI32_ATE_PREF,
+ 							dma_flags);
+ 		}
+ 	}
+ 
++	if (is_gpu) {
++		/* ALWAYS log failures, regardless of count */
++		if (!dma_handle) {
++			printk(KERN_ERR "[SN2-GPU-DMA] FAILED #%d: "
++			       "phys=0x%lx size=%zu dma_mask=0x%llx\n",
++			       gpu_dma_fail++, phys_addr, size,
++			       (unsigned long long)hwdev->dma_mask);
++		}
++		/* Log every 100th success for progress tracking */
++		if (dma_handle && (gpu_dma_count % 100 == 0))
++			printk(KERN_INFO "[SN2-GPU-DMA] OK #%d: "
++			       "phys=0x%lx dma=0x%llx\n",
++			       gpu_dma_count,
++			       phys_addr,
++			       (unsigned long long)dma_handle);
++		gpu_dma_count++;
++	}
++
+ 	return dma_handle;
+ }
+ 
+@@ -404,6 +499,9 @@ pcibr_dma_map_consistent(struct pci_dev * hwdev, unsigned long phys_addr,
+ {
+ 	dma_addr_t dma_handle;
+ 	struct pcidev_info *pcidev_info = SN_PCIDEV_INFO(hwdev);
++	/* [DEBUG INSTRUMENTATION] */
++	int is_gpu = (hwdev->vendor == 0x1002);
++	static int gpu_cons_count = 0;
+ 
+ 	if (!pcidev_info)
+ 		return 0;
+@@ -417,6 +515,16 @@ pcibr_dma_map_consistent(struct pci_dev * hwdev, unsigned long phys_addr,
+ 						    PCI32_ATE_BAR, dma_flags);
+ 	}
+ 
++	if (is_gpu && gpu_cons_count < 20) {
++		printk(KERN_INFO "[SN2-GPU-DMA] consistent: phys=0x%lx "
++		       "size=%zu coherent_mask=0x%llx dma=0x%llx %s\n",
++		       phys_addr, size,
++		       (unsigned long long)hwdev->dev.coherent_dma_mask,
++		       (unsigned long long)dma_handle,
++		       dma_handle ? "BARRIER-ATE" : "FAILED");
++		gpu_cons_count++;
++	}
++
+ 	return dma_handle;
+ }
+ 
+diff --git a/arch/ia64/sn/pci/pcibr/pcibr_provider.c b/arch/ia64/sn/pci/pcibr/pcibr_provider.c
+index ae0ff27..aeba3da 100644
+--- a/arch/ia64/sn/pci/pcibr/pcibr_provider.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_provider.c
+@@ -104,9 +104,18 @@ pcibr_error_intr_handler(int irq, void *arg)
+ {
+ 	struct pcibus_info *soft = arg;
+ 
++	/* [DEBUG INSTRUMENTATION] Log bridge error before SAL decides fate */
++	printk(KERN_CRIT "[SN2-BRIDGE-ERR] pcibr_error_intr_handler: "
++	       "irq=%d bus=%d segment=%d\n",
++	       irq, soft->pbi_buscommon.bs_persist_busnum,
++	       soft->pbi_buscommon.bs_persist_segment);
++
+ 	if (sal_pcibr_error_interrupt(soft) < 0)
+ 		panic("pcibr_error_intr_handler(): Fatal Bridge Error");
+ 
++	/* [DEBUG INSTRUMENTATION] Non-fatal bridge error */
++	printk(KERN_WARNING "[SN2-BRIDGE-ERR] non-fatal bridge error handled\n");
++
+ 	return IRQ_HANDLED;
+ }
+ 
+diff --git a/drivers/gpu/drm/radeon/evergreen.c b/drivers/gpu/drm/radeon/evergreen.c
+index 3cbc6ee..03ad2cd 100644
+--- a/drivers/gpu/drm/radeon/evergreen.c
++++ b/drivers/gpu/drm/radeon/evergreen.c
+@@ -4095,7 +4095,15 @@ int evergreen_asic_reset(struct radeon_device *rdev, bool hard)
+  */
+ bool evergreen_gfx_is_lockup(struct radeon_device *rdev, struct radeon_ring *ring)
+ {
+-	u32 reset_mask = evergreen_gpu_check_soft_reset(rdev);
++	u32 reset_mask;
++	static int probe_count = 0;
++
++	// [DEBUG INSTRUMENTATION] Always log probe entry with counter and CPU
++	printk(KERN_INFO "[SN2-LOCKUP] probe #%d cpu=%d: reading GPU regs\n",
++	       probe_count++, smp_processor_id());
++	reset_mask = evergreen_gpu_check_soft_reset(rdev);
++	printk(KERN_INFO "[SN2-LOCKUP] probe done, reset_mask=0x%x\n",
++	       reset_mask);
+ 
+ 	if (!(reset_mask & (RADEON_RESET_GFX |
+ 			    RADEON_RESET_COMPUTE |
+diff --git a/drivers/gpu/drm/radeon/ni_dma.c b/drivers/gpu/drm/radeon/ni_dma.c
+index bd515ad..38bc017 100644
+--- a/drivers/gpu/drm/radeon/ni_dma.c
++++ b/drivers/gpu/drm/radeon/ni_dma.c
+@@ -101,6 +101,8 @@ void cayman_dma_set_wptr(struct radeon_device *rdev,
+ 			 struct radeon_ring *ring)
+ {
+ 	u32 reg;
++	// [DEBUG INSTRUMENTATION]
++	static int dma_wptr_count = 0;
+ 
+ 	if (ring->idx == R600_RING_TYPE_DMA_INDEX)
+ 		reg = DMA_RB_WPTR + DMA0_REGISTER_OFFSET;
+@@ -108,6 +110,14 @@ void cayman_dma_set_wptr(struct radeon_device *rdev,
+ 		reg = DMA_RB_WPTR + DMA1_REGISTER_OFFSET;
+ 
+ 	WREG32(reg, (ring->wptr << 2) & 0x3fffc);
++
++	// [DEBUG INSTRUMENTATION] Log DMA ring usage + add PIO read flush
++	// per [PDF §Posted PIO write Calls, Page 11]
++	if (dma_wptr_count < 5 || (dma_wptr_count % 500) == 0)
++		printk(KERN_INFO "[SN2-DMA-RING] wptr write #%d ring=%d "
++		       "reg=0x%x\n", dma_wptr_count, ring->idx, reg);
++	dma_wptr_count++;
++	(void)RREG32(reg); /* SN2: flush posted PIO write */
+ }
+ 
+ /**
+diff --git a/drivers/gpu/drm/radeon/radeon_fence.c b/drivers/gpu/drm/radeon/radeon_fence.c
+index 02a40e4..220ff27 100644
+--- a/drivers/gpu/drm/radeon/radeon_fence.c
++++ b/drivers/gpu/drm/radeon/radeon_fence.c
+@@ -269,12 +269,28 @@ static void radeon_fence_check_lockup(struct work_struct *work)
+ 	struct radeon_fence_driver *fence_drv;
+ 	struct radeon_device *rdev;
+ 	int ring;
++	static int check_count = 0; // [DEBUG INSTRUMENTATION]
+ 
+ 	fence_drv = container_of(work, struct radeon_fence_driver,
+ 				 lockup_work.work);
+ 	rdev = fence_drv->rdev;
+ 	ring = fence_drv - &rdev->fence_drv[0];
+ 
++	// [DEBUG INSTRUMENTATION] Heartbeat every 20 checks (~10 sec) on ring 0
++	if (ring == 0 && (check_count++ % 20) == 0) {
++#ifdef CONFIG_IA64_SGI_SN2
++		extern int sn2_flush_fallback_count;
++		extern int sn2_flush_total_count;
++		printk(KERN_INFO "[SN2-HEARTBEAT] fence_check #%d cpu=%d "
++		       "flush_total=%d flush_gpu_fallback=%d\n",
++		       check_count - 1, smp_processor_id(),
++		       sn2_flush_total_count, sn2_flush_fallback_count);
++#else
++		printk(KERN_INFO "[SN2-HEARTBEAT] fence_check #%d cpu=%d ring=%d\n",
++		       check_count - 1, smp_processor_id(), ring);
++#endif
++	}
++
+ 	if (!down_read_trylock(&rdev->exclusive_lock)) {
+ 		/* just reschedule the check if a reset is going on */
+ 		radeon_fence_schedule_check(rdev, ring);
+@@ -290,19 +306,50 @@ static void radeon_fence_check_lockup(struct work_struct *work)
+ 		spin_unlock_irqrestore(&rdev->irq.lock, irqflags);
+ 	}
+ 
+-	if (radeon_fence_activity(rdev, ring))
+-		wake_up_all(&rdev->fence_queue);
+-
+-	else if (radeon_ring_is_lockup(rdev, ring, &rdev->ring[ring])) {
+-
+-		/* good news we believe it's a lockup */
+-		dev_warn(rdev->dev, "GPU lockup (current fence id 0x%016llx last fence id 0x%016llx on ring %d)\n",
+-			 (uint64_t)atomic64_read(&fence_drv->last_seq),
+-			 fence_drv->sync_seq[ring], ring);
++#ifdef CONFIG_IA64_SGI_SN2
++	/* SN2: Flush PIC bridge posted DMA write buffers.
++	 * With WB enabled, fence polling reads system memory — no PIO reads
++	 * happen, so sn_dma_flush() is never called. Without flush, GPU DMA
++	 * writes pile up in PIC WRBs under heavy load → bus error → MCA.
++	 * RREG32 triggers readl() → sn_dma_flush() on SN2.
++	 * [PDF §PIO Read Flushing Posted DMA Buffers, Page 73]
++	 * [PDF §Device Interrupts and Posted DMAs, Page 5]
++	 */
++	if (ring == 0) {
++		static int flush_logged = 0;
++		extern int sn2_gpu_flush_trace;
++		if (!flush_logged) {
++			sn2_gpu_flush_trace = 1; /* arm trace for sn_dma_flush */
++			flush_logged = 1;
++		}
++		(void)RREG32(RADEON_SCRATCH_REG0);
++	}
++#endif
+ 
+-		/* remember that we need an reset */
+-		rdev->needs_reset = true;
++	if (radeon_fence_activity(rdev, ring))
+ 		wake_up_all(&rdev->fence_queue);
++	else {
++		// [DEBUG INSTRUMENTATION] Fences stalled — lockup probe next
++		if (ring == 0)
++			printk(KERN_WARNING "[SN2-HEARTBEAT] STALL on ring %d "
++			       "cpu=%d — calling lockup probe\n",
++			       ring, smp_processor_id());
++
++		if (radeon_ring_is_lockup(rdev, ring, &rdev->ring[ring])) {
++
++			/* good news we believe it's a lockup */
++			dev_warn(rdev->dev, "GPU lockup (current fence id 0x%016llx last fence id 0x%016llx on ring %d)\n",
++				 (uint64_t)atomic64_read(&fence_drv->last_seq),
++				 fence_drv->sync_seq[ring], ring);
++
++			// [DEBUG INSTRUMENTATION]
++			printk(KERN_CRIT "[SN2-LOCKUP] GPU lockup confirmed! "
++			       "About to set needs_reset — next GPU access will MCA if GPU is dead\n");
++
++			/* remember that we need an reset */
++			rdev->needs_reset = true;
++			wake_up_all(&rdev->fence_queue);
++		}
+ 	}
+ 	up_read(&rdev->exclusive_lock);
+ }
+diff --git a/drivers/gpu/drm/radeon/radeon_irq_kms.c b/drivers/gpu/drm/radeon/radeon_irq_kms.c
+index 839d619..65d9b07 100644
+--- a/drivers/gpu/drm/radeon/radeon_irq_kms.c
++++ b/drivers/gpu/drm/radeon/radeon_irq_kms.c
+@@ -55,10 +55,17 @@ static irqreturn_t radeon_driver_irq_handler_kms(int irq, void *arg)
+ 	struct drm_device *dev = (struct drm_device *) arg;
+ 	struct radeon_device *rdev = dev->dev_private;
+ 	irqreturn_t ret;
++	// [DEBUG INSTRUMENTATION] Track if interrupts are actually delivered
++	static int irq_count = 0;
+ 
+ 	ret = radeon_irq_process(rdev);
+-	if (ret == IRQ_HANDLED)
++	if (ret == IRQ_HANDLED) {
++		if (irq_count < 10 || (irq_count % 100) == 0)
++			printk(KERN_INFO "[SN2-IRQ] radeon IRQ #%d handled "
++			       "on cpu=%d\n", irq_count, smp_processor_id());
++		irq_count++;
+ 		pm_runtime_mark_last_busy(dev->dev);
++	}
+ 	return ret;
+ }
+ 

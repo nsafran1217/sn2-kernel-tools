@@ -1,0 +1,338 @@
+diff --git a/arch/ia64/sn/pci/pcibr/pcibr_ate.c b/arch/ia64/sn/pci/pcibr/pcibr_ate.c
+index b67bb4c..45411e7 100644
+--- a/arch/ia64/sn/pci/pcibr/pcibr_ate.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_ate.c
+@@ -121,6 +121,10 @@ int pcibr_ate_alloc(struct pcibus_info *pcibus_info, int count)
+ 	status = alloc_ate_resource(&pcibus_info->pbi_int_ate_resource, count);
+ 	spin_unlock_irqrestore(&pcibus_info->pbi_lock, flags);
+ 
++	if (status >= 0)
++		pr_info_ratelimited("SN2: pcibr_ate_alloc %d ATEs at index %d (pool_size=%d)\n",
++			count, status, pcibus_info->pbi_int_ate_size);
++
+ 	return status;
+ }
+ 
+diff --git a/arch/ia64/sn/pci/pcibr/pcibr_dma.c b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
+index 8a4a67b..07e8bf1 100644
+--- a/arch/ia64/sn/pci/pcibr/pcibr_dma.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
+@@ -82,7 +82,7 @@ pcibr_dmamap_ate32(struct pcidev_info *info,
+ 	if (IS_PCIX(pcibus_info))
+ 		ate_flags &= ~(PCI32_ATE_PREF);
+ 
+-	if (SN_DMA_ADDRTYPE(dma_flags == SN_DMA_ADDR_PHYS))
++	if (SN_DMA_ADDRTYPE(dma_flags) == SN_DMA_ADDR_PHYS)
+ 		xio_addr = IS_PIC_SOFT(pcibus_info) ? PHYS_TO_DMA(paddr) :
+ 	    					      PHYS_TO_TIODMA(paddr);
+ 	else
+@@ -362,6 +362,7 @@ pcibr_dma_map(struct pci_dev * hwdev, unsigned long phys_addr, size_t size, int
+ {
+ 	dma_addr_t dma_handle;
+ 	struct pcidev_info *pcidev_info = SN_PCIDEV_INFO(hwdev);
++	const char *path;
+ 
+ 	if (!pcidev_info)
+ 		return 0;
+@@ -379,6 +380,7 @@ pcibr_dma_map(struct pci_dev * hwdev, unsigned long phys_addr, size_t size, int
+ 
+ 		dma_handle = pcibr_dmatrans_direct64(pcidev_info, phys_addr,
+ 						     PCI64_ATTR_PREF, dma_flags);
++		path = "direct64";
+ 	} else {
+ 		/* Handle 32-63 bit cards via direct mapping */
+ 		dma_handle = pcibr_dmatrans_direct32(pcidev_info, phys_addr,
+@@ -392,9 +394,19 @@ pcibr_dma_map(struct pci_dev * hwdev, unsigned long phys_addr, size_t size, int
+ 			dma_handle = pcibr_dmamap_ate32(pcidev_info, phys_addr,
+ 							size, PCI32_ATE_PREF,
+ 							dma_flags);
++			path = "ate32";
++		} else {
++			path = "direct32";
+ 		}
+ 	}
+ 
++	/* Log DMA mappings for devices on secondary buses (behind bridges) */
++	if (hwdev->bus->number != 0)
++		dev_info_ratelimited(&hwdev->dev,
++			"SN2: pcibr_dma_map %s phys=0x%lx size=%zu dma=0x%llx path=%s mask=0x%llx\n",
++			pci_name(hwdev), phys_addr, size,
++			(unsigned long long)dma_handle, path, hwdev->dma_mask);
++
+ 	return dma_handle;
+ }
+ 
+@@ -417,6 +429,14 @@ pcibr_dma_map_consistent(struct pci_dev * hwdev, unsigned long phys_addr,
+ 						    PCI32_ATE_BAR, dma_flags);
+ 	}
+ 
++	/* Log coherent DMA mappings for devices on secondary buses */
++	if (hwdev->bus->number != 0)
++		dev_info_ratelimited(&hwdev->dev,
++			"SN2: pcibr_dma_map_consistent %s phys=0x%lx size=%zu dma=0x%llx coherent_mask=0x%llx\n",
++			pci_name(hwdev), phys_addr, size,
++			(unsigned long long)dma_handle,
++			hwdev->dev.coherent_dma_mask);
++
+ 	return dma_handle;
+ }
+ 
+diff --git a/arch/ia64/sn/pci/pcibr/pcibr_provider.c b/arch/ia64/sn/pci/pcibr/pcibr_provider.c
+index ae0ff27..3b23fee 100644
+--- a/arch/ia64/sn/pci/pcibr/pcibr_provider.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_provider.c
+@@ -95,17 +95,47 @@ u16 sn_ioboard_to_pci_bus(struct pci_bus *pci_bus)
+ 	return ioboard;
+ }
+ 
+-/* 
+- * PCI Bridge Error interrupt handler.  Gets invoked whenever a PCI 
++/*
++ * PCI Bridge Error interrupt handler.  Gets invoked whenever a PCI
+  * bridge sends an error interrupt.
+  */
++
++/* Global PIO freeze flag - set on bridge error to stop all device PIO */
++atomic_t pcibr_pio_frozen = ATOMIC_INIT(0);
++EXPORT_SYMBOL(pcibr_pio_frozen);
++
++/* Hook for GPU driver to dump PIO trace on bridge errors */
++void (*pcibr_error_dump_hook)(const char *reason);
++EXPORT_SYMBOL(pcibr_error_dump_hook);
++
++static atomic_t pcibr_error_count = ATOMIC_INIT(0);
++
+ static irqreturn_t
+ pcibr_error_intr_handler(int irq, void *arg)
+ {
+ 	struct pcibus_info *soft = arg;
++	int ret;
++	int count;
++
++	/* Freeze PIO immediately to prevent MCA cascade */
++	atomic_set(&pcibr_pio_frozen, 1);
++
++	ret = sal_pcibr_error_interrupt(soft);
++	count = atomic_inc_return(&pcibr_error_count);
++
++	if (ret < 0) {
++		pr_err("pcibr_error_intr_handler(): Fatal Bridge Error #%d (SAL=%d) - PIO FROZEN\n",
++		       count, ret);
++	} else {
++		pr_warn("pcibr_error_intr_handler(): Bridge Error #%d (non-fatal, SAL=%d) - PIO FROZEN\n",
++			count, ret);
++	}
++
++	/* Dump GPU PIO trace if a driver registered a hook */
++	if (pcibr_error_dump_hook)
++		pcibr_error_dump_hook("PIC_BRIDGE_ERROR");
+ 
+-	if (sal_pcibr_error_interrupt(soft) < 0)
+-		panic("pcibr_error_intr_handler(): Fatal Bridge Error");
++	dump_stack();
+ 
+ 	return IRQ_HANDLED;
+ }
+diff --git a/drivers/gpu/drm/radeon/ni_dma.c b/drivers/gpu/drm/radeon/ni_dma.c
+index bd515ad..f80db87 100644
+--- a/drivers/gpu/drm/radeon/ni_dma.c
++++ b/drivers/gpu/drm/radeon/ni_dma.c
+@@ -108,6 +108,10 @@ void cayman_dma_set_wptr(struct radeon_device *rdev,
+ 		reg = DMA_RB_WPTR + DMA1_REGISTER_OFFSET;
+ 
+ 	WREG32(reg, (ring->wptr << 2) & 0x3fffc);
++	/* Flush posted PIO write — required on ia64/SN2 where PIO writes
++	 * are posted and the GPU may not see the updated wptr before the
++	 * next ring submission check. */
++	(void)RREG32(reg);
+ }
+ 
+ /**
+diff --git a/drivers/gpu/drm/radeon/r100.c b/drivers/gpu/drm/radeon/r100.c
+index 3ac1a79..01f59ed 100644
+--- a/drivers/gpu/drm/radeon/r100.c
++++ b/drivers/gpu/drm/radeon/r100.c
+@@ -4119,15 +4119,88 @@ int r100_init(struct radeon_device *rdev)
+ 	return 0;
+ }
+ 
++/*
++ * SN2 PIO Trace Ring Buffer
++ *
++ * Records the last 256 register writes for post-mortem debugging.
++ * Dumped via radeon_pio_trace_dump() which is registered as
++ * pcibr_error_dump_hook so it fires on every PIC bridge error.
++ */
++#ifdef CONFIG_IA64_SGI_SN2
++
++#define RADEON_PIO_TRACE_SIZE 256
++#define RADEON_PIO_TRACE_MASK (RADEON_PIO_TRACE_SIZE - 1)
++
++struct radeon_pio_trace_entry {
++	u32 reg;
++	u32 val;
++	u8  rw;   /* 0=write, 1=read */
++	unsigned long jiffies;
++	void *caller;
++};
++
++static struct radeon_pio_trace_entry radeon_pio_trace_buf[RADEON_PIO_TRACE_SIZE];
++static atomic_t radeon_pio_trace_idx = ATOMIC_INIT(0);
++
++static inline void radeon_pio_trace_record(u32 reg, u32 val, u8 rw)
++{
++	int idx = atomic_inc_return(&radeon_pio_trace_idx) & RADEON_PIO_TRACE_MASK;
++	radeon_pio_trace_buf[idx].reg    = reg;
++	radeon_pio_trace_buf[idx].val    = val;
++	radeon_pio_trace_buf[idx].rw     = rw;
++	radeon_pio_trace_buf[idx].jiffies = jiffies;
++	radeon_pio_trace_buf[idx].caller = __builtin_return_address(0);
++}
++
++void radeon_pio_trace_dump(const char *reason)
++{
++	int cur = atomic_read(&radeon_pio_trace_idx);
++	int i, idx;
++
++	pr_err("=== RADEON PIO TRACE DUMP (%s) last %d ops ===\n",
++	       reason, RADEON_PIO_TRACE_SIZE);
++	for (i = 0; i < RADEON_PIO_TRACE_SIZE; i++) {
++		idx = (cur - RADEON_PIO_TRACE_SIZE + 1 + i) & RADEON_PIO_TRACE_MASK;
++		if (radeon_pio_trace_buf[idx].jiffies == 0)
++			continue;
++		pr_err("  PIO[%03d] %s reg=0x%05x val=0x%08x j=%lu [%pS]\n",
++		       i,
++		       radeon_pio_trace_buf[idx].rw ? " RD" : " WR",
++		       radeon_pio_trace_buf[idx].reg,
++		       radeon_pio_trace_buf[idx].val,
++		       radeon_pio_trace_buf[idx].jiffies,
++		       radeon_pio_trace_buf[idx].caller);
++	}
++	pr_err("=== RADEON PIO TRACE DUMP END ===\n");
++}
++EXPORT_SYMBOL(radeon_pio_trace_dump);
++
++/* Check if PIC bridge error has frozen PIO — if so, abort silently */
++static inline bool radeon_pio_is_frozen(void)
++{
++	extern atomic_t pcibr_pio_frozen;
++	return atomic_read(&pcibr_pio_frozen) != 0;
++}
++
++#endif /* CONFIG_IA64_SGI_SN2 */
++
+ uint32_t r100_mm_rreg_slow(struct radeon_device *rdev, uint32_t reg)
+ {
+ 	unsigned long flags;
+ 	uint32_t ret;
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	if (radeon_pio_is_frozen())
++		return 0;
++#endif
++
+ 	spin_lock_irqsave(&rdev->mmio_idx_lock, flags);
+ 	writel(reg, ((void __iomem *)rdev->rmmio) + RADEON_MM_INDEX);
+ 	ret = readl(((void __iomem *)rdev->rmmio) + RADEON_MM_DATA);
+ 	spin_unlock_irqrestore(&rdev->mmio_idx_lock, flags);
++#ifdef CONFIG_IA64_SGI_SN2
++	radeon_pio_trace_record(reg, ret, 1);
++#endif
+ 	return ret;
+ }
+ 
+@@ -4135,6 +4208,12 @@ void r100_mm_wreg_slow(struct radeon_device *rdev, uint32_t reg, uint32_t v)
+ {
+ 	unsigned long flags;
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	if (radeon_pio_is_frozen())
++		return;
++	radeon_pio_trace_record(reg, v, 0);
++#endif
++
+ 	spin_lock_irqsave(&rdev->mmio_idx_lock, flags);
+ 	writel(reg, ((void __iomem *)rdev->rmmio) + RADEON_MM_INDEX);
+ 	writel(v, ((void __iomem *)rdev->rmmio) + RADEON_MM_DATA);
+diff --git a/drivers/gpu/drm/radeon/r600_dma.c b/drivers/gpu/drm/radeon/r600_dma.c
+index 89ca273..8836378 100644
+--- a/drivers/gpu/drm/radeon/r600_dma.c
++++ b/drivers/gpu/drm/radeon/r600_dma.c
+@@ -86,6 +86,8 @@ void r600_dma_set_wptr(struct radeon_device *rdev,
+ 		       struct radeon_ring *ring)
+ {
+ 	WREG32(DMA_RB_WPTR, (ring->wptr << 2) & 0x3fffc);
++	/* Flush posted PIO write on ia64/SN2 */
++	(void)RREG32(DMA_RB_WPTR);
+ }
+ 
+ /**
+diff --git a/drivers/gpu/drm/radeon/radeon.h b/drivers/gpu/drm/radeon/radeon.h
+index 527b9d1..e19fcc3 100644
+--- a/drivers/gpu/drm/radeon/radeon.h
++++ b/drivers/gpu/drm/radeon/radeon.h
+@@ -2463,6 +2463,13 @@ static inline uint32_t r100_mm_rreg(struct radeon_device *rdev, uint32_t reg,
+ static inline void r100_mm_wreg(struct radeon_device *rdev, uint32_t reg, uint32_t v,
+ 				bool always_indirect)
+ {
++#ifdef CONFIG_IA64_SGI_SN2
++	{
++		extern atomic_t pcibr_pio_frozen;
++		if (atomic_read(&pcibr_pio_frozen))
++			return;
++	}
++#endif
+ 	if ((reg < rdev->rmmio_size || reg < RADEON_MIN_MMIO_SIZE) && !always_indirect)
+ 		writel(v, ((void __iomem *)rdev->rmmio) + reg);
+ 	else
+diff --git a/drivers/gpu/drm/radeon/radeon_irq_kms.c b/drivers/gpu/drm/radeon/radeon_irq_kms.c
+index 839d619..999a12f 100644
+--- a/drivers/gpu/drm/radeon/radeon_irq_kms.c
++++ b/drivers/gpu/drm/radeon/radeon_irq_kms.c
+@@ -205,14 +205,31 @@ static int radeon_irq_install(struct radeon_device *rdev, int irq)
+ 
+ 	radeon_driver_irq_preinstall_kms(dev);
+ 
++	dev_info(rdev->dev, "SN2: irq_install: irq=%d msi_enabled=%d\n",
++		 irq, rdev->msi_enabled);
++
+ 	/* PCI devices require shared interrupts. */
+ 	ret = request_irq(irq, radeon_driver_irq_handler_kms,
+ 			  IRQF_SHARED, dev->driver->name, dev);
+-	if (ret)
++	if (ret) {
++		dev_err(rdev->dev, "SN2: request_irq(%d) FAILED ret=%d\n",
++			irq, ret);
+ 		return ret;
++	}
++
++	dev_info(rdev->dev, "SN2: request_irq(%d) succeeded\n", irq);
+ 
+ 	radeon_driver_irq_postinstall_kms(dev);
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	{
++		extern void (*pcibr_error_dump_hook)(const char *reason);
++		extern void radeon_pio_trace_dump(const char *reason);
++		pcibr_error_dump_hook = radeon_pio_trace_dump;
++		dev_info(rdev->dev, "SN2: registered PIO trace dump hook\n");
++	}
++#endif
++
+ 	return 0;
+ }
+ 
+@@ -221,6 +238,13 @@ static void radeon_irq_uninstall(struct radeon_device *rdev)
+ 	struct drm_device *dev = rdev_to_drm(rdev);
+ 	struct pci_dev *pdev = to_pci_dev(dev->dev);
+ 
++#ifdef CONFIG_IA64_SGI_SN2
++	{
++		extern void (*pcibr_error_dump_hook)(const char *reason);
++		pcibr_error_dump_hook = NULL;
++	}
++#endif
++
+ 	radeon_driver_irq_uninstall_kms(dev);
+ 	free_irq(pdev->irq, dev);
+ }
