@@ -21,19 +21,19 @@ fi
 
 
 # fix known compile bug
-echo "fix sn_dma_flush compile bug"
-git apply $_BASE_DIR/sn2-kernel-tools/diff/misc/sn_dma_flush.patch
+#echo "fix sn_dma_flush compile bug"
+#git apply $_BASE_DIR/sn2-kernel-tools/diff/misc/sn_dma_flush.patch
 
 #echo "SED to fix combile bug"
 #sed -i 's/void sn_dma_flush(u64 addr)/void sn_dma_flush(unsigned long addr)/' ./arch/ia64/sn/pci/pcibr/pcibr_dma.c
 
 # Fix IO_RESOURCE 
-echo "fix io resource"
-git apply $_BASE_DIR/sn2-kernel-tools/diff/misc/io_resource.patch
+#echo "fix io resource"
+#git apply $_BASE_DIR/sn2-kernel-tools/diff/misc/io_resource.patch
 
 # Fix sn_mmiowb.patch
-echo "fix sn_mmiowb.patch"
-git apply $_BASE_DIR/sn2-kernel-tools/diff/misc/sn_mmiowb.patch
+#echo "fix sn_mmiowb.patch"
+#git apply $_BASE_DIR/sn2-kernel-tools/diff/misc/sn_mmiowb.patch
 
 
 
