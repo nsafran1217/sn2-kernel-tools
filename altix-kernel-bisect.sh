@@ -39,15 +39,7 @@ fi
 
 set -e # end on any error
 
-if [ -z "$1" ]
-  then
-    ver=$(git log --oneline | head -n1 | grep -o "Linux\ .*" | cut -d' ' -f2-)
 
-else 
-
-	ver=$1
-fi
-echo $ver
 
 # define LOCALVERSION
 _currentCommitHashShort=$( git rev-parse --short HEAD )
@@ -71,37 +63,38 @@ pwd
 
 make LOCALVERSION="${_localversion}" ARCH=ia64 CROSS_COMPILE=ia64-linux- olddefconfig
 echo "kern release"
-make -s LOCALVERSION="${_localversion}" ARCH=ia64 CROSS_COMPILE=ia64-linux- kernelrelease
+_kernelrelease=$(make -s LOCALVERSION="${_localversion}" ARCH=ia64 CROSS_COMPILE=ia64-linux- kernelrelease)
+echo "$_kernelrelease"
+
 echo "tar-pkg"
 make -j$(nproc) LOCALVERSION="${_localversion}" ARCH=ia64 CROSS_COMPILE=ia64-linux- tar-pkg
 
 # Move the tarball and include vmlinuz if desired
 #make dir to tar
-pwd
+_srclocation=$(pwd)
+echo "$_srclocation"
 
-tarname=$(ls linux-*-ia64.tar)
-mkdir -p $_BASE_DIR/release/linux-${_localversion}-ia64
-#move tar
-mv "$tarname" "$_BASE_DIR/release/linux-${_localversion}-ia64/"
+# Package everything
 
-#cp vmlinuz
-mkdir -p "$_BASE_DIR/release/linux-${_localversion}-ia64/boot"
-cp vmlinux.gz "$_BASE_DIR/release/linux-${_localversion}-ia64/boot/vmlinuz-$ver"
-#cd
-cd "$_BASE_DIR/release/linux-${_localversion}-ia64/"
-#extract then recombine
-tar xf "$_BASE_DIR/release/linux-${_localversion}-ia64/$tarname"
-rm -f "$_BASE_DIR/release/linux-${_localversion}-ia64/$tarname"
-tar cf "$_BASE_DIR/release/$tarname" .
+_releasedir="$_BASE_DIR/release/linux-${_kernelrelease}"  # use kernelrelease, not localversion
+_tarname=$(ls linux-*-ia64.tar)
 
-echo "Kernel package for $_localversion created at $_BASE_DIR/release/$tarname.tar"
+mkdir -p "$_releasedir"
+mv "$_tarname" "$_releasedir/"
+
+tar xf "$_releasedir/$_tarname" -C "$_releasedir"
+rm -f "$_releasedir/$_tarname"
+
+cp "$_srclocation/vmlinux.gz" "$_releasedir/boot/vmlinuz-${_kernelrelease}"
+
+tar cf "$_BASE_DIR/release/$_tarname" -C "$_releasedir" .
+echo "Kernel package created at $_BASE_DIR/release/$_tarname"
 
 # Copy to NFS server
-scp boot/vmlinuz-$ver nfs:/t2/tftproot/t2/kernel/vmlinuz-test
-scp boot/vmlinuz-$ver nfs:/t2/altixroot/boot/vmlinuz-test
-rsync -rl --progress lib/modules/ nfs:/t2/altixroot/lib/modules/
+scp "$_releasedir/boot/vmlinuz-${_kernelrelease}" nfs:/t2/tftproot/t2/kernel/vmlinuz-test
+scp "$_releasedir/boot/vmlinuz-${_kernelrelease}" nfs:/t2/altixroot/boot/vmlinuz-test
+rsync -rl "$_releasedir/lib/modules/" nfs:/t2/altixroot/lib/modules/
 
-cd ..
-rm -rf linux-${_localversion}-ia64/
+rm -rf "$_releasedir"
 
-echo "Copy complete, reboot to test $ver $_localversion"
+echo "Copy complete, reboot to test ${_kernelrelease}"
