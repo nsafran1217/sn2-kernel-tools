@@ -87,14 +87,19 @@ rm -f "$_releasedir/$_tarname"
 
 cp "$_srclocation/vmlinux.gz" "$_releasedir/boot/vmlinuz-${_kernelrelease}"
 
-tar cf "$_BASE_DIR/release/$_tarname" -C "$_releasedir" .
-echo "Kernel package created at $_BASE_DIR/release/$_tarname"
+
 
 # Copy to NFS server
 scp "$_releasedir/boot/vmlinuz-${_kernelrelease}" nfs:/t2/tftproot/t2/kernel/vmlinuz-test
 scp "$_releasedir/boot/vmlinuz-${_kernelrelease}" nfs:/t2/altixroot/boot/vmlinuz-test
 rsync -rl "$_releasedir/lib/modules/" nfs:/t2/altixroot/lib/modules/
 
+echo "Copy complete, reboot to test ${_kernelrelease}"
+
+echo "Tar'ing package"
+tar cfz "$_BASE_DIR/release/$_tarname.gz" -C "$_releasedir" .
+echo "Kernel package created at $_BASE_DIR/release/$_tarname"
+
 rm -rf "$_releasedir"
 
-echo "Copy complete, reboot to test ${_kernelrelease}"
+echo "Donet ${_kernelrelease}"
