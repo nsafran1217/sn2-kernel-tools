@@ -162,6 +162,12 @@ echo "==> Fetching T2 scripts from $T2_SVN_BASE ..."
 curl -fsSL "$T2_MKINITRD_URL"  -o "$mkinitrd_sh" || { echo "Error: failed to fetch mkinitrd.sh";  exit 1; }
 curl -fsSL "$T2_LIVE_INIT_URL" -o "$live_init"   || { echo "Error: failed to fetch live/init";    exit 1; }
 chmod +x "$mkinitrd_sh"
+
+# Patch live/init to create /run/live marker before switch_root.
+# This lands in the real root's /run/live after switch_root and is used
+# as the ConditionPathExists for live-only systemd services.
+sed -i 's|boot $init "$@"|mkdir -p /mnt/run\n\t    touch /mnt/run/live\n\t    boot $init "$@"|' "$live_init"
+
 echo "    mkinitrd.sh : $(wc -l < "$mkinitrd_sh") lines"
 echo "    live/init   : $(wc -l < "$live_init") lines"
 
@@ -170,17 +176,21 @@ echo "    live/init   : $(wc -l < "$live_init") lines"
 kernelver=$(find "$kernel_dir/lib/modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -1)
 [[ -z "$kernelver" ]] && echo "Error: no version directory found under $kernel_dir/lib/modules/" && exit 1
 
-kernel_img=$(find "$kernel_dir/boot" -name 'vmlinuz-*' -o -name 'vmlinux-*' 2>/dev/null | head -1)
+kernel_img=$(find "$kernel_dir/boot" -name 'vmlinuz-*' 2>/dev/null | head -1)
+kernel_img_uncompressed=$(find "$kernel_dir/boot" -name 'vmlinux-*' 2>/dev/null | head -1)
 kernel_basename="${kernel_img##*/}"
+kernel_basename_uncompressed="${kernel_img_uncompressed##*/}"
 sysmap="$kernel_dir/boot/System.map-$kernelver"
 moddir="$kernel_dir/lib/modules/$kernelver"
 
-[[ -z "$kernel_img" ]]  && echo "Error: no vmlinuz-* found under $kernel_dir/boot/"   && exit 1
+[[ -z "$kernel_img"              ]] && echo "Error: no vmlinuz-* found under $kernel_dir/boot/"  && exit 1
+[[ -z "$kernel_img_uncompressed" ]] && echo "Error: no vmlinux-* found under $kernel_dir/boot/" && exit 1
 [[ ! -f "$sysmap"   ]]  && echo "Error: $sysmap not found"                             && exit 1
 [[ ! -d "$moddir"   ]]  && echo "Error: $moddir not found"                             && exit 1
 
 echo "==> Kernel version : $kernelver"
 echo "    Kernel image   : $kernel_img"
+echo "    Kernel (raw)   : $kernel_img_uncompressed"
 echo "    System.map     : $sysmap"
 echo "    Module dir     : $moddir"
 
@@ -236,15 +246,16 @@ echo "    Modules copied : $(find "$squashfs_root/lib/modules/$kernelver" -name 
 # live system has them available, then create standard unversioned symlinks:
 #   /boot/vmlinuz    -> vmlinuz-$kernelver
 #   /boot/System.map -> System.map-$kernelver
-cp -f "$kernel_img" "$squashfs_root/boot/$kernel_basename"
+cp -f "$kernel_img"              "$squashfs_root/boot/$kernel_basename"
+cp -f "$kernel_img_uncompressed" "$squashfs_root/boot/$kernel_basename_uncompressed"
 # System.map was already copied above for mkinitrd; ensure it is present
 cp -f "$sysmap" "$squashfs_root/boot/System.map-$kernelver"
 
-ln -sf "$kernel_basename"       "$squashfs_root/boot/vmlinuz"
-ln -sf "$kernel_basename"       "$squashfs_root/boot/vmlinux"
-ln -sf "System.map-$kernelver"  "$squashfs_root/boot/System.map"
+ln -sf "$kernel_basename"              "$squashfs_root/boot/vmlinuz"
+ln -sf "$kernel_basename_uncompressed" "$squashfs_root/boot/vmlinux"
+ln -sf "System.map-$kernelver"         "$squashfs_root/boot/System.map"
 echo "    Symlink : /boot/vmlinuz -> $kernel_basename"
-echo "    Symlink : /boot/vmlinux -> $kernel_basename"
+echo "    Symlink : /boot/vmlinux -> $kernel_basename_uncompressed"
 echo "    Symlink : /boot/System.map -> System.map-$kernelver"
 
 # ── step 4: generate the initrd ───────────────────────────────────────────────
@@ -253,6 +264,7 @@ echo
 echo "==> Running mkinitrd ..."
 
 initrd_out="$workdir/initrd-$kernelver"
+initrd_plain="$workdir/initrd-plain-$kernelver"
 
 bash "$mkinitrd_sh" \
     -R "$squashfs_root" \
@@ -260,6 +272,7 @@ bash "$mkinitrd_sh" \
     "$kernelver"
 
 echo "    Initrd size    : $(du -sh "$initrd_out" | cut -f1)"
+cp -f "$initrd_out" "$initrd_plain"
 
 # ── step 5: build the live-boot init and extend the initrd ───────────────────
 #
@@ -291,56 +304,13 @@ rm -rf "$initrd_unpack"
 
 echo "    Final initrd   : $(du -sh "$initrd_out" | cut -f1)"
 
-# ── step 5b: repack the squashfs ──────────────────────────────────────────────
-# The squashfs_root now has the correct kernel, System.map, symlinks, and
-# modules. Copy the finalised initrd in too, then repack.
-
-# Copy initrd into squashfs /boot and create unversioned symlink
-cp -f "$initrd_out" "$squashfs_root/boot/initrd-$kernelver"
-ln -sf "initrd-$kernelver" "$squashfs_root/boot/initrd"
-echo "    Symlink : /boot/initrd -> initrd-$kernelver"
-
-# ── Resolve grub platform before merging into squashfs ───────────────────────
-# We need grub_lib_dir and grub_platform here (step 7 runs after repack
-# normally, so we resolve them early and merge now while squashfs is open).
+# ── Resolve grub platform ─────────────────────────────────────────────────────
 
 grub_lib_dir="$grub_dir/usr/lib/grub"
 [[ -d "$grub_lib_dir" ]] || { echo "Error: $grub_lib_dir not found — check your grub/ layout"; exit 1; }
 grub_modules_src=$(find "$grub_lib_dir" -mindepth 1 -maxdepth 1 -type d | head -1)
 [[ -z "$grub_modules_src" ]] && { echo "Error: no platform dir found under $grub_lib_dir"; exit 1; }
 grub_platform="${grub_modules_src##*/}"
-
-# ── Merge grub into the squashfs so the installed system has working grub ────
-
-echo "==> Merging grub into squashfs ..."
-# usr/lib/grub/<platform>/
-mkdir -p "$squashfs_root/usr/lib/grub"
-cp -a "$grub_lib_dir/." "$squashfs_root/usr/lib/grub/"
-# usr/sbin/grub*
-if [[ -d "$grub_dir/usr/sbin" ]]; then
-    mkdir -p "$squashfs_root/usr/sbin"
-    cp -a "$grub_dir/usr/sbin"/grub* "$squashfs_root/usr/sbin/" 2>/dev/null || true
-fi
-# usr/share/grub/  (unicode.pf2 etc.)
-if [[ -d "$grub_dir/usr/share/grub" ]]; then
-    mkdir -p "$squashfs_root/usr/share/grub"
-    cp -a "$grub_dir/usr/share/grub/." "$squashfs_root/usr/share/grub/"
-fi
-# etc/grub.d/
-if [[ -d "$grub_dir/etc/grub.d" ]]; then
-    mkdir -p "$squashfs_root/etc/grub.d"
-    cp -a "$grub_dir/etc/grub.d/." "$squashfs_root/etc/grub.d/"
-fi
-
-echo
-echo "==> Repacking squashfs ..."
-new_sqf="$workdir/live.squash"
-mksquashfs "$squashfs_root" "$new_sqf" -noappend -comp zstd -Xcompression-level 19 \
-    -b 1M -processors "$(nproc)" -quiet
-# Replace the squashfs in the ISO tree
-cp -f "$new_sqf" "$sqf"
-echo "    Squashfs size  : $(du -sh "$sqf" | cut -f1)"
-
 # ── step 6: set up the ISO directory ─────────────────────────────────────────
 
 echo
@@ -352,14 +322,15 @@ mkdir -p "$iso_boot"
 # Remove any kernels and initrds from the original ISO
 rm -f "$iso_boot"/vmlinuz-* "$iso_boot"/vmlinux-* "$iso_boot"/initrd-* "$iso_boot"/initrd
 
-# Install our kernel
-cp -f "$kernel_img" "$iso_boot/$kernel_basename"
+# Install our kernel (both compressed and uncompressed)
+cp -f "$kernel_img"              "$iso_boot/$kernel_basename"
+cp -f "$kernel_img_uncompressed" "$iso_boot/$kernel_basename_uncompressed"
 echo "    Kernel         : /boot/$kernel_basename"
+echo "    Kernel (raw)   : /boot/$kernel_basename_uncompressed"
 
 # Place initrd
 cp -f "$initrd_out" "$iso_boot/initrd-$kernelver"
 echo "    Initrd         : /boot/initrd-$kernelver"
-
 # ── step 7: set up grub ───────────────────────────────────────────────────────
 #
 # Expected grub/ layout (collected from a running system):
@@ -406,14 +377,20 @@ mkdir -p "$iso_extract/boot/grub/$grub_platform"
 cp -a "$grub_modules_src/." "$iso_extract/boot/grub/$grub_platform/"
 echo "    Grub modules   : /boot/grub/$grub_platform/ ($(find "$grub_modules_src" -name '*.mod' | wc -l) modules)"
 
+# Place the EFI executable as a plain file in the ISO tree (efi/boot/)
+# so IA-64 firmware can find it directly on the ISO9660 filesystem
+mkdir -p "$iso_extract/efi/boot"
+cp -f "$efi_out" "$iso_extract/efi/boot/$efi_basename"
+echo "    EFI plain      : efi/boot/$efi_basename"
+
+# Also wrap it in a FAT image for the appended EFI partition
 efi_img="$iso_extract/efi.img"
 dd if=/dev/zero bs=1024 count=1440 of="$efi_img" 2>/dev/null
-mkfs.vfat -q "$efi_img"
+mkfs.vfat "$efi_img"
 mmd  -i "$efi_img" ::/EFI
 mmd  -i "$efi_img" ::/EFI/BOOT
 mcopy -i "$efi_img" "$efi_out" "::/EFI/BOOT/$efi_basename"
 echo "    EFI image      : efi.img ($(du -sh "$efi_img" | cut -f1))"
-
 # ── step 8: write grub.cfg ────────────────────────────────────────────────────
 
 grub_cfg="$iso_extract/boot/grub/grub.cfg"
@@ -429,9 +406,8 @@ set fallback=1
 
 GRUBCFG
 
-for k in $(find "$iso_boot" -name 'vmlinuz-*' -o -name 'vmlinux-*' | sort); do
+for k in $(find "$iso_boot" -name 'vmlinux-*' | sort); do
     kver="${k##*/}"
-    kver="${kver#vmlinuz-}"
     kver="${kver#vmlinux-}"
     kname="${k##*/}"
     initrd_entry="/boot/initrd-$kver"
@@ -457,8 +433,68 @@ menuentry "Boot from hard disk" {
     fi
 }
 GRUBCFG
+# ── step 9: repack the squashfs ───────────────────────────────────────────────
 
-# ── step 9: repack the ISO ────────────────────────────────────────────────────
+# Copy initrd into squashfs /boot and create unversioned symlink
+cp -f "$initrd_plain" "$squashfs_root/boot/initrd-$kernelver"
+ln -sf "initrd-$kernelver" "$squashfs_root/boot/initrd"
+echo "    Symlink : /boot/initrd -> initrd-$kernelver"
+
+# ── Merge grub into the squashfs so the installed system has working grub ────
+
+echo "==> Merging grub into squashfs ..."
+# usr/lib/grub/<platform>/
+mkdir -p "$squashfs_root/usr/lib/grub"
+cp -a "$grub_lib_dir/." "$squashfs_root/usr/lib/grub/"
+# usr/sbin/grub*
+if [[ -d "$grub_dir/usr/sbin" ]]; then
+    mkdir -p "$squashfs_root/usr/sbin"
+    cp -a "$grub_dir/usr/sbin"/grub* "$squashfs_root/usr/sbin/" 2>/dev/null || true
+fi
+# usr/share/grub/  (unicode.pf2 etc.)
+if [[ -d "$grub_dir/usr/share/grub" ]]; then
+    mkdir -p "$squashfs_root/usr/share/grub"
+    cp -a "$grub_dir/usr/share/grub/." "$squashfs_root/usr/share/grub/"
+fi
+# etc/grub.d/
+if [[ -d "$grub_dir/etc/grub.d" ]]; then
+    mkdir -p "$squashfs_root/etc/grub.d"
+    cp -a "$grub_dir/etc/grub.d/." "$squashfs_root/etc/grub.d/"
+fi
+
+# ── Install live-only systemd service to start serial console ───────────────
+
+echo "==> Installing live-serial-console.service ..."
+mkdir -p "$squashfs_root/etc/systemd/system"
+mkdir -p "$squashfs_root/etc/systemd/system/multi-user.target.wants"
+
+cat > "$squashfs_root/etc/systemd/system/live-serial-console.service" <<'UNIT'
+[Unit]
+Description=Start serial console on live boot
+After=multi-user.target
+ConditionPathExists=/run/live
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl start serial-getty@ttySG0.service
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+ln -sf /etc/systemd/system/live-serial-console.service \
+    "$squashfs_root/etc/systemd/system/multi-user.target.wants/live-serial-console.service"
+
+echo
+echo "==> Repacking squashfs ..."
+new_sqf="$workdir/live.squash"
+mksquashfs "$squashfs_root" "$new_sqf" -noappend -comp zstd -Xcompression-level 19 \
+    -b 1M -processors "$(nproc)" -quiet
+# Replace the squashfs in the ISO tree
+cp -f "$new_sqf" "$sqf"
+echo "    Squashfs size  : $(du -sh "$sqf" | cut -f1)"
+# ── step 10: build the ISO ────────────────────────────────────────────────────
 
 echo
 echo "==> Building ISO: $output_iso"
