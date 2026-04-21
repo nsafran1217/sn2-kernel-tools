@@ -8,6 +8,9 @@ The SGI SN2 Altix support in the kernel is decided when the kernel is compiled, 
 Altix support. Unpatched grub2 also does not work on Altix. 
 Therefore, we must modify the T2 ISO with our custom kernel, initrd, and grub2.
 
+The resultant ISO can be burned to a DVD or `dd`'ed to a disk.  
+`dd`'ing to a disk is the preferred way as it is more reliable.
+
 ## Dependencies:
 
 * xorriso        (osirrox for ISO extraction, xorrisofs for ISO creation)
@@ -62,6 +65,19 @@ If you want, you can specify a `--workdir` and to `--keep-workdir` to help troub
     --keep-workdir
 ```
 
-6. Burn your ISO
+6. Burn your ISO, or dd to a disk
 
-7. Cleanup your workdir if needed
+`dd if=t2-26.3-Altix.iso of=/dev/sdX status=progress bs=4M`
+
+7. Boot like normal on Altix. Find the EFI file and launch it in the EFI shell.
+
+```
+Device mapping table
+  fs0  : Acpi(PNP0A03,1)/Pci(3|0)/Sata(Pun1,Lun0)/HD(Part1,SigC89C51D6-208A-4A9D-A00E-DF7A29B0A00F)
+  fs1  : Acpi(PNP0A03,1)/Pci(3|0)/Sata(Pun2,Lun0)/HD(Part2,Sig00000000)
+  ....
+Shell> fs1:
+fs1:\> efi\boot\bootia64
+```
+
+8. Cleanup your workdir if needed

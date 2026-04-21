@@ -360,6 +360,22 @@ echo "    Grub platform  : $grub_platform"
 echo "    EFI executable : $efi_basename"
 
 # ── Build the EFI executable from the modules ─────────────────────────────────
+# Embed enough modules that grub can find grub.cfg on ANY filesystem/device:
+#   - search + search_fs_file: scan all partitions for a file
+#   - iso9660: read the ISO9660 filesystem (DVD or dd'd disk)
+#   - fat: read the EFI FAT partition
+#   - ext2: read ext2/3/4 (installed system)
+#   - part_msdos + part_gpt: understand partition tables
+#   - regexp: needed for the prefix stub
+#   - linux + initrd: load the kernel
+#   - normal + configfile: load grub.cfg and process it
+
+# The prefix stub searches all partitions for /boot/grub/grub.cfg
+# so grub.cfg is found whether booting from DVD or a dd'd SATA disk.
+cat > "$workdir/efi-prefix.cfg" <<'EOF'
+search --no-floppy --file --set=root /boot/grub/grub.cfg
+set prefix=($root)/boot/grub
+EOF
 
 echo "    Building $efi_basename with grub-mkimage ..."
 efi_out="$workdir/$efi_basename"
@@ -368,8 +384,10 @@ grub-mkimage \
     -p /boot/grub \
     -d "$grub_modules_src" \
     -o "$efi_out" \
+    -c "$workdir/efi-prefix.cfg" \
     --compression auto \
-    iso9660 fat part_msdos part_gpt regexp
+    iso9660 fat ext2 part_msdos part_gpt regexp \
+    search search_fs_file normal configfile linux
 
 # ── Copy modules into the ISO and wrap EFI executable in a FAT image ─────────
 
