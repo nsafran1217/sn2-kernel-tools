@@ -8,7 +8,14 @@ The SGI SN2 Altix support in the kernel is decided when the kernel is compiled, 
 Altix support. Unpatched grub2 also does not work on Altix. 
 Therefore, we must modify the T2 ISO with our custom kernel, initrd, and grub2.
 
+## Dependencies:
 
+* xorriso        (osirrox for ISO extraction, xorrisofs for ISO creation)
+* squashfs-tools (unsquashfs, mksquashfs)
+* kmod           (modinfo, depmod)
+* grub-mkimage   (from grub2 on the build host)
+* cpio, zstd, curl
+* mtools         (mkfs.vfat, mmd, mcopy) — for the EFI FAT image
 
 ## Howto:
 
