@@ -1,0 +1,27 @@
+From 4aa0e8234819ab6fb453ca38b885823230ba6a9b Mon Sep 17 00:00:00 2001
+From: SN2 Dev <sn2-dev@local>
+Date: Thu, 23 Apr 2026 16:00:13 +0000
+Subject: [PATCH 9/9] ia64: Kconfig: IA64_GENERIC depends on !FLATMEM
+
+IA64_SGI_SN2 depends on !FLATMEM; since IA64_GENERIC selects SN2, it
+must inherit that dependency explicitly (Kconfig 'select' bypasses
+'depends on' and would otherwise produce a silently-invalid config).
+---
+ arch/ia64/Kconfig | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/ia64/Kconfig b/arch/ia64/Kconfig
+index 7d1d820..c4bbd70 100644
+--- a/arch/ia64/Kconfig
++++ b/arch/ia64/Kconfig
+@@ -195,6 +195,7 @@ config IA64_SGI_SN2
+ 
+ config IA64_GENERIC
+ 	bool "Generic kernel (boots on SN2 and non-SN2 IA-64)"
++	depends on !FLATMEM
+ 	select IA64_SGI_SN2
+ 	help
+ 	  Build a single kernel image that boots on both generic IA-64
+-- 
+2.43.0
+

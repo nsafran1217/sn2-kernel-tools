@@ -1,0 +1,368 @@
+From 0253a4e0dad872336a1ed9507480d4868493669e Mon Sep 17 00:00:00 2001
+From: SN2 Dev <sn2-dev@local>
+Date: Fri, 24 Apr 2026 02:28:08 +0000
+Subject: [PATCH 8/8] ia64: implement HAVE_ARCH_JUMP_LABEL
+
+Implements static-key jump-label patching for IA-64.  Each static
+branch site occupies one 16-byte MIB-template bundle; the 'off'
+state is nop.b 0 in slot 2 and the 'on' state is br.cond.sptk.many
+to the target, also in slot 2.  The bundle template is fixed across
+both forms, so transforms rewrite only the 41 bits of slot 2, which
+live entirely in the high qword of the bundle.  This is a single
+8-byte store plus the standard fc / sync.i / srlz.i icache sync that
+the existing self-modifying-code paths in arch/ia64/kernel/patch.c
+already use (ia64_patch_vtop, ia64_patch_rse).
+
+The inline asm in arch_static_branch() / arch_static_branch_jump()
+emits the instruction inside an explicit { ... ;; } bundle group so
+the assembler places the nop.b or br.cond in slot 2 of an MIB bundle
+whose slots 0 and 1 are nop.m and nop.i.  This guarantees that the
+site is exactly one bundle, 16-byte aligned, and independent of
+surrounding code scheduling.
+
+arch_jump_label_transform() encodes br.cond.sptk.many from scratch
+using the B1 form (op=0x4, wh=sptk, btype=cond) with a signed
+21-bit IP-relative displacement expressed in bundles.  The
+addressable range is +/- 16 MiB around each bundle, which is
+sufficient for all in-kernel static branch sites today.  Out-of-range
+targets WARN and leave the bundle unmodified (callers will fall
+through to the no-op path in that case).
+
+The local CPU's fc + sync.i + srlz.i is followed by an smp_call_
+function IPI that makes every other CPU issue sync.i + srlz.i, so
+any stale I-cache copy of the old bundle is discarded before the
+next fetch.  For the common case in this tree (sn2_platform_key,
+flipped once during ia64_platform_detect() before secondary CPUs
+boot) the IPI is effectively a no-op, but it is correct in the
+general case and costs nothing when no other CPUs are online.
+
+struct jump_entry is the non-relative 3-u64 form (code/target/key
+as absolute virtual addresses).  IA-64 has no KASLR and no FDPIC,
+so absolute entries are the simplest correct choice.
+HAVE_ARCH_JUMP_LABEL_RELATIVE can be added later as an optimization
+that halves the __jump_table size.
+
+  * arch/ia64/include/asm/jump_label.h (new): arch_static_branch,
+    arch_static_branch_jump, JUMP_LABEL_NOP_SIZE, struct jump_entry.
+  * arch/ia64/kernel/jump_label.c (new): arch_jump_label_transform,
+    arch_jump_label_transform_queue/apply, B1 branch encoder.
+  * arch/ia64/Kconfig: select HAVE_ARCH_JUMP_LABEL.
+  * arch/ia64/kernel/Makefile: build jump_label.o under CONFIG_JUMP_LABEL.
+
+With this in place, the sn2_platform_key runtime dispatch added in
+the earlier commits of this series drops from a load+test+branch on
+every hot-path call to a patched nop/br.cond pair.
+---
+ arch/ia64/Kconfig                  |   1 +
+ arch/ia64/include/asm/jump_label.h |  79 ++++++++++++
+ arch/ia64/kernel/Makefile          |   1 +
+ arch/ia64/kernel/jump_label.c      | 187 +++++++++++++++++++++++++++++
+ 4 files changed, 268 insertions(+)
+ create mode 100644 arch/ia64/include/asm/jump_label.h
+ create mode 100644 arch/ia64/kernel/jump_label.c
+
+diff --git a/arch/ia64/Kconfig b/arch/ia64/Kconfig
+index 7e78a48..7cfeda1 100644
+--- a/arch/ia64/Kconfig
++++ b/arch/ia64/Kconfig
+@@ -58,6 +58,7 @@ config IA64
+ 	select LEGACY_TIMER_TICK
+ 	select SWIOTLB
+ 	select SYSCTL_ARCH_UNALIGN_NO_WARN
++	select HAVE_ARCH_JUMP_LABEL
+ 	select HAVE_MOD_ARCH_SPECIFIC
+ 	select MODULES_USE_ELF_RELA
+ 	select ARCH_USE_CMPXCHG_LOCKREF
+diff --git a/arch/ia64/include/asm/jump_label.h b/arch/ia64/include/asm/jump_label.h
+new file mode 100644
+index 0000000..5d28ae8
+--- /dev/null
++++ b/arch/ia64/include/asm/jump_label.h
+@@ -0,0 +1,79 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _ASM_IA64_JUMP_LABEL_H
++#define _ASM_IA64_JUMP_LABEL_H
++
++/*
++ * IA-64 jump label support.
++ *
++ * Each static branch site occupies one 16-byte instruction bundle.
++ * The bundle template is fixed to MIB (template = 0x10) across both
++ * states so that the "off" (nop) and "on" (branch) forms differ only
++ * in the 41-bit slot-2 encoding.  No template rewrite is required, so
++ * the runtime patch is a single 8-byte store to the high qword of the
++ * bundle, followed by the standard fc / sync.i / srlz.i sequence
++ * that the rest of arch/ia64 already uses for self-modifying code.
++ *
++ * asm goto emits the bundle inside its own {} bundle group so the
++ * assembler places the nop.b / br.cond in slot 2 of an MIB bundle
++ * whose slots 0 and 1 are nop.m / nop.i.  This guarantees that the
++ * site is exactly one bundle, 16-byte aligned, and independent of
++ * surrounding code scheduling.
++ */
++#ifndef __ASSEMBLY__
++
++#include <linux/stringify.h>
++#include <linux/types.h>
++
++#define JUMP_LABEL_NOP_SIZE	16
++
++static __always_inline bool arch_static_branch(struct static_key *key,
++					       bool branch)
++{
++	asm goto("1:\n\t"
++		 "{ nop.m 0; nop.i 0; nop.b 0 ;; }\n\t"
++		 ".pushsection __jump_table,  \"aw\"\n\t"
++		 ".align 8\n\t"
++		 ".quad 1b, %l[l_yes], %c0\n\t"
++		 ".popsection\n\t"
++		 : :  "i" (&((char *)key)[branch]) : : l_yes);
++	return false;
++l_yes:
++	return true;
++}
++
++static __always_inline bool arch_static_branch_jump(struct static_key *key,
++						    bool branch)
++{
++	asm goto("1:\n\t"
++		 "{ nop.m 0; nop.i 0; br.cond.sptk.many %l[l_yes] ;; }\n\t"
++		 ".pushsection __jump_table,  \"aw\"\n\t"
++		 ".align 8\n\t"
++		 ".quad 1b, %l[l_yes], %c0\n\t"
++		 ".popsection\n\t"
++		 : : "i" (&((char *)key)[branch]) : : l_yes);
++	return false;
++l_yes:
++	return true;
++}
++
++#endif /* __ASSEMBLY__ */
++
++/*
++ * Non-relative entries: absolute 64-bit code/target/key.  This matches
++ * what <linux/jump_label.h> expects when HAVE_ARCH_JUMP_LABEL_RELATIVE
++ * is not set.  ia64 has no KASLR and a simple virtual address space,
++ * so absolute entries are the simplest correct choice for v1.
++ */
++#ifndef __ASSEMBLY__
++
++typedef u64 jump_label_t;
++
++struct jump_entry {
++	jump_label_t code;
++	jump_label_t target;
++	jump_label_t key;
++};
++
++#endif /* __ASSEMBLY__ */
++
++#endif /* _ASM_IA64_JUMP_LABEL_H */
+diff --git a/arch/ia64/kernel/Makefile b/arch/ia64/kernel/Makefile
+index cf833d7..12d0cc7 100644
+--- a/arch/ia64/kernel/Makefile
++++ b/arch/ia64/kernel/Makefile
+@@ -24,6 +24,7 @@ obj-$(CONFIG_NUMA)		+= numa.o
+ obj-$(CONFIG_IA64_CYCLONE)	+= cyclone.o
+ obj-$(CONFIG_IA64_MCA_RECOVERY)	+= mca_recovery.o
+ obj-$(CONFIG_KPROBES)		+= kprobes.o
++obj-$(CONFIG_JUMP_LABEL)	+= jump_label.o
+ obj-$(CONFIG_DYNAMIC_FTRACE)	+= ftrace.o
+ obj-$(CONFIG_KEXEC)		+= machine_kexec.o relocate_kernel.o crash.o
+ obj-$(CONFIG_CRASH_DUMP)	+= crash_dump.o
+diff --git a/arch/ia64/kernel/jump_label.c b/arch/ia64/kernel/jump_label.c
+new file mode 100644
+index 0000000..fa6ac20
+--- /dev/null
++++ b/arch/ia64/kernel/jump_label.c
+@@ -0,0 +1,187 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * IA-64 jump label support.
++ *
++ * A jump label site is one 16-byte MIB-template bundle.  The 41-bit
++ * slot-2 encoding is either nop.b 0 (default/off state) or a
++ * br.cond.sptk.many target (on state).  The bundle template stays
++ * the same for both forms, so transforms only rewrite slot 2, which
++ * lives entirely in the high qword of the bundle: one 8-byte store
++ * followed by the standard fc / sync.i / srlz.i icache sync that
++ * the rest of arch/ia64 already uses for self-modifying code
++ * (see ia64_patch_vtop() and ia64_patch_rse() in kernel/patch.c).
++ *
++ * Copyright (C) 2026 SN2 Revival Project
++ */
++
++#include <linux/cpu.h>
++#include <linux/jump_label.h>
++#include <linux/kernel.h>
++#include <linux/memory.h>
++#include <linux/mutex.h>
++#include <linux/smp.h>
++#include <linux/types.h>
++
++#include <asm/cacheflush.h>
++#include <asm/patch.h>
++
++/*
++ * nop.b 0 (B9 form) encoding:
++ *
++ *   bits  40..37  major opcode   = 0x2  (B-unit misc)
++ *   bit   36      reserved       = 0
++ *   bits  35..33  opcode x6 ext  = 0    (pr=0 variant)
++ *   bits  32..13  imm20          = 0
++ *   bits  12..6   reserved       = 0
++ *   bit   5       btype/ext bit  = 0
++ *   bits  5..0    qp             = 0
++ *
++ * Resulting 41-bit value: 0x4000000000 (op=0x2 shifted to bits 40..37
++ * gives 0x2 << 37 = 0x4000000000).
++ */
++#define IA64_NOP_B_SLOT		0x4000000000UL
++
++/*
++ * br.cond.sptk.many target (B1 form) encoding:
++ *
++ *   bits  40..37  major opcode   = 0x4  (branch IP-relative)
++ *   bit   36      s (sign)       = (imm20b sign bit)
++ *   bits  35..13  imm20b         = (target - bundle_ip) / 16, 20 bits
++ *   bit   12      p (few)        = 0  (we use .many below)
++ *   bits  11..10  wh (hint)      = 01 (sptk)
++ *   bit   9       d (sequential) = 0
++ *   bits  8..6    reserved       = 0
++ *   bits  5..3    btype          = 0 (cond)
++ *   bits  2..0    qp             = 0
++ *
++ * Constant bits (opcode + wh=sptk + btype=cond, qp=0, d=0, p=many=0):
++ *     (0x4 << 37) | (0x1 << 10)
++ *   =  0x8000000000 | 0x400
++ *   =  0x8000000000UL | 0x400UL
++ */
++#define IA64_BR_COND_SPTK_BITS	(0x8000000000UL | 0x400UL)
++
++/*
++ * ia64_encode_br_cond - build a B1 "br.cond.sptk.many" slot encoding
++ * @bundle_ip: absolute address of the target bundle (16-byte aligned)
++ * @target:    absolute address of the branch target (16-byte aligned)
++ *
++ * Returns the 41-bit slot encoding as a u64, or 0 on out-of-range.
++ * The branch displacement is (target - bundle_ip) expressed in bundles,
++ * as a signed 21-bit value (s:imm20b).  The addressable range is
++ * therefore +/- 16 MiB around bundle_ip.  For in-kernel static branch
++ * sites this is essentially always sufficient.
++ */
++static u64 ia64_encode_br_cond(u64 bundle_ip, u64 target)
++{
++	s64 disp = (s64)(target - bundle_ip);
++	s64 bundles = disp >> 4;
++	u64 imm20b, s;
++
++	if (disp & 0xf) {
++		/* Target must be bundle-aligned.  */
++		return 0;
++	}
++
++	if (bundles < -(1L << 20) || bundles >= (1L << 20)) {
++		/* Out of +/- 16 MiB range; caller must handle.  */
++		return 0;
++	}
++
++	s = (bundles < 0) ? 1UL : 0UL;
++	imm20b = (u64)bundles & ((1UL << 20) - 1);
++
++	return IA64_BR_COND_SPTK_BITS | (s << 36) | (imm20b << 13);
++}
++
++/*
++ * Write a new 41-bit encoding into slot 2 of the bundle at @bundle_ip.
++ * Slot 2 occupies bits 23..63 of b[1] (the high qword of the bundle):
++ *   shift = 5 (template) + 41 * 2 = 87   -> shift-64 = 23
++ *   width = 41                           -> mask in b[1]: bits 63..23
++ */
++static void ia64_patch_slot2(u64 bundle_ip, u64 new_slot_enc)
++{
++	const u64 slot2_mask_b1 = ((1UL << 41) - 1) << 23;
++	u64 *b = (u64 *)(bundle_ip & ~0xfUL);
++
++	b[1] = (b[1] & ~slot2_mask_b1) |
++	       ((new_slot_enc & ((1UL << 41) - 1)) << 23);
++}
++
++static void ia64_jump_label_do_transform(struct jump_entry *entry,
++					 enum jump_label_type type)
++{
++	u64 bundle_ip = jump_entry_code(entry);
++	u64 target    = jump_entry_target(entry);
++	u64 enc;
++
++	if (type == JUMP_LABEL_JMP) {
++		enc = ia64_encode_br_cond(bundle_ip, target);
++		if (!enc) {
++			WARN_ONCE(1,
++				  "ia64 jump_label: target %lx out of range of bundle %lx\n",
++				  (unsigned long)target,
++				  (unsigned long)bundle_ip);
++			return;
++		}
++	} else {
++		enc = IA64_NOP_B_SLOT;
++	}
++
++	ia64_patch_slot2(bundle_ip, enc);
++
++	/* Standard ia64 self-modifying-code icache sync on local CPU. */
++	ia64_fc((void *)bundle_ip);
++	ia64_sync_i();
++	ia64_srlz_i();
++}
++
++/*
++ * Cross-CPU icache sync.  After the local CPU has written the new
++ * bundle and issued fc + sync.i + srlz.i, every other CPU that may
++ * have the stale bundle cached in its I-cache needs to execute
++ * srlz.i before it can be trusted to fetch the new instruction.
++ *
++ * The local_flush_icache_range path already does this for module
++ * load on SMP.  We reuse the same pattern here via smp_call_function.
++ */
++static void ia64_jump_label_icache_sync_each_cpu(void *info)
++{
++	ia64_sync_i();
++	ia64_srlz_i();
++}
++
++void arch_jump_label_transform(struct jump_entry *entry,
++			       enum jump_label_type type)
++{
++	ia64_jump_label_do_transform(entry, type);
++
++#ifdef CONFIG_SMP
++	/*
++	 * Kick every other online CPU through a serialization so any
++	 * stale I-cache copy of the old bundle is discarded before its
++	 * next fetch from that bundle.
++	 */
++	smp_call_function(ia64_jump_label_icache_sync_each_cpu, NULL, 1);
++#endif
++}
++
++/*
++ * arch_jump_label_transform_queue / _apply are optional; providing
++ * them lets the core batch multiple transforms under a single
++ * stop-machine-like window.  We implement the queue as an immediate
++ * transform and make _apply a no-op.  This keeps parity with the
++ * pre-queue API behavior and avoids introducing a dedicated IPI
++ * batching path on ia64 for the single use case we have today.
++ */
++bool arch_jump_label_transform_queue(struct jump_entry *entry,
++				     enum jump_label_type type)
++{
++	arch_jump_label_transform(entry, type);
++	return true;
++}
++
++void arch_jump_label_transform_apply(void)
++{
++}
+-- 
+2.43.0
+

@@ -1,0 +1,72 @@
+From f599d0779bb16cf83e7ad237ebd1a14fdd0b2b7a Mon Sep 17 00:00:00 2001
+From: SN2 Dev <sn2-dev@local>
+Date: Thu, 23 Apr 2026 15:10:29 +0000
+Subject: [PATCH 1/9] ia64: Kconfig: add IA64_GENERIC option
+
+Adds a new 'IA64_GENERIC' bool that, when enabled, selects IA64_SGI_SN2
+so all SN2 platform code is compiled in, and marks this build as a
+'generic' kernel that will detect SN2 vs non-SN2 hardware at boot.
+
+SWIOTLB and ZONE_DMA32 are re-enabled when IA64_GENERIC is on because
+a generic kernel must support both the SN2 path (which does not need
+them) and non-SN2 platforms (which do).
+
+This is the Kconfig scaffolding only; runtime dispatch comes in
+subsequent commits.
+---
+ arch/ia64/Kconfig | 25 +++++++++++++++++++++++--
+ 1 file changed, 23 insertions(+), 2 deletions(-)
+
+diff --git a/arch/ia64/Kconfig b/arch/ia64/Kconfig
+index f0f6d73..7d1d820 100644
+--- a/arch/ia64/Kconfig
++++ b/arch/ia64/Kconfig
+@@ -56,7 +56,7 @@ config IA64
+ 	select ARCH_CLOCKSOURCE_DATA
+ 	select GENERIC_TIME_VSYSCALL
+ 	select LEGACY_TIMER_TICK
+-	select SWIOTLB if !IA64_SGI_SN2
++	select SWIOTLB if !IA64_SGI_SN2 || IA64_GENERIC
+ 	select SYSCTL_ARCH_UNALIGN_NO_WARN
+ 	select HAVE_MOD_ARCH_SPECIFIC
+ 	select MODULES_USE_ELF_RELA
+@@ -66,7 +66,7 @@ config IA64
+ 	select NEED_SG_DMA_LENGTH
+ 	select NUMA if !FLATMEM
+ 	select PCI_MSI_ARCH_FALLBACKS if PCI_MSI
+-	select ZONE_DMA32 if !IA64_SGI_SN2
++	select ZONE_DMA32 if !IA64_SGI_SN2 || IA64_GENERIC
+ 	select FUNCTION_ALIGNMENT_32B
+ 	default y
+ 	help
+@@ -193,6 +193,27 @@ config IA64_SGI_SN2
+ 	  DMA, IRQ, and NUMA support for the SHUB interconnect.  If you have
+ 	  an SGI Altix system, say Y.  Otherwise, say N.
+ 
++config IA64_GENERIC
++	bool "Generic kernel (boots on SN2 and non-SN2 IA-64)"
++	select IA64_SGI_SN2
++	help
++	  Build a single kernel image that boots on both generic IA-64
++	  machines and SGI Altix (SN2) systems.  Platform is detected at
++	  boot time via the ACPI XSDT OEM ID, and platform-specific code
++	  paths (I/O, IPI, TLB purge, mmiowb) are selected at runtime via
++	  a static key.
++
++	  Enabling this option forces IA64_SGI_SN2 on so that SN2 code is
++	  compiled in unconditionally.  Runtime dispatch adds a predictable
++	  memory load + conditional branch to hot paths (e.g. MMIO readb).
++	  On an out-of-order x86 core this would be negligible; on Itanium's
++	  in-order pipeline it is measurable but small, and can be reduced
++	  to zero once HAVE_ARCH_JUMP_LABEL is implemented for IA-64.
++
++	  If you want one kernel binary that works on both platforms, say Y.
++	  If you are building a dedicated SN2-only or generic-only kernel,
++	  say N for best performance.
++
+ config SGI_SN
+ 	def_bool y
+ 	depends on IA64_SGI_SN2
+-- 
+2.43.0
+

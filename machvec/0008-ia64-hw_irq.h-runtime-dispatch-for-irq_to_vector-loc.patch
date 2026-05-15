@@ -1,0 +1,62 @@
+From d0ba601537027d7047f82c04ab9ad75445278d17 Mon Sep 17 00:00:00 2001
+From: SN2 Dev <sn2-dev@local>
+Date: Thu, 23 Apr 2026 15:58:08 +0000
+Subject: [PATCH 8/9] ia64: hw_irq.h: runtime dispatch for
+ irq_to_vector/local_vector_to_irq
+
+On SN2 vectors and IRQs are identity-mapped (the SHUB itself keeps the
+mapping); on generic ia64 we use the per-CPU vector_irq[] array and the
+irq_cfg[].vector field.  Both irq_cfg[] and vector_irq are defined
+unconditionally in irq_ia64.c, so both forms compile under either
+configuration.
+
+Under CONFIG_IA64_GENERIC, branch on ia64_is_sn2() inside each inline
+helper.  Dedicated-platform builds retain the original compile-time
+constant path.
+
+Added #include <asm/machvec.h>.
+---
+ arch/ia64/include/asm/hw_irq.h | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/arch/ia64/include/asm/hw_irq.h b/arch/ia64/include/asm/hw_irq.h
+index 9c68a7a..1ea8daf 100644
+--- a/arch/ia64/include/asm/hw_irq.h
++++ b/arch/ia64/include/asm/hw_irq.h
+@@ -14,6 +14,7 @@
+ 
+ #include <asm/ptrace.h>
+ #include <asm/smp.h>
++#include <asm/machvec.h>
+ 
+ typedef u8 ia64_vector;
+ 
+@@ -150,7 +151,11 @@ static inline void ia64_native_resend_irq(unsigned int vector)
+ static inline ia64_vector
+ irq_to_vector (int irq)
+ {
+-#ifdef CONFIG_IA64_SGI_SN2
++#ifdef CONFIG_IA64_GENERIC
++	if (ia64_is_sn2())
++		return (ia64_vector)irq;
++	return irq_cfg[irq].vector;
++#elif defined(CONFIG_IA64_SGI_SN2)
+ 	return (ia64_vector)irq;
+ #else
+ 	return irq_cfg[irq].vector;
+@@ -165,7 +170,11 @@ irq_to_vector (int irq)
+ static inline unsigned int
+ local_vector_to_irq (ia64_vector vec)
+ {
+-#ifdef CONFIG_IA64_SGI_SN2
++#ifdef CONFIG_IA64_GENERIC
++	if (ia64_is_sn2())
++		return (unsigned int)vec;
++	return __this_cpu_read(vector_irq[vec]);
++#elif defined(CONFIG_IA64_SGI_SN2)
+ 	return (unsigned int)vec;
+ #else
+ 	return __this_cpu_read(vector_irq[vec]);
+-- 
+2.43.0
+

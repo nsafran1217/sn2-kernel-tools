@@ -9,7 +9,7 @@ _BASE_DIR=~/altix_cross
 
 echo $_BASE_DIR
 
-
+_BOOTSERVER="10.40.0.121"
 
 # Build the kernel
 #cd $_BASE_DIR/src/mainline/linux
@@ -19,6 +19,18 @@ if [ ! -f .config ]; then
 	exit 1
 fi
 
+
+
+
+if [ -z "$1" ]
+  then
+    _KERNSUFFIX="test"
+
+else 
+
+	_KERNSUFFIX=$1
+fi
+echo $_KERNSUFFIX
 
 # fix known compile bug
 #echo "fix sn_dma_flush compile bug"
@@ -90,9 +102,9 @@ cp "$_srclocation/vmlinux.gz" "$_releasedir/boot/vmlinuz-${_kernelrelease}"
 
 
 # Copy to NFS server
-scp "$_releasedir/boot/vmlinuz-${_kernelrelease}" nfs:/t2/tftproot/t2/kernel/vmlinuz-test
-scp "$_releasedir/boot/vmlinuz-${_kernelrelease}" nfs:/t2/altixroot/boot/vmlinuz-test
-rsync -rl "$_releasedir/lib/modules/" nfs:/t2/altixroot/lib/modules/
+scp "$_releasedir/boot/vmlinuz-${_kernelrelease}" $_BOOTSERVER:/t2/tftproot/t2/kernel/vmlinuz-$_KERNSUFFIX
+scp "$_releasedir/boot/vmlinuz-${_kernelrelease}" $_BOOTSERVER:/t2/altixroot/boot/vmlinuz-$_KERNSUFFIX
+rsync -rl "$_releasedir/lib/modules/" $_BOOTSERVER:/t2/altixroot/lib/modules/
 
 echo "Copy complete, reboot to test ${_kernelrelease}"
 
@@ -102,4 +114,4 @@ echo "Kernel package created at $_BASE_DIR/release/$_tarname"
 
 rm -rf "$_releasedir"
 
-echo "Donet ${_kernelrelease}"
+echo "Done!: ${_kernelrelease}"

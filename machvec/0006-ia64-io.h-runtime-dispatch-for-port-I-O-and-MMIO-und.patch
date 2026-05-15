@@ -1,0 +1,297 @@
+From aef81c1d3cf59e680d7d7de4459c3eefb14a1338 Mon Sep 17 00:00:00 2001
+From: SN2 Dev <sn2-dev@local>
+Date: Thu, 23 Apr 2026 15:51:36 +0000
+Subject: [PATCH 6/9] ia64: io.h: runtime dispatch for port I/O and MMIO under
+ IA64_GENERIC
+
+Factor the existing native ia64 inb/inw/inl/outb/outw/outl inlines
+out as __ia64_{inb,inw,inl,outb,outw,outl}_native so they remain
+callable after the public names are redefined to runtime dispatchers.
+
+Add a new CONFIG_IA64_GENERIC block that:
+
+  * #undefs the native public names and re-defines them as static
+    inline dispatchers branching on ia64_is_sn2().  On SN2 the call
+    routes to ___sn_inb / ___sn_outb / ... (SHUB port-space codec).
+
+  * Defines readb/readw/readl/readq (and their _relaxed variants)
+    before <asm-generic/io.h> is pulled in, so the generic wrappers
+    are shadowed.  On SN2 we call ___sn_readb etc.; otherwise we
+    replicate asm-generic's barrier + volatile load + rmb sequence
+    inline.
+
+The existing CONFIG_IA64_SGI_SN2-only (non-GENERIC) block is retained
+unchanged and moved under an 'elif' so dedicated SN2 builds keep the
+zero-overhead hardcoded macro redirect.  When neither SN2 nor GENERIC
+is configured, no redirect is emitted and asm-generic/io.h's readb
+remains in force.
+
+Each dispatcher is a single branch on a static-key-backed variable;
+without HAVE_ARCH_JUMP_LABEL that compiles to a global load + test +
+conditional branch on every I/O access.  This is the main cost of a
+generic kernel on ia64 and is the motivation to implement arch jump
+labels as the follow-up step.
+---
+ arch/ia64/include/asm/io.h | 183 +++++++++++++++++++++++++++++++++++--
+ 1 file changed, 175 insertions(+), 8 deletions(-)
+
+diff --git a/arch/ia64/include/asm/io.h b/arch/ia64/include/asm/io.h
+index d499d84..28521dc 100644
+--- a/arch/ia64/include/asm/io.h
++++ b/arch/ia64/include/asm/io.h
+@@ -125,7 +125,7 @@ __ia64_mk_io_addr (unsigned long port)
+  */
+ 
+ #define inb inb
+-static inline unsigned int inb(unsigned long port)
++static inline unsigned int __ia64_inb_native(unsigned long port)
+ {
+ 	volatile unsigned char *addr = __ia64_mk_io_addr(port);
+ 	unsigned char ret;
+@@ -134,9 +134,10 @@ static inline unsigned int inb(unsigned long port)
+ 	__ia64_mf_a();
+ 	return ret;
+ }
++static inline unsigned int inb(unsigned long port) { return __ia64_inb_native(port); }
+ 
+ #define inw inw
+-static inline unsigned int inw(unsigned long port)
++static inline unsigned int __ia64_inw_native(unsigned long port)
+ {
+ 	volatile unsigned short *addr = __ia64_mk_io_addr(port);
+ 	unsigned short ret;
+@@ -145,9 +146,10 @@ static inline unsigned int inw(unsigned long port)
+ 	__ia64_mf_a();
+ 	return ret;
+ }
++static inline unsigned int inw(unsigned long port) { return __ia64_inw_native(port); }
+ 
+ #define inl inl
+-static inline unsigned int inl(unsigned long port)
++static inline unsigned int __ia64_inl_native(unsigned long port)
+ {
+ 	volatile unsigned int *addr = __ia64_mk_io_addr(port);
+ 	unsigned int ret;
+@@ -156,33 +158,37 @@ static inline unsigned int inl(unsigned long port)
+ 	__ia64_mf_a();
+ 	return ret;
+ }
++static inline unsigned int inl(unsigned long port) { return __ia64_inl_native(port); }
+ 
+ #define outb outb
+-static inline void outb(unsigned char val, unsigned long port)
++static inline void __ia64_outb_native(unsigned char val, unsigned long port)
+ {
+ 	volatile unsigned char *addr = __ia64_mk_io_addr(port);
+ 
+ 	*addr = val;
+ 	__ia64_mf_a();
+ }
++static inline void outb(unsigned char val, unsigned long port) { __ia64_outb_native(val, port); }
+ 
+ #define outw outw
+-static inline void outw(unsigned short val, unsigned long port)
++static inline void __ia64_outw_native(unsigned short val, unsigned long port)
+ {
+ 	volatile unsigned short *addr = __ia64_mk_io_addr(port);
+ 
+ 	*addr = val;
+ 	__ia64_mf_a();
+ }
++static inline void outw(unsigned short val, unsigned long port) { __ia64_outw_native(val, port); }
+ 
+ #define outl outl
+-static inline void outl(unsigned int val, unsigned long port)
++static inline void __ia64_outl_native(unsigned int val, unsigned long port)
+ {
+ 	volatile unsigned int *addr = __ia64_mk_io_addr(port);
+ 
+ 	*addr = val;
+ 	__ia64_mf_a();
+ }
++static inline void outl(unsigned int val, unsigned long port) { __ia64_outl_native(val, port); }
+ 
+ #define insb insb
+ static inline void insb(unsigned long port, void *dst, unsigned long count)
+@@ -263,7 +269,168 @@ extern void memset_io(volatile void __iomem *s, int c, long n);
+ #define memcpy_toio memcpy_toio
+ #define memset_io memset_io
+ 
+-#ifdef CONFIG_IA64_SGI_SN2
++#ifdef CONFIG_IA64_GENERIC
++/*
++ * Generic (single-binary) kernel: dispatch port I/O and MMIO through
++ * the sn2_platform_key static key at runtime.  Both the native and
++ * SN2 (SHUB) paths are always compiled in; the static key steers
++ * each call to the right one.
++ */
++#include <asm/machvec.h>
++#include <asm/sn/io.h>
++
++#undef inb
++#undef inw
++#undef inl
++#undef outb
++#undef outw
++#undef outl
++#undef insb
++#undef insw
++#undef insl
++#undef outsb
++#undef outsw
++#undef outsl
++
++#define inb inb
++static inline unsigned int inb(unsigned long p)
++{
++	if (ia64_is_sn2())
++		return ___sn_inb(p);
++	return __ia64_inb_native(p);
++}
++#define inw inw
++static inline unsigned int inw(unsigned long p)
++{
++	if (ia64_is_sn2())
++		return ___sn_inw(p);
++	return __ia64_inw_native(p);
++}
++#define inl inl
++static inline unsigned int inl(unsigned long p)
++{
++	if (ia64_is_sn2())
++		return ___sn_inl(p);
++	return __ia64_inl_native(p);
++}
++#define outb outb
++static inline void outb(unsigned char v, unsigned long p)
++{
++	if (ia64_is_sn2())
++		___sn_outb(v, p);
++	else
++		__ia64_outb_native(v, p);
++}
++#define outw outw
++static inline void outw(unsigned short v, unsigned long p)
++{
++	if (ia64_is_sn2())
++		___sn_outw(v, p);
++	else
++		__ia64_outw_native(v, p);
++}
++#define outl outl
++static inline void outl(unsigned int v, unsigned long p)
++{
++	if (ia64_is_sn2())
++		___sn_outl(v, p);
++	else
++		__ia64_outl_native(v, p);
++}
++
++#define insb(p, d, c)	do { unsigned char *_d = (void *)(d); int _c = (c); \
++			  while (_c--) *_d++ = inb(p); } while (0)
++#define insw(p, d, c)	do { unsigned short *_d = (void *)(d); int _c = (c); \
++			  while (_c--) { put_unaligned(inw(p), _d); _d++; } } while (0)
++#define insl(p, d, c)	do { unsigned int *_d = (void *)(d); int _c = (c); \
++			  while (_c--) { put_unaligned(inl(p), _d); _d++; } } while (0)
++#define outsb(p, s, c)	do { const unsigned char *_s = (const void *)(s); int _c = (c); \
++			  while (_c--) outb(*_s++, p); } while (0)
++#define outsw(p, s, c)	do { const unsigned short *_s = (const void *)(s); int _c = (c); \
++			  while (_c--) { outw(get_unaligned(_s), p); _s++; } } while (0)
++#define outsl(p, s, c)	do { const unsigned int *_s = (const void *)(s); int _c = (c); \
++			  while (_c--) { outl(get_unaligned(_s), p); _s++; } } while (0)
++
++/*
++ * MMIO accessors.  Defined before <asm-generic/io.h> is included so
++ * the generic wrappers don't emit their own readb/readw/readl/readq.
++ * The native path replicates asm-generic/io.h's read*() semantics
++ * (barrier + __raw_read* + rmb) inline.
++ */
++#define readb readb
++static inline u8 readb(const volatile void __iomem *addr)
++{
++	u8 val;
++	if (ia64_is_sn2())
++		return ___sn_readb(addr);
++	barrier();
++	val = *(const volatile u8 __force *)addr;
++	rmb();
++	return val;
++}
++#define readw readw
++static inline u16 readw(const volatile void __iomem *addr)
++{
++	u16 val;
++	if (ia64_is_sn2())
++		return ___sn_readw(addr);
++	barrier();
++	val = *(const volatile u16 __force *)addr;
++	rmb();
++	return val;
++}
++#define readl readl
++static inline u32 readl(const volatile void __iomem *addr)
++{
++	u32 val;
++	if (ia64_is_sn2())
++		return ___sn_readl(addr);
++	barrier();
++	val = *(const volatile u32 __force *)addr;
++	rmb();
++	return val;
++}
++#define readq readq
++static inline u64 readq(const volatile void __iomem *addr)
++{
++	u64 val;
++	if (ia64_is_sn2())
++		return ___sn_readq(addr);
++	barrier();
++	val = *(const volatile u64 __force *)addr;
++	rmb();
++	return val;
++}
++#define readb_relaxed readb_relaxed
++static inline u8 readb_relaxed(const volatile void __iomem *addr)
++{
++	if (ia64_is_sn2())
++		return ___sn_readb_relaxed(addr);
++	return *(const volatile u8 __force *)addr;
++}
++#define readw_relaxed readw_relaxed
++static inline u16 readw_relaxed(const volatile void __iomem *addr)
++{
++	if (ia64_is_sn2())
++		return ___sn_readw_relaxed(addr);
++	return *(const volatile u16 __force *)addr;
++}
++#define readl_relaxed readl_relaxed
++static inline u32 readl_relaxed(const volatile void __iomem *addr)
++{
++	if (ia64_is_sn2())
++		return ___sn_readl_relaxed(addr);
++	return *(const volatile u32 __force *)addr;
++}
++#define readq_relaxed readq_relaxed
++static inline u64 readq_relaxed(const volatile void __iomem *addr)
++{
++	if (ia64_is_sn2())
++		return ___sn_readq_relaxed(addr);
++	return *(const volatile u64 __force *)addr;
++}
++
++#elif defined(CONFIG_IA64_SGI_SN2)
+ /*
+  * SN2 overrides port I/O and MMIO to route through SHUB.
+  * Undef the generic ia64 definitions and replace with SN2 versions
+@@ -313,7 +480,7 @@ extern void memset_io(volatile void __iomem *s, int c, long n);
+ #define readl_relaxed(a)	___sn_readl_relaxed(a)
+ #define readq_relaxed(a)	___sn_readq_relaxed(a)
+ 
+-#endif /* CONFIG_IA64_SGI_SN2 */
++#endif /* CONFIG_IA64_GENERIC / CONFIG_IA64_SGI_SN2 */
+ 
+ #define xlate_dev_mem_ptr xlate_dev_mem_ptr
+ #include <asm-generic/io.h>
+-- 
+2.43.0
+

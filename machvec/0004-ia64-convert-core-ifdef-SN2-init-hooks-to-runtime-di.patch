@@ -1,0 +1,244 @@
+From 9c19217eca7281b81f86dd0d25cd1888706a5d47 Mon Sep 17 00:00:00 2001
+From: SN2 Dev <sn2-dev@local>
+Date: Thu, 23 Apr 2026 15:48:27 +0000
+Subject: [PATCH 4/9] ia64: convert core #ifdef SN2 init hooks to runtime
+ dispatch
+
+Walks every remaining #ifdef CONFIG_IA64_SGI_SN2 block in the core
+kernel arch/ia64/kernel/ and arch/ia64/pci/ directories and gates the
+SN2-specific call on ia64_platform_is("sn2") when IA64_GENERIC=y.
+In dedicated SN2 builds the platform test folds to compile-time true
+and the generated code is equivalent to the original #ifdef.
+
+  * kernel/irq_ia64.c
+      ia64_send_ipi split: new static __ia64_send_ipi_native() holds
+      the generic implementation; under IA64_GENERIC we provide a
+      non-weak dispatcher that calls sn2_send_IPI() or the native
+      path based on ia64_is_sn2().  Preserves the __weak contract
+      for dedicated builds.  sn_irq_init() call becomes runtime.
+
+  * sn/kernel/sn2/sn2_smp.c
+      The SN2 strong override of ia64_send_ipi is now compiled only
+      when !IA64_GENERIC, otherwise it would conflict with the
+      generic dispatcher.  SN2's sn2_send_IPI() itself is unchanged.
+
+  * kernel/msi_ia64.c
+      arch_setup_msi_irq and arch_teardown_msi_irq now route to
+      sn_setup_msi_irq / sn_teardown_msi_irq at runtime.
+
+  * kernel/uncached.c
+      sn_flush_all_caches vs flush_icache_range at runtime.
+
+  * kernel/smpboot.c
+      sn_cpu_disable_allowed at runtime.
+
+  * pci/pci.c
+      sn_pci_fixup_bus at runtime.
+
+Added #include <asm/machvec.h> where missing.  All conversions keep
+the existing #ifdef CONFIG_IA64_SGI_SN2 compilation fence so SN2
+code still requires SN2 (or GENERIC) to be configured in; only the
+dispatch becomes runtime.
+---
+ arch/ia64/kernel/irq_ia64.c       | 37 +++++++++++++++++++++++++++----
+ arch/ia64/kernel/msi_ia64.c       |  9 ++++----
+ arch/ia64/kernel/smpboot.c        |  5 +++--
+ arch/ia64/kernel/uncached.c       | 11 ++++-----
+ arch/ia64/pci/pci.c               |  5 +++--
+ arch/ia64/sn/kernel/sn2/sn2_smp.c |  7 ++++++
+ 6 files changed, 57 insertions(+), 17 deletions(-)
+
+diff --git a/arch/ia64/kernel/irq_ia64.c b/arch/ia64/kernel/irq_ia64.c
+index d4f910e..ef2444c 100644
+--- a/arch/ia64/kernel/irq_ia64.c
++++ b/arch/ia64/kernel/irq_ia64.c
+@@ -38,6 +38,7 @@
+ #include <asm/intrinsics.h>
+ #include <asm/io.h>
+ #include <asm/hw_irq.h>
++#include <asm/machvec.h>
+ #include <asm/tlbflush.h>
+ 
+ #include "irq.h"
+@@ -625,16 +626,20 @@ init_IRQ (void)
+ 				    "irq_move");
+ 	}
+ #endif
+-#ifdef CONFIG_IA64_SGI_SN2
+-	{
++#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++	if (ia64_platform_is("sn2")) {
+ 		extern void sn_irq_init(void);
+ 		sn_irq_init();
+ 	}
+ #endif
+ }
+ 
+-void __weak
+-ia64_send_ipi (int cpu, int vector, int delivery_mode, int redirect)
++/*
++ * Native (non-SN2) IPI send path.  Writes the delivery descriptor to
++ * the per-CPU IPI mailbox derived from ipi_base_addr.
++ */
++static void
++__ia64_send_ipi_native(int cpu, int vector, int delivery_mode, int redirect)
+ {
+ 	void __iomem *ipi_addr;
+ 	unsigned long ipi_data;
+@@ -651,3 +656,27 @@ ia64_send_ipi (int cpu, int vector, int delivery_mode, int redirect)
+ 
+ 	writeq(ipi_data, ipi_addr);
+ }
++
++#ifdef CONFIG_IA64_GENERIC
++extern void sn2_send_IPI(int cpu, int vector, int delivery_mode, int redirect);
++
++void
++ia64_send_ipi(int cpu, int vector, int delivery_mode, int redirect)
++{
++	if (ia64_is_sn2())
++		sn2_send_IPI(cpu, vector, delivery_mode, redirect);
++	else
++		__ia64_send_ipi_native(cpu, vector, delivery_mode, redirect);
++}
++#else
++/*
++ * Dedicated-platform build: keep the weak-symbol contract.  On a SN2
++ * build, sn2_smp.c provides a strong ia64_send_ipi() that overrides
++ * this definition at link time.
++ */
++void __weak
++ia64_send_ipi(int cpu, int vector, int delivery_mode, int redirect)
++{
++	__ia64_send_ipi_native(cpu, vector, delivery_mode, redirect);
++}
++#endif
+diff --git a/arch/ia64/kernel/msi_ia64.c b/arch/ia64/kernel/msi_ia64.c
+index 5cd956c..363d78f 100644
+--- a/arch/ia64/kernel/msi_ia64.c
++++ b/arch/ia64/kernel/msi_ia64.c
+@@ -9,6 +9,7 @@
+ #include <linux/dmar.h>
+ #include <asm/smp.h>
+ #include <asm/msidef.h>
++#include <asm/machvec.h>
+ 
+ static struct irq_chip	ia64_msi_chip;
+ 
+@@ -49,8 +50,8 @@ int arch_setup_msi_irq(struct pci_dev *pdev, struct msi_desc *desc)
+ 	unsigned long	dest_phys_id;
+ 	int	irq, vector;
+ 
+-#ifdef CONFIG_IA64_SGI_SN2
+-	{
++#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++	if (ia64_platform_is("sn2")) {
+ 		extern int sn_setup_msi_irq(struct pci_dev *, struct msi_desc *);
+ 		return sn_setup_msi_irq(pdev, desc);
+ 	}
+@@ -86,8 +87,8 @@ int arch_setup_msi_irq(struct pci_dev *pdev, struct msi_desc *desc)
+ 
+ void arch_teardown_msi_irq(unsigned int irq)
+ {
+-#ifdef CONFIG_IA64_SGI_SN2
+-	{
++#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++	if (ia64_platform_is("sn2")) {
+ 		extern void sn_teardown_msi_irq(unsigned int);
+ 		sn_teardown_msi_irq(irq);
+ 		return;
+diff --git a/arch/ia64/kernel/smpboot.c b/arch/ia64/kernel/smpboot.c
+index c741335..d97db01 100644
+--- a/arch/ia64/kernel/smpboot.c
++++ b/arch/ia64/kernel/smpboot.c
+@@ -45,6 +45,7 @@
+ #include <asm/cache.h>
+ #include <asm/current.h>
+ #include <asm/delay.h>
++#include <asm/machvec.h>
+ #include <asm/efi.h>
+ #include <asm/io.h>
+ #include <asm/irq.h>
+@@ -644,8 +645,8 @@ int __cpu_disable(void)
+ 		return (-EBUSY);
+ 	}
+ 
+-#ifdef CONFIG_IA64_SGI_SN2
+-	{
++#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++	if (ia64_platform_is("sn2")) {
+ 		extern int sn_cpu_disable_allowed(int cpu);
+ 		if (!sn_cpu_disable_allowed(cpu))
+ 			return -EBUSY;
+diff --git a/arch/ia64/kernel/uncached.c b/arch/ia64/kernel/uncached.c
+index 2fb431a..7432e43 100644
+--- a/arch/ia64/kernel/uncached.c
++++ b/arch/ia64/kernel/uncached.c
+@@ -127,14 +127,15 @@ static int uncached_add_chunk(struct uncached_pool *uc_pool, int nid)
+ 
+ 	preempt_disable();
+ 
+-#ifdef CONFIG_IA64_SGI_SN2
+-	{
++#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++	if (ia64_platform_is("sn2")) {
+ 		extern void sn_flush_all_caches(unsigned long, unsigned long);
+ 		sn_flush_all_caches(uc_addr, IA64_GRANULE_SIZE);
+-	}
+-#else
+-	flush_icache_range(uc_addr, uc_addr + IA64_GRANULE_SIZE);
++	} else
+ #endif
++	{
++		flush_icache_range(uc_addr, uc_addr + IA64_GRANULE_SIZE);
++	}
+ 
+ 	/* flush the just introduced uncached translation from the TLB */
+ 	local_flush_tlb_all();
+diff --git a/arch/ia64/pci/pci.c b/arch/ia64/pci/pci.c
+index 711d403..aebba56 100644
+--- a/arch/ia64/pci/pci.c
++++ b/arch/ia64/pci/pci.c
+@@ -27,6 +27,7 @@
+ #include <asm/page.h>
+ #include <asm/io.h>
+ #include <asm/sal.h>
++#include <asm/machvec.h>
+ #include <asm/smp.h>
+ #include <asm/irq.h>
+ #include <asm/hw_irq.h>
+@@ -370,8 +371,8 @@ void pcibios_fixup_bus(struct pci_bus *b)
+ 	}
+ 	list_for_each_entry(dev, &b->devices, bus_list)
+ 		pcibios_fixup_device_resources(dev);
+-#ifdef CONFIG_IA64_SGI_SN2
+-	{
++#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
++	if (ia64_platform_is("sn2")) {
+ 		extern void sn_pci_fixup_bus(struct pci_bus *);
+ 		sn_pci_fixup_bus(b);
+ 	}
+diff --git a/arch/ia64/sn/kernel/sn2/sn2_smp.c b/arch/ia64/sn/kernel/sn2/sn2_smp.c
+index 8285267..32c7fa6 100644
+--- a/arch/ia64/sn/kernel/sn2/sn2_smp.c
++++ b/arch/ia64/sn/kernel/sn2/sn2_smp.c
+@@ -579,9 +579,16 @@ module_exit(sn2_ptc_exit);
+ /*
+  * Override the weak default ia64_send_ipi with SN2's SHUB-based IPI.
+  * This avoids needing machvec dispatch for IPI sending.
++ *
++ * Under CONFIG_IA64_GENERIC, ia64_send_ipi is a non-weak runtime
++ * dispatcher defined in irq_ia64.c that calls sn2_send_IPI() when
++ * the sn2_platform_key is enabled; we must NOT provide a second
++ * strong definition here in that case.
+  */
++#ifndef CONFIG_IA64_GENERIC
+ void ia64_send_ipi(int cpuid, int vector, int delivery_mode, int redirect)
+ {
+ 	sn2_send_IPI(cpuid, vector, delivery_mode, redirect);
+ }
++#endif
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,253 @@
+From 9f172bd54370285239abe84c1c660246a14cf954 Mon Sep 17 00:00:00 2001
+From: SN2 Dev <sn2-dev@local>
+Date: Thu, 23 Apr 2026 15:44:54 +0000
+Subject: [PATCH 2/9] ia64: add runtime machvec shim (static key + ACPI
+ detection)
+
+Introduces the core infrastructure for runtime platform selection:
+
+  * arch/ia64/kernel/machvec.c (new)
+      DEFINE_STATIC_KEY_FALSE(sn2_platform_key), default off.
+      ia64_platform_detect() inspects the ACPI XSDT (or RSDT) OEM ID
+      and static_branch_enable()s the key if it reads 'SGI'.
+
+  * arch/ia64/include/asm/machvec.h
+      Rewritten to three modes keyed on CONFIG_IA64_GENERIC and
+      CONFIG_IA64_SGI_SN2:
+        - GENERIC: ia64_platform_is() dispatches on the static key
+        - SN2-only: compile-time constant true for 'sn2'
+        - neither: compile-time constant true for 'dig'
+      Uses __builtin_strcmp() so literal-string call sites fold at
+      compile time in all three modes.
+
+  * arch/ia64/kernel/Makefile
+      Build machvec.o when CONFIG_IA64_GENERIC=y.
+
+Without HAVE_ARCH_JUMP_LABEL on ia64, static_branch_unlikely() reduces
+to a load + test + branch; once arch jump-label support lands, it
+becomes a patched nop/branch with no data dependency on the fast path.
+
+No call sites are wired to the new shim yet; those follow in
+subsequent commits.
+---
+ arch/ia64/include/asm/machvec.h | 83 +++++++++++++++++++++++++++++----
+ arch/ia64/kernel/Makefile       |  1 +
+ arch/ia64/kernel/machvec.c      | 79 +++++++++++++++++++++++++++++++
+ 3 files changed, 154 insertions(+), 9 deletions(-)
+ create mode 100644 arch/ia64/kernel/machvec.c
+
+diff --git a/arch/ia64/include/asm/machvec.h b/arch/ia64/include/asm/machvec.h
+index c300ea0..e7f4fe0 100644
+--- a/arch/ia64/include/asm/machvec.h
++++ b/arch/ia64/include/asm/machvec.h
+@@ -2,17 +2,79 @@
+ /*
+  * Minimal machine vector compatibility shim for SN2 support.
+  *
+- * The full machvec dispatch infrastructure was removed in v5.4.
+- * This header provides compile-time platform identification so that
+- * SN2 platform code and drivers can use ia64_platform_is("sn2")
+- * without requiring the runtime dispatch system.
++ * Three modes:
++ *
++ *  1. CONFIG_IA64_GENERIC=y
++ *       Single-binary kernel that boots on both SN2 and non-SN2.
++ *       ia64_platform_is("sn2") dispatches on the sn2_platform_key
++ *       static key, which is enabled at boot by ia64_platform_detect()
++ *       when ACPI reports an SGI OEM ID.
++ *
++ *  2. CONFIG_IA64_SGI_SN2=y, CONFIG_IA64_GENERIC=n
++ *       Dedicated SN2 kernel.  ia64_platform_is("sn2") is a compile
++ *       time constant true.
++ *
++ *  3. Neither set
++ *       Generic-only kernel.  ia64_platform_is("sn2") is a compile
++ *       time constant false; no SN2 code is linked in.
++ *
++ * Until HAVE_ARCH_JUMP_LABEL is implemented for ia64, the static
++ * branch falls back to a plain global-variable load + test + branch.
++ * Call sites that pass literal strings to ia64_platform_is() still
++ * get compile-time folding of the strcmp because GCC evaluates
++ * __builtin_strcmp() of two string literals at compile time.
+  */
+ #ifndef _ASM_IA64_MACHVEC_H
+ #define _ASM_IA64_MACHVEC_H
+ 
+ #include <linux/string.h>
+ 
+-#ifdef CONFIG_IA64_SGI_SN2
++#ifdef CONFIG_IA64_GENERIC
++
++#include <linux/jump_label.h>
++
++DECLARE_STATIC_KEY_FALSE(sn2_platform_key);
++
++/* Called from setup_arch() before any platform-conditional code runs. */
++void ia64_platform_detect(void);
++
++/**
++ * ia64_is_sn2 - runtime check: are we on SN2 hardware?
++ *
++ * Marked unlikely so the compiler lays out the generic (non-SN2) path
++ * as the fall-through.  With arch jump-label support this becomes a
++ * patched nop on SN2 and a patched unconditional branch on non-SN2;
++ * without it, it is a load + test + conditional branch on every call.
++ */
++static __always_inline bool ia64_is_sn2(void)
++{
++	return static_branch_unlikely(&sn2_platform_key);
++}
++
++/*
++ * Callers pass string literals in every current use site, so the
++ * strcmp() here is folded to a compile-time constant by GCC.  The
++ * static-key evaluation only remains live for the literal that
++ * matches "sn2".  For unknown literals we fall back to returning
++ * zero, matching the old behavior of the compile-time shim.
++ */
++static __always_inline int ia64_platform_is(const char *name)
++{
++	if (__builtin_strcmp(name, "sn2") == 0)
++		return ia64_is_sn2();
++	if (__builtin_strcmp(name, "dig") == 0)
++		return !ia64_is_sn2();
++	return 0;
++}
++
++#define ia64_platform_name	(ia64_is_sn2() ? "sn2" : "dig")
++
++#elif defined(CONFIG_IA64_SGI_SN2)
++
++static __always_inline bool ia64_is_sn2(void)
++{
++	return true;
++}
+ 
+ static inline int ia64_platform_is(const char *name)
+ {
+@@ -20,9 +82,13 @@ static inline int ia64_platform_is(const char *name)
+ }
+ 
+ #define ia64_platform_name	"sn2"
+-#define ia64_platform_is	ia64_platform_is
+ 
+-#else /* !CONFIG_IA64_SGI_SN2 */
++#else /* neither IA64_GENERIC nor IA64_SGI_SN2 */
++
++static __always_inline bool ia64_is_sn2(void)
++{
++	return false;
++}
+ 
+ static inline int ia64_platform_is(const char *name)
+ {
+@@ -30,8 +96,7 @@ static inline int ia64_platform_is(const char *name)
+ }
+ 
+ #define ia64_platform_name	"dig"
+-#define ia64_platform_is	ia64_platform_is
+ 
+-#endif /* CONFIG_IA64_SGI_SN2 */
++#endif
+ 
+ #endif /* _ASM_IA64_MACHVEC_H */
+diff --git a/arch/ia64/kernel/Makefile b/arch/ia64/kernel/Makefile
+index 333de80..268a7d6 100644
+--- a/arch/ia64/kernel/Makefile
++++ b/arch/ia64/kernel/Makefile
+@@ -35,6 +35,7 @@ obj-$(CONFIG_STACKTRACE)	+= stacktrace.o
+ 
+ obj-$(CONFIG_IA64_ESI)		+= esi.o esi_stub.o # must be in kernel proper
+ obj-$(CONFIG_INTEL_IOMMU)	+= pci-dma.o
++obj-$(CONFIG_IA64_GENERIC)	+= machvec.o
+ 
+ obj-$(CONFIG_ELF_CORE)		+= elfcore.o
+ 
+diff --git a/arch/ia64/kernel/machvec.c b/arch/ia64/kernel/machvec.c
+new file mode 100644
+index 0000000..3b2756f
+--- /dev/null
++++ b/arch/ia64/kernel/machvec.c
+@@ -0,0 +1,79 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Minimal runtime machine vector shim for IA-64.
++ *
++ * Exposes one static key, sn2_platform_key, that is enabled at boot
++ * by ia64_platform_detect() when SN2 (SGI Altix) hardware is detected
++ * via the ACPI XSDT/RSDT OEM ID ("SGI").
++ *
++ * Platform-conditional code paths (I/O, mmiowb, IPI, TLB purge, SN2
++ * init hooks) dispatch on this key when CONFIG_IA64_GENERIC is set.
++ *
++ * Without HAVE_ARCH_JUMP_LABEL on IA-64, static_branch_unlikely()
++ * falls back to a global-variable load + test + conditional branch.
++ * That is acceptable for a proof-of-concept single-binary kernel;
++ * once arch jump-label support lands, the dispatch becomes a patched
++ * nop/branch with no data dependency on the fast path.
++ *
++ * Copyright (C) 2026 SN2 Revival Project
++ */
++
++#include <linux/acpi.h>
++#include <linux/export.h>
++#include <linux/init.h>
++#include <linux/jump_label.h>
++#include <linux/kernel.h>
++#include <linux/printk.h>
++#include <linux/string.h>
++
++#include <asm/machvec.h>
++
++/*
++ * Default OFF.  A generic (non-SN2) boot leaves the key disabled and
++ * the generic ia64 fast paths run.  ia64_platform_detect() flips the
++ * key on iff we are on SN2 hardware.
++ */
++DEFINE_STATIC_KEY_FALSE(sn2_platform_key);
++EXPORT_SYMBOL_GPL(sn2_platform_key);
++
++/*
++ * ia64_platform_detect - set sn2_platform_key based on ACPI OEM ID
++ *
++ * Called from setup_arch() after acpi_table_init() but before any
++ * platform-conditional code runs (cpu_init, ia64_mca_init, sn_setup,
++ * uv_setup, and so on).  The ACPI XSDT/RSDT OEM ID is a 6-byte field
++ * set by firmware; SGI Altix systems stamp "SGI" there.
++ *
++ * This function is __init and is safe to call before jump_label_init()
++ * because static_branch_enable() on a FALSE key prior to jump-label
++ * init just sets the underlying counter; the arch patching (when
++ * present) happens during jump_label_init().  On current IA-64
++ * (no arch jump label), the fallback is a plain atomic variable.
++ */
++void __init ia64_platform_detect(void)
++{
++	struct acpi_table_header *hdr = NULL;
++	acpi_status status;
++
++	/* Prefer XSDT (64-bit pointers) on ia64, fall back to RSDT. */
++	status = acpi_get_table(ACPI_SIG_XSDT, 0, &hdr);
++	if (ACPI_FAILURE(status) || !hdr) {
++		hdr = NULL;
++		status = acpi_get_table(ACPI_SIG_RSDT, 0, &hdr);
++	}
++	if (ACPI_FAILURE(status) || !hdr) {
++		pr_info("ia64: platform detection: no XSDT/RSDT, assuming generic\n");
++		return;
++	}
++
++	if (!strncmp(hdr->oem_id, "SGI", 3)) {
++		static_branch_enable(&sn2_platform_key);
++		pr_info("ia64: platform detected: SN2 (OEM ID '%.6s')\n",
++			hdr->oem_id);
++	} else {
++		pr_info("ia64: platform detected: generic (OEM ID '%.6s')\n",
++			hdr->oem_id);
++	}
++
++	acpi_put_table(hdr);
++}
+-- 
+2.43.0
+

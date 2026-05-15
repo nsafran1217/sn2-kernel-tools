@@ -1,0 +1,69 @@
+From e3d7050fbd171f38597ecac12c2684d998d46676 Mon Sep 17 00:00:00 2001
+From: SN2 Dev <sn2-dev@local>
+Date: Thu, 23 Apr 2026 15:50:04 +0000
+Subject: [PATCH 5/9] ia64: mm/tlb.c: runtime dispatch for global TLB purge
+
+Compile the generic ia64_global_tlb_purge when IA64_GENERIC=y so both
+implementations are available, and switch between ia64_global_tlb_purge
+and sn2_global_tlb_purge at runtime via ia64_platform_is("sn2").  The
+SN2 version (in sn2_smp.c) uses SHUB PTC.GA and is mandatory on SN2 to
+avoid inter-partition deadlocks; the generic version uses the in-band
+ia64_ptcga and is wrong on SN2.
+
+For dedicated SN2 and dedicated generic builds the switch folds to a
+compile-time constant, matching the original behaviour exactly.
+
+Added #include <asm/machvec.h>.
+---
+ arch/ia64/mm/tlb.c | 14 +++++++++++---
+ 1 file changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/arch/ia64/mm/tlb.c b/arch/ia64/mm/tlb.c
+index 1275053..b61d91d 100644
+--- a/arch/ia64/mm/tlb.c
++++ b/arch/ia64/mm/tlb.c
+@@ -33,6 +33,7 @@
+ #include <asm/processor.h>
+ #include <asm/sal.h>
+ #include <asm/tlb.h>
++#include <asm/machvec.h>
+ 
+ static struct {
+ 	u64 mask;		/* mask of supported purge page-sizes */
+@@ -245,7 +246,7 @@ resetsema:
+ }
+ 
+ #ifdef CONFIG_SMP
+-#ifndef CONFIG_IA64_SGI_SN2
++#if !defined(CONFIG_IA64_SGI_SN2) || defined(CONFIG_IA64_GENERIC)
+ static void
+ ia64_global_tlb_purge (struct mm_struct *mm, unsigned long start,
+ 		       unsigned long end, unsigned long nbits)
+@@ -283,7 +284,7 @@ ia64_global_tlb_purge (struct mm_struct *mm, unsigned long start,
+                 activate_context(active_mm);
+         }
+ }
+-#endif /* !CONFIG_IA64_SGI_SN2 */
++#endif /* !CONFIG_IA64_SGI_SN2 || CONFIG_IA64_GENERIC */
+ #endif /* CONFIG_SMP */
+ 
+ void
+@@ -335,7 +336,14 @@ __flush_tlb_range (struct vm_area_struct *vma, unsigned long start,
+ 	preempt_disable();
+ #ifdef CONFIG_SMP
+ 	if (mm != current->active_mm || cpumask_weight(mm_cpumask(mm)) != 1) {
+-#ifdef CONFIG_IA64_SGI_SN2
++#ifdef CONFIG_IA64_GENERIC
++		extern void sn2_global_tlb_purge(struct mm_struct *, unsigned long,
++						 unsigned long, unsigned long);
++		if (ia64_platform_is("sn2"))
++			sn2_global_tlb_purge(mm, start, end, nbits);
++		else
++			ia64_global_tlb_purge(mm, start, end, nbits);
++#elif defined(CONFIG_IA64_SGI_SN2)
+ 		extern void sn2_global_tlb_purge(struct mm_struct *, unsigned long,
+ 						 unsigned long, unsigned long);
+ 		sn2_global_tlb_purge(mm, start, end, nbits);
+-- 
+2.43.0
+

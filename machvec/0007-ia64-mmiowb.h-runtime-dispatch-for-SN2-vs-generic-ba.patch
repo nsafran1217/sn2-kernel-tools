@@ -1,0 +1,53 @@
+From 15da9e07fb3892e5941253526dbed36dacae22be Mon Sep 17 00:00:00 2001
+From: SN2 Dev <sn2-dev@local>
+Date: Thu, 23 Apr 2026 15:57:19 +0000
+Subject: [PATCH 7/9] ia64: mmiowb.h: runtime dispatch for SN2 vs generic
+ barrier
+
+Under IA64_GENERIC the mmiowb() macro expands to a static inline that
+branches on ia64_is_sn2(): __sn_mmiowb() on SN2 (flushes SHUB write
+buffers before mf.a), plain ia64_mfa() otherwise.
+
+Dedicated SN2 and dedicated generic builds keep the original
+single-expansion macros, so no change for those configurations.
+---
+ arch/ia64/include/asm/mmiowb.h | 22 ++++++++++++++++++++--
+ 1 file changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/arch/ia64/include/asm/mmiowb.h b/arch/ia64/include/asm/mmiowb.h
+index 5bbecdd..64f6326 100644
+--- a/arch/ia64/include/asm/mmiowb.h
++++ b/arch/ia64/include/asm/mmiowb.h
+@@ -8,9 +8,27 @@
+  *
+  * Ensure ordering of I/O space writes.  This will make sure that writes
+  * following the barrier will arrive after all previous writes.  For most
+- * ia64 platforms, this is a simple 'mf.a' instruction.
++ * ia64 platforms, this is a simple 'mf.a' instruction.  On SN2, it is
++ * __sn_mmiowb() which additionally flushes per-CPU SHUB write buffers
++ * before emitting mf.a, so that writes from one CPU are observable by
++ * another CPU's subsequent reads across the SHUB fabric.
++ *
++ * Called on every spin_unlock_irqrestore with outstanding writes, so
++ * it is on the hot path and worth keeping compile-time constant in
++ * dedicated-platform builds.
+  */
+-#ifdef CONFIG_IA64_SGI_SN2
++#ifdef CONFIG_IA64_GENERIC
++#include <asm/machvec.h>
++extern void __sn_mmiowb(void);
++static inline void __ia64_mmiowb_runtime(void)
++{
++	if (ia64_is_sn2())
++		__sn_mmiowb();
++	else
++		ia64_mfa();
++}
++#define mmiowb()	__ia64_mmiowb_runtime()
++#elif defined(CONFIG_IA64_SGI_SN2)
+ extern void __sn_mmiowb(void);
+ #define mmiowb()	__sn_mmiowb()
+ #else
+-- 
+2.43.0
+
