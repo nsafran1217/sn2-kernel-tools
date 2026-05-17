@@ -5,10 +5,10 @@
 #   1. Extracts an existing T2 ISO (squashfs provides all the system binaries
 #      that the initrd needs — udevd, kmod, embutils, etc.)
 #   2. Grafts your kernel modules and System.map into the extracted squashfs root.
-#   3. Generates a fresh initrd using T2's mkinitrd.sh (fetched from SVN tag 26.3),
+#   3. Generates a fresh initrd using T2's mkinitrd.sh (extracted from the input ISO's squashfs),
 #      pulling modules from your kernel/ folder and binaries from the squashfs.
 #   4. Splices the live-boot init (squashfs-scanning / overlayfs logic) onto the
-#      initrd after the hardware-init PANICMARK cut point.
+#      initrd, replacing its /init with the one from the existing ISO's initrd.
 #   5. Copies the kernel image, System.map, and initrd into the squashfs /boot/
 #      and creates standard unversioned symlinks:
 #        vmlinuz -> vmlinuz-<VER>
@@ -58,11 +58,12 @@
 #   sudo ./Generate-SN2-T2-ISO.sh -i input.iso -o output.iso \
 #        --kernel-dir ./kernel \
 #        --grub-dir   ./grub   \
+#        [--sqf-name  live.squash]     # squashfs filename (auto-detected if omitted)
 #        [--workdir   /tmp/remaster]   # default: /tmp/remaster-$$
 #        [--keep-workdir]              # don't delete workdir on exit
 #
 # T2 scripts (mkinitrd.sh and target/share/live/init) are fetched automatically
-# from https://svn.exactcode.de/t2/tags/26.3 — no local T2 source tree needed.
+# No network access required — both are extracted directly from the input ISO.
 #
 # Must run as root — mkinitrd uses mknod for /dev nodes.
 #
@@ -71,16 +72,10 @@
 #   squashfs-tools (unsquashfs, mksquashfs)
 #   kmod           (modinfo, depmod)
 #   grub-mkimage   (from grub2 on the build host)
-#   cpio, zstd, curl
+#   cpio, zstd
 #   mtools         (mkfs.vfat, mmd, mcopy) — for the EFI FAT image
 
 set -euo pipefail
-
-# ── T2 SVN source URLs (tag 26.3) ─────────────────────────────────────────────
-
-T2_SVN_BASE="https://svn.exactcode.de/t2/tags/26.3"
-T2_MKINITRD_URL="$T2_SVN_BASE/package/base/mkinitrd/mkinitrd.sh"
-T2_LIVE_INIT_URL="$T2_SVN_BASE/target/share/live/init"
 
 # ── defaults ─────────────────────────────────────────────────────────────────
 
@@ -88,6 +83,7 @@ input_iso=
 output_iso=
 kernel_dir=
 grub_dir=
+sqf_name=
 workdir=
 keep_workdir=
 
@@ -104,6 +100,7 @@ while [[ $# -gt 0 ]]; do
         -o)             output_iso="$2";  shift 2 ;;
         --kernel-dir)   kernel_dir="$2";  shift 2 ;;
         --grub-dir)     grub_dir="$2";    shift 2 ;;
+        --sqf-name)     sqf_name="$2";    shift 2 ;;
         --workdir)      workdir="$2";     shift 2 ;;
         --keep-workdir) keep_workdir=1;   shift   ;;
         -h|--help)      usage ;;
@@ -130,7 +127,6 @@ need modinfo    kmod
 need depmod     kmod
 need cpio       cpio
 need zstd       zstd
-need curl       curl
 need mkfs.vfat  mtools
 need mmd        mtools
 need mcopy      mtools
@@ -153,23 +149,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ── download T2 source files from SVN tag 26.3 ───────────────────────────────
+# ── placeholders filled after squashfs/initrd extraction ────────────────────
 
 mkinitrd_sh="$t2_cache/mkinitrd.sh"
-live_init="$t2_cache/live-init"
-
-echo "==> Fetching T2 scripts from $T2_SVN_BASE ..."
-curl -fsSL "$T2_MKINITRD_URL"  -o "$mkinitrd_sh" || { echo "Error: failed to fetch mkinitrd.sh";  exit 1; }
-curl -fsSL "$T2_LIVE_INIT_URL" -o "$live_init"   || { echo "Error: failed to fetch live/init";    exit 1; }
-chmod +x "$mkinitrd_sh"
-
-# Patch live/init to create /run/live marker before switch_root.
-# This lands in the real root's /run/live after switch_root and is used
-# as the ConditionPathExists for live-only systemd services.
-sed -i 's|boot $init "$@"|mkdir -p /mnt/run\n\t    touch /mnt/run/live\n\t    boot $init "$@"|' "$live_init"
-
-echo "    mkinitrd.sh : $(wc -l < "$mkinitrd_sh") lines"
-echo "    live/init   : $(wc -l < "$live_init") lines"
 
 # ── resolve kernel version ────────────────────────────────────────────────────
 
@@ -200,9 +182,17 @@ echo
 echo "==> Extracting ISO: $input_iso"
 osirrox -indev "$input_iso" -extract / "$iso_extract/"
 
-sqf=$(find "$iso_extract" -name "live.squash" | head -1)
-[[ -z "$sqf" ]] && echo "Error: live.squash not found in ISO" && exit 1
-echo "    Found squashfs : $sqf"
+# Auto-detect squashfs image name, or use --sqf-name if provided
+if [[ -n "$sqf_name" ]]; then
+    sqf=$(find "$iso_extract" -name "$sqf_name" | head -1)
+    [[ -z "$sqf" ]] && echo "Error: $sqf_name not found in ISO" && exit 1
+else
+    sqf=$(find "$iso_extract" -name "live.squash" -o -name "rootfs.sqf" \
+               -o -name "*.squashfs" -o -name "*.sqf" | head -1)
+    [[ -z "$sqf" ]] && echo "Error: no squashfs image found in ISO (tried live.squash, rootfs.sqf, *.sqf, *.squashfs)" && exit 1
+fi
+sqf_name="${sqf##*/}"
+echo "    Found squashfs : $sqf  ($sqf_name)"
 
 # ── step 2: extract squashfs for system binaries ──────────────────────────────
 
@@ -212,6 +202,31 @@ unsquashfs -f -d "$squashfs_root" "$sqf"
 
 [[ -f "$squashfs_root/sbin/initrdinit" ]] ||
     { echo "Error: /sbin/initrdinit not found in squashfs — wrong ISO?"; exit 1; }
+
+# ── Extract mkinitrd from squashfs ───────────────────────────────────────────
+# Use the mkinitrd version that matches the ISO rather than fetching from SVN.
+
+[[ -f "$squashfs_root/sbin/mkinitrd" ]] ||
+    { echo "Error: /sbin/mkinitrd not found in squashfs"; exit 1; }
+cp -f "$squashfs_root/sbin/mkinitrd" "$mkinitrd_sh"
+chmod +x "$mkinitrd_sh"
+echo "    mkinitrd     : extracted from squashfs ($(wc -l < "$mkinitrd_sh") lines)"
+
+# ── Extract /init from the existing ISO initrd ───────────────────────────────
+# The existing initrd already contains the complete live-boot init script.
+# We use it as-is — no splicing or patching needed.
+
+existing_initrd=$(find "$iso_extract/boot" -name "initrd-*" | head -1)
+[[ -z "$existing_initrd" ]] && { echo "Error: no initrd found in ISO /boot/"; exit 1; }
+
+iso_init="$t2_cache/iso-init"
+initrd_extract="$t2_cache/initrd-extract"
+mkdir -p "$initrd_extract"
+(cd "$initrd_extract" && zstd -d -c "$existing_initrd" | cpio -i --quiet)
+[[ -f "$initrd_extract/init" ]] || { echo "Error: no /init found in ISO initrd"; exit 1; }
+cp -f "$initrd_extract/init" "$iso_init"
+rm -rf "$initrd_extract"
+echo "    iso init     : extracted from ISO initrd ($(wc -l < "$iso_init") lines)"
 
 # ── step 3: overlay kernel modules + System.map into the squashfs root ────────
 #
@@ -274,30 +289,20 @@ bash "$mkinitrd_sh" \
 echo "    Initrd size    : $(du -sh "$initrd_out" | cut -f1)"
 cp -f "$initrd_out" "$initrd_plain"
 
-# ── step 5: build the live-boot init and extend the initrd ───────────────────
-#
-# The initrd's /init is currently T2's initrdinit.sh (hardware init, udev,
-# module loading, LVM/LUKS, NFS root, etc.) followed by # PANICMARK and a
-# debug shell fallback.
-#
-# For the live ISO we need to replace everything after # PANICMARK with the
-# squashfs-scanning / loop-mount / overlayfs logic from target/share/live/init.
+# ── step 5: replace /init with the live-boot init from the ISO ───────────────
+# The existing ISO initrd already has the complete live-boot init script.
+# Unpack our freshly generated initrd, swap in the ISO's init, repack.
 
 echo
-echo "==> Building live-boot init overlay ..."
+echo "==> Installing live-boot init ..."
 
-# The initrd already contains /init as initrdinit. Extract and splice it.
 initrd_unpack="$workdir/initrd-unpack"
 mkdir -p "$initrd_unpack"
 (cd "$initrd_unpack" && zstd -d -c "$initrd_out" | cpio -i --quiet)
 
-# Splice: hardware init (up to PANICMARK) + live squashfs-mount logic
-sed '/PANICMARK/Q' "$initrd_unpack/init" > "$initrd_unpack/init.new"
-cat "$live_init"                         >> "$initrd_unpack/init.new"
-chmod +x "$initrd_unpack/init.new"
-mv "$initrd_unpack/init.new" "$initrd_unpack/init"
+cp -f "$iso_init" "$initrd_unpack/init"
+chmod +x "$initrd_unpack/init"
 
-# Repack
 echo "    Repacking with live-boot init ..."
 (cd "$initrd_unpack" && find . | cpio -o -H newc --quiet | zstd -19 -T0 -q > "$initrd_out")
 rm -rf "$initrd_unpack"
@@ -506,7 +511,7 @@ ln -sf /etc/systemd/system/live-serial-console.service \
 
 echo
 echo "==> Repacking squashfs ..."
-new_sqf="$workdir/live.squash"
+new_sqf="$workdir/$sqf_name"
 mksquashfs "$squashfs_root" "$new_sqf" -noappend -comp zstd -Xcompression-level 19 \
     -b 1M -processors "$(nproc)" -quiet
 # Replace the squashfs in the ISO tree

@@ -29,36 +29,37 @@ cd t2work
 ```
 
 1. Download the ia64 ISO from [https://dl.t2sde.org/binary/2026/](https://dl.t2sde.org/binary/2026/)  
-The current version of T2 this is written for is 26.3.  
+The current version of T2 this is written for is 26.5. 26.3 will work as well 
 ```
-wget https://dl.t2sde.org/binary/2026/t2-26.3-ia64-desktop.iso
+wget https://dl.t2sde.org/binary/2026/incoming/t2-26.5-ia64-desktop.iso
 ```
 2. Download the script `Generate-SN2-T2-ISO.sh`. You must have 5GB of free disk space for this to work.  
 
 ```
 wget https://raw.githubusercontent.com/nsafran1217/sn2-kernel-tools/refs/heads/main/T2-SN2/Generate-SN2-T2-ISO.sh
+chmod +x ./Generate-SN2-T2-ISO.sh
 ```
 
 3. Download and extract an SN2 kernel. Place the extracted items in a directory called `sn2-kernel`.
 ```
-wget https://github.com/nsafran1217/linux-sn2/releases/download/v7.0-rc1-epic1-sn2-beta/linux-7.0.0-rc1-epic1-SN2-9cf2872e9999-ia64-ia64.tar.gz
+wget https://github.com/nsafran1217/linux-sn2/releases/download/v7.0-epic2-sn2-gpu/linux-7.0.0-epic2-SN2-GPU-cf436192c70f-ia64-ia64.tar.gz
 mkdir sn2-kernel
 cd sn2-kernel
-tar xf ../linux-7.0.0-rc1-epic1-SN2-9cf2872e9999-ia64-ia64.tar.gz
+tar xf ../linux-7.0.0-epic2-SN2-GPU-cf436192c70f-ia64-ia64.tar.gz
 cd ..
 ```
 4. Download the patched grub from here and extract. It will extract to a folder called `grub`.
 ```
-wget https://github.com/nsafran1217/linux-sn2/releases/download/v7.0-rc1-epic1-sn2-beta/grub-sn2.tar.gz
+wget https://github.com/nsafran1217/linux-sn2/releases/download/v7.0-epic2-sn2-gpu/grub-sn2.tar.gz
 tar xf grub-sn2.tar.gz
 ```
 
 5. Create the ISO. By default, this will work in /tmp.  
 If you want, you can specify a `--workdir` and to `--keep-workdir` to help troubleshoot if there is an issue.  
 ```
-./Generate-SN2-T2-ISO.sh \
-    -i t2-26.3-ia64-desktop.iso \
-    -o t2-26.3-Altix.iso \
+sudo ./Generate-SN2-T2-ISO.sh \
+    -i t2-26.5-ia64-desktop.iso \
+    -o t2-26.5-Altix.iso \
     --kernel-dir ./sn2-kernel \
     --grub-dir   ./grub \
     --workdir ./workdir \
@@ -67,7 +68,7 @@ If you want, you can specify a `--workdir` and to `--keep-workdir` to help troub
 
 6. Burn your ISO, or dd to a disk
 
-`dd if=t2-26.3-Altix.iso of=/dev/sdX status=progress bs=4M`
+`dd if=t2-26.5-Altix.iso of=/dev/sdX status=progress bs=4M`
 
 7. Boot like normal on Altix. Find the EFI file and launch it in the EFI shell.
 
