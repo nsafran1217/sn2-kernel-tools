@@ -31,7 +31,7 @@ cd t2work
 1. Download the ia64 ISO from [https://dl.t2sde.org/binary/2026/](https://dl.t2sde.org/binary/2026/)  
 The current version of T2 this is written for is 26.5. 26.3 will work as well 
 ```
-wget https://dl.t2sde.org/binary/2026/incoming/t2-26.5-ia64-desktop.iso
+wget https://dl.t2sde.org/binary/2026/incoming/t2-26.5-ia64-desktop-glibc-gcc-itanium2.iso
 ```
 2. Download the script `Generate-SN2-T2-ISO.sh`. You must have 5GB of free disk space for this to work.  
 
