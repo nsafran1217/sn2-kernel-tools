@@ -29,9 +29,9 @@ cd t2work
 ```
 
 1. Download the ia64 ISO from [https://dl.t2sde.org/binary/2026/](https://dl.t2sde.org/binary/2026/)  
-The current version of T2 this is written for is 26.5. 26.3 will work as well 
+The current version of T2 this is written for is 26.6. 26.3 will work as well 
 ```
-wget https://dl.t2sde.org/binary/2026/incoming/t2-26.5-ia64-desktop-glibc-gcc-itanium2.iso
+wget https://dl.t2sde.org/binary/2026/t2-26.6-ia64-desktop-glibc-gcc-itanium2.iso
 ```
 2. Download the script `Generate-SN2-T2-ISO.sh`. You must have 5GB of free disk space for this to work.  
 
@@ -58,8 +58,8 @@ tar xf grub-sn2.tar.gz
 If you want, you can specify a `--workdir` and to `--keep-workdir` to help troubleshoot if there is an issue.  
 ```
 sudo ./Generate-SN2-T2-ISO.sh \
-    -i t2-26.5-ia64-desktop.iso \
-    -o t2-26.5-Altix.iso \
+    -i t2-26.6-ia64-desktop-glibc-gcc-itanium2.iso \
+    -o t2-26.6-Altix.iso \
     --kernel-dir ./sn2-kernel \
     --grub-dir   ./grub \
     --workdir ./workdir \
@@ -68,7 +68,7 @@ sudo ./Generate-SN2-T2-ISO.sh \
 
 6. Burn your ISO, or dd to a disk
 
-`dd if=t2-26.5-Altix.iso of=/dev/sdX status=progress bs=4M`
+`dd if=t2-26.6-Altix.iso of=/dev/sdX status=progress bs=4M`
 
 7. Boot like normal on Altix. Find the EFI file and launch it in the EFI shell.
 
