@@ -371,6 +371,24 @@ cp -f "$squashfs_root/sbin/mkinitrd" "$mkinitrd_sh"
 chmod +x "$mkinitrd_sh"
 echo "    mkinitrd     : extracted from squashfs ($(wc -l < "$mkinitrd_sh") lines)"
 
+# In bash 4.4 and later the backtick form below drops the escape on the dot,
+# so the dependency snd.ko resolves to the first match of /snd.ko, which can
+# be snd-korg1212.ko. The $( ) form keeps the escape. Patch our copy only.
+mkinitrd_old='x=`sed -n "/\/${x/./\\.}.*/{p; q}" $map`'
+mkinitrd_new='x=$(sed -n "/\/${x/./\\.}.*/{p; q}" $map)'
+mkinitrd_patched=0
+while IFS= read -r line || [[ -n "$line" ]]; do
+    indent="${line%%[![:space:]]*}"
+    if [[ "${line#"$indent"}" == "$mkinitrd_old" ]]; then
+        line="$indent$mkinitrd_new"
+        mkinitrd_patched=1
+    fi
+    printf '%s\n' "$line"
+done < "$mkinitrd_sh" > "$mkinitrd_sh.new"
+mv -f "$mkinitrd_sh.new" "$mkinitrd_sh"
+chmod +x "$mkinitrd_sh"
+(( mkinitrd_patched )) && echo "    mkinitrd     : patched module dependency lookup"
+
 # ── Extract /init from the existing ISO initrd ───────────────────────────────
 # The existing initrd already contains the complete live-boot init script.
 # We use it as-is — no splicing or patching needed.
