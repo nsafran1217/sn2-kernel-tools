@@ -485,29 +485,18 @@ if [[ -d "$grub_dir/etc/grub.d" ]]; then
     cp -a "$grub_dir/etc/grub.d/." "$squashfs_root/etc/grub.d/"
 fi
 
-# ── Install live-only systemd service to start serial console ───────────────
+# ── Serial console getty ─────────────────────────────────────────────────────
+# systemd-getty-generator pulls in serial-getty@ttySG0 from console=ttySG0.
+# udevd starts late on first boot (behind systemd-hwdb-update), so the default
+# device timeout expires before dev-ttySG0.device appears and the getty fails.
+# Wait for the device indefinitely instead.
 
-echo "==> Installing live-serial-console.service ..."
-mkdir -p "$squashfs_root/etc/systemd/system"
-mkdir -p "$squashfs_root/etc/systemd/system/multi-user.target.wants"
-
-cat > "$squashfs_root/etc/systemd/system/live-serial-console.service" <<'UNIT'
+echo "==> Installing dev-ttySG0.device timeout drop-in ..."
+mkdir -p "$squashfs_root/etc/systemd/system/dev-ttySG0.device.d"
+cat > "$squashfs_root/etc/systemd/system/dev-ttySG0.device.d/timeout.conf" <<'UNIT'
 [Unit]
-Description=Start serial console on live boot
-After=multi-user.target
-ConditionPathExists=/run/live
-
-[Service]
-Type=oneshot
-ExecStart=/bin/systemctl start serial-getty@ttySG0.service
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
+JobRunningTimeoutSec=infinity
 UNIT
-
-ln -sf /etc/systemd/system/live-serial-console.service \
-    "$squashfs_root/etc/systemd/system/multi-user.target.wants/live-serial-console.service"
 
 echo
 echo "==> Repacking squashfs ..."
