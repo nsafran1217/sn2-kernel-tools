@@ -56,11 +56,14 @@
 #
 # Usage:
 #   sudo ./Generate-SN2-T2-ISO.sh -i input.iso -o output.iso \
-#        --kernel-dir ./kernel \
+#        --kernel-dir ./kernel         # or: --kernel-tar ./linux-<VER>.tar.gz
 #        --grub-dir   ./grub   \
 #        [--sqf-name  live.squash]     # squashfs filename (auto-detected if omitted)
 #        [--workdir   /tmp/remaster]   # default: /tmp/remaster-$$
 #        [--keep-workdir]              # don't delete workdir on exit
+#
+# --kernel-tar takes the kernel tarball (with ./boot and ./lib as above) and
+# unpacks it inside the work area instead of using an extracted --kernel-dir.
 #
 # T2 scripts (mkinitrd.sh and target/share/live/init) are fetched automatically
 # No network access required — both are extracted directly from the input ISO.
@@ -73,15 +76,51 @@
 #   kmod           (modinfo, depmod)
 #   grub-mkimage   (from grub2 on the build host)
 #   cpio, zstd
-#   mtools         (mkfs.vfat, mmd, mcopy) — for the EFI FAT image
+#   mtools         (mmd, mcopy, and mformat if mkfs.vfat is missing) — for the EFI FAT image
+#
+# macOS hosts:
+#   Runs with Homebrew packages plus kmod-shim.py, which must sit next to
+#   this script and stands in for modinfo/depmod:
+#     brew install xorriso squashfs zstd mtools coreutils findutils \
+#                  gnu-sed grep bash binutils x86_64-elf-grub
+#   The work area must be case-sensitive (Linux trees such as the kernel's
+#   netfilter modules have names differing only in case). If --workdir is not
+#   case-sensitive, a case-sensitive APFS sparse disk image is created and
+#   mounted there, and removed on exit (unless --keep-workdir). For the same
+#   reason use --kernel-tar rather than a kernel tree unpacked on a Mac disk.
 
 set -euo pipefail
+
+# ── host setup (macOS) ───────────────────────────────────────────────────────
+# Put GNU userland first on PATH: T2's mkinitrd relies on GNU sed/grep/find
+# behaviour and on readelf. sudo may drop Homebrew from PATH, so add it here.
+
+is_mac=
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+bash4=bash
+
+if [[ "$(uname -s)" == Darwin ]]; then
+    is_mac=1
+    brew_prefix=
+    for p in /opt/homebrew /usr/local; do
+        [[ -d "$p/opt" ]] && { brew_prefix="$p"; break; }
+    done
+    [[ -z "$brew_prefix" ]] && echo "Error: Homebrew not found (looked in /opt/homebrew, /usr/local)" && exit 2
+    PATH="$brew_prefix/bin:$brew_prefix/sbin:$PATH"
+    PATH="$brew_prefix/opt/binutils/bin:$PATH"
+    for pkg in coreutils findutils gnu-sed grep; do
+        PATH="$brew_prefix/opt/$pkg/libexec/gnubin:$PATH"
+    done
+    bash4="$brew_prefix/bin/bash"
+    export PATH
+fi
 
 # ── defaults ─────────────────────────────────────────────────────────────────
 
 input_iso=
 output_iso=
 kernel_dir=
+kernel_tar=
 grub_dir=
 sqf_name=
 workdir=
@@ -99,6 +138,7 @@ while [[ $# -gt 0 ]]; do
         -i)             input_iso="$2";   shift 2 ;;
         -o)             output_iso="$2";  shift 2 ;;
         --kernel-dir)   kernel_dir="$2";  shift 2 ;;
+        --kernel-tar)   kernel_tar="$2";  shift 2 ;;
         --grub-dir)     grub_dir="$2";    shift 2 ;;
         --sqf-name)     sqf_name="$2";    shift 2 ;;
         --workdir)      workdir="$2";     shift 2 ;;
@@ -110,7 +150,9 @@ done
 
 [[ -z "$input_iso"  ]] && echo "Error: -i input.iso is required"   && exit 1
 [[ -z "$output_iso" ]] && echo "Error: -o output.iso is required"  && exit 1
-[[ -z "$kernel_dir" ]] && echo "Error: --kernel-dir is required"   && exit 1
+[[ -z "$kernel_dir" && -z "$kernel_tar" ]] && echo "Error: --kernel-dir or --kernel-tar is required" && exit 1
+[[ -n "$kernel_dir" && -n "$kernel_tar" ]] && echo "Error: use either --kernel-dir or --kernel-tar, not both" && exit 1
+[[ -n "$kernel_tar" && ! -f "$kernel_tar" ]] && echo "Error: $kernel_tar not found" && exit 1
 [[ -z "$grub_dir"   ]] && echo "Error: --grub-dir is required"     && exit 1
 [[ ! -f "$input_iso" ]] && echo "Error: $input_iso not found"      && exit 1
 [[ $UID -ne 0 ]]        && echo "Error: must run as root (mkinitrd requires mknod)" && exit 1
@@ -118,24 +160,124 @@ done
 # ── check tools ───────────────────────────────────────────────────────────────
 
 need() { type -p "$1" >/dev/null || { echo "Error: '$1' not found — please install ${2:-$1}"; exit 2; }; }
+need_gnu() {
+    need "$1" "$2"
+    "$1" --version 2>/dev/null | grep -q GNU ||
+        { echo "Error: '$1' is not the GNU version — please install $2"; exit 2; }
+}
 
 need osirrox    xorriso
 need xorrisofs  xorriso
 need unsquashfs squashfs-tools
 need mksquashfs  squashfs-tools
-need modinfo    kmod
-need depmod     kmod
 need cpio       cpio
 need zstd       zstd
-need mkfs.vfat  mtools
 need mmd        mtools
 need mcopy      mtools
-need grub-mkimage grub2
+
+if [[ -n "$is_mac" ]]; then
+    need_gnu sed  gnu-sed
+    need_gnu grep grep
+    need_gnu find findutils
+    need_gnu cp   coreutils
+    need readelf  binutils
+    need python3  python3
+    need hdiutil  hdiutil
+    [[ -x "$bash4" ]] && (( $("$bash4" -c 'echo ${BASH_VERSINFO[0]}') >= 4 )) ||
+        { echo "Error: bash 4 or newer not found at $bash4 — please install bash"; exit 2; }
+    [[ -f "$script_dir/kmod-shim.py" ]] ||
+        { echo "Error: kmod-shim.py not found next to this script ($script_dir)"; exit 2; }
+else
+    need modinfo    kmod
+    need depmod     kmod
+fi
+type -p mkfs.vfat >/dev/null || need mformat mtools
+
+# Any grub-mkimage can build an ia64-efi image; Homebrew only ships
+# cross-prefixed ones (x86_64-elf-grub-mkimage)
+grub_mkimage=
+for g in grub-mkimage grub2-mkimage x86_64-elf-grub-mkimage i686-elf-grub-mkimage; do
+    type -p "$g" >/dev/null && { grub_mkimage="$g"; break; }
+done
+[[ -z "$grub_mkimage" ]] &&
+    echo "Error: 'grub-mkimage' not found — please install grub2 (macOS: brew install x86_64-elf-grub)" && exit 2
 
 # ── workdir setup ─────────────────────────────────────────────────────────────
 
 [[ -z "$workdir" ]] && workdir="/tmp/remaster-$$"
 workdir="$(mkdir -p "$workdir" && cd "$workdir" && pwd)"
+workdir_image=
+
+# True if the filesystem holding directory $1 tells upper and lower case apart
+is_case_sensitive() {
+    local probe
+    probe="$(mktemp "$1/.casetestXXXXXX")"
+    [[ ! -e "$(dirname "$probe")/$(basename "$probe" | tr '[:lower:]' '[:upper:]')" ]]
+    local rc=$?
+    rm -f "$probe"
+    return $rc
+}
+
+cleanup() {
+    cd /
+    if [[ -n "$keep_workdir" ]]; then
+        echo "    Work directory kept: $workdir"
+        [[ -n "$workdir_image" ]] &&
+            echo "    (disk image $workdir_image is still mounted; remove with: hdiutil detach \"$workdir\" && rm \"$workdir_image\")"
+        return 0
+    fi
+    if [[ -n "$workdir_image" ]]; then
+        hdiutil detach "$workdir" -force -quiet || true
+        rm -f "$workdir_image"
+        rmdir "$workdir" 2>/dev/null || true
+    else
+        rm -rf "$workdir"
+    fi
+}
+use_image=
+if [[ -n "$is_mac" ]] && ! is_case_sensitive "$workdir"; then
+    # Checked before the cleanup trap exists, so nothing of the user's is removed
+    [[ -n "$(ls -A "$workdir")" ]] &&
+        echo "Error: $workdir is not empty and not case-sensitive; pick an empty --workdir" && exit 1
+    [[ -e "$workdir.sparseimage" ]] &&
+        echo "Error: $workdir.sparseimage already exists (left by a --keep-workdir run?); remove it or pick another --workdir" && exit 1
+    use_image=1
+fi
+
+trap cleanup EXIT
+
+if [[ -n "$use_image" ]]; then
+    echo "==> Creating case-sensitive work volume: $workdir.sparseimage"
+    hdiutil create -size 60g -type SPARSE -fs "Case-sensitive APFS" \
+        -volname T2-REMASTER "$workdir.sparseimage" >/dev/null
+    workdir_image="$workdir.sparseimage"
+    # -owners on: honour root ownership, or the squashfs would be repacked wrong
+    hdiutil attach -nobrowse -owners on -mountpoint "$workdir" "$workdir_image" >/dev/null
+    mdutil -i off "$workdir" >/dev/null 2>&1 || true
+fi
+
+# Keep mkinitrd's temp tree (mktemp) on the case-sensitive volume too
+export TMPDIR="$workdir/tmp"
+mkdir -p "$TMPDIR"
+
+# Provide modinfo/depmod on macOS
+if [[ -n "$is_mac" ]]; then
+    shim_dir="$workdir/shims"
+    mkdir -p "$shim_dir"
+    cp -f "$script_dir/kmod-shim.py" "$shim_dir/kmod-shim.py"
+    chmod +x "$shim_dir/kmod-shim.py"
+    ln -sf kmod-shim.py "$shim_dir/modinfo"
+    ln -sf kmod-shim.py "$shim_dir/depmod"
+    PATH="$shim_dir:$PATH"
+fi
+
+# Unpack the kernel tarball inside the (case-sensitive) work area
+if [[ -n "$kernel_tar" ]]; then
+    echo "==> Unpacking kernel tarball: $kernel_tar"
+    kernel_dir="$workdir/kernel"
+    mkdir -p "$kernel_dir"
+    tar -xf "$kernel_tar" -C "$kernel_dir" --no-same-owner
+fi
 
 iso_extract="$workdir/iso"
 squashfs_root="$workdir/rootfs"
@@ -144,18 +286,14 @@ t2_cache="$workdir/t2"
 
 mkdir -p "$iso_extract" "$squashfs_root" "$initrd_overlay/bin" "$initrd_overlay/sbin" "$t2_cache"
 
-cleanup() {
-    [[ -z "$keep_workdir" ]] && rm -rf "$workdir"
-}
-trap cleanup EXIT
-
 # ── placeholders filled after squashfs/initrd extraction ────────────────────
 
 mkinitrd_sh="$t2_cache/mkinitrd.sh"
 
 # ── resolve kernel version ────────────────────────────────────────────────────
 
-kernelver=$(find "$kernel_dir/lib/modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -1)
+kernelver=$(find "$kernel_dir/lib/modules" -mindepth 1 -maxdepth 1 -type d | head -1)
+kernelver="${kernelver##*/}"
 [[ -z "$kernelver" ]] && echo "Error: no version directory found under $kernel_dir/lib/modules/" && exit 1
 
 kernel_img=$(find "$kernel_dir/boot" -name 'vmlinuz-*' 2>/dev/null | head -1)
@@ -170,6 +308,21 @@ moddir="$kernel_dir/lib/modules/$kernelver"
 [[ ! -f "$sysmap"   ]]  && echo "Error: $sysmap not found"                             && exit 1
 [[ ! -d "$moddir"   ]]  && echo "Error: $moddir not found"                             && exit 1
 
+# On macOS every module in modules.dep must exist; a shortfall means the kernel
+# tree was unpacked on a case-insensitive disk (xt_DSCP.ko vs xt_dscp.ko ...)
+if [[ -n "$is_mac" && -f "$moddir/modules.dep" ]]; then
+    mods_want=$(grep -c . "$moddir/modules.dep" || true)
+    mods_have=$(find "$moddir" -type f -name '*.ko*' | wc -l)
+    if (( mods_have < mods_want )); then
+        echo "Error: $moddir has $mods_have modules but modules.dep lists $mods_want."
+        echo "       The kernel tree was probably unpacked on a case-insensitive disk."
+        echo "       Pass the kernel tarball with --kernel-tar instead."
+        exit 1
+    fi
+fi
+[[ -n "$is_mac" && ! -f "$moddir/modules.dep" ]] &&
+    echo "Error: $moddir/modules.dep missing (needed by the macOS depmod shim)" && exit 1
+
 echo "==> Kernel version : $kernelver"
 echo "    Kernel image   : $kernel_img"
 echo "    Kernel (raw)   : $kernel_img_uncompressed"
@@ -181,6 +334,8 @@ echo "    Module dir     : $moddir"
 echo
 echo "==> Extracting ISO: $input_iso"
 osirrox -indev "$input_iso" -extract / "$iso_extract/"
+# osirrox restores the ISO's read-only modes; we replace files in this tree
+chmod -R u+w "$iso_extract"
 
 # Auto-detect squashfs image name, or use --sqf-name if provided
 if [[ -n "$sqf_name" ]]; then
@@ -200,6 +355,10 @@ echo
 echo "==> Extracting squashfs (this provides the initrd binaries) ..."
 unsquashfs -f -d "$squashfs_root" "$sqf"
 
+# macOS tags every new file with com.apple.* xattrs; keep them out of the image
+sqf_xattr_opts=()
+[[ -n "$is_mac" ]] && sqf_xattr_opts=(-no-xattrs)
+
 [[ -f "$squashfs_root/sbin/initrdinit" ]] ||
     { echo "Error: /sbin/initrdinit not found in squashfs — wrong ISO?"; exit 1; }
 
@@ -211,6 +370,24 @@ unsquashfs -f -d "$squashfs_root" "$sqf"
 cp -f "$squashfs_root/sbin/mkinitrd" "$mkinitrd_sh"
 chmod +x "$mkinitrd_sh"
 echo "    mkinitrd     : extracted from squashfs ($(wc -l < "$mkinitrd_sh") lines)"
+
+# In bash 4.4 and later the backtick form below drops the escape on the dot,
+# so the dependency snd.ko resolves to the first match of /snd.ko, which can
+# be snd-korg1212.ko. The $( ) form keeps the escape. Patch our copy only.
+mkinitrd_old='x=`sed -n "/\/${x/./\\.}.*/{p; q}" $map`'
+mkinitrd_new='x=$(sed -n "/\/${x/./\\.}.*/{p; q}" $map)'
+mkinitrd_patched=0
+while IFS= read -r line || [[ -n "$line" ]]; do
+    indent="${line%%[![:space:]]*}"
+    if [[ "${line#"$indent"}" == "$mkinitrd_old" ]]; then
+        line="$indent$mkinitrd_new"
+        mkinitrd_patched=1
+    fi
+    printf '%s\n' "$line"
+done < "$mkinitrd_sh" > "$mkinitrd_sh.new"
+mv -f "$mkinitrd_sh.new" "$mkinitrd_sh"
+chmod +x "$mkinitrd_sh"
+(( mkinitrd_patched )) && echo "    mkinitrd     : patched module dependency lookup"
 
 # ── Extract /init from the existing ISO initrd ───────────────────────────────
 # The existing initrd already contains the complete live-boot init script.
@@ -266,6 +443,11 @@ cp -f "$kernel_img_uncompressed" "$squashfs_root/boot/$kernel_basename_uncompres
 # System.map was already copied above for mkinitrd; ensure it is present
 cp -f "$sysmap" "$squashfs_root/boot/System.map-$kernelver"
 
+# Files copied from a user-owned tree would keep that uid in the image
+chown -R 0:0 "$squashfs_root/lib/modules/$kernelver"
+chown 0:0 "$squashfs_root/boot/$kernel_basename" "$squashfs_root/boot/$kernel_basename_uncompressed" \
+          "$squashfs_root/boot/System.map-$kernelver"
+
 ln -sf "$kernel_basename"              "$squashfs_root/boot/vmlinuz"
 ln -sf "$kernel_basename_uncompressed" "$squashfs_root/boot/vmlinux"
 ln -sf "System.map-$kernelver"         "$squashfs_root/boot/System.map"
@@ -281,7 +463,10 @@ echo "==> Running mkinitrd ..."
 initrd_out="$workdir/initrd-$kernelver"
 initrd_plain="$workdir/initrd-plain-$kernelver"
 
-bash "$mkinitrd_sh" \
+# The macOS depmod shim filters the kernel build's own module indexes
+export KMOD_SHIM_REF_MODDIR="$squashfs_root/lib/modules/$kernelver"
+
+"$bash4" "$mkinitrd_sh" \
     -R "$squashfs_root" \
     -o "$initrd_out" \
     "$kernelver"
@@ -382,9 +567,9 @@ search --no-floppy --file --set=root /boot/grub/grub.cfg
 set prefix=($root)/boot/grub
 EOF
 
-echo "    Building $efi_basename with grub-mkimage ..."
+echo "    Building $efi_basename with $grub_mkimage ..."
 efi_out="$workdir/$efi_basename"
-grub-mkimage \
+"$grub_mkimage" \
     -O "$grub_platform" \
     -p /boot/grub \
     -d "$grub_modules_src" \
@@ -406,10 +591,18 @@ mkdir -p "$iso_extract/efi/boot"
 cp -f "$efi_out" "$iso_extract/efi/boot/$efi_basename"
 echo "    EFI plain      : efi/boot/$efi_basename"
 
-# Also wrap it in a FAT image for the appended EFI partition
+# Also wrap it in a FAT image for the appended EFI partition,
+# at least 1440K and large enough for the loader plus FAT overhead
 efi_img="$iso_extract/efi.img"
-dd if=/dev/zero bs=1024 count=1440 of="$efi_img" 2>/dev/null
-mkfs.vfat "$efi_img"
+efi_kb=$(( $(wc -c < "$efi_out") / 1024 + 256 ))
+(( efi_kb < 1440 )) && efi_kb=1440
+rm -f "$efi_img"
+dd if=/dev/zero bs=1024 count="$efi_kb" of="$efi_img" 2>/dev/null
+if type -p mkfs.vfat >/dev/null; then
+    mkfs.vfat "$efi_img"
+else
+    mformat -i "$efi_img" -T $(( efi_kb * 2 )) -h 2 -s 16 ::
+fi
 mmd  -i "$efi_img" ::/EFI
 mmd  -i "$efi_img" ::/EFI/BOOT
 mcopy -i "$efi_img" "$efi_out" "::/EFI/BOOT/$efi_basename"
@@ -484,6 +677,9 @@ if [[ -d "$grub_dir/etc/grub.d" ]]; then
     mkdir -p "$squashfs_root/etc/grub.d"
     cp -a "$grub_dir/etc/grub.d/." "$squashfs_root/etc/grub.d/"
 fi
+chown -R 0:0 "$squashfs_root/usr/lib/grub" "$squashfs_root/usr/share/grub" \
+             "$squashfs_root/etc/grub.d" 2>/dev/null || true
+chown -h 0:0 "$squashfs_root/usr/sbin"/grub* 2>/dev/null || true
 
 # ── Serial console getty ─────────────────────────────────────────────────────
 # systemd-getty-generator pulls in serial-getty@ttySG0 from console=ttySG0.
@@ -502,7 +698,8 @@ echo
 echo "==> Repacking squashfs ..."
 new_sqf="$workdir/$sqf_name"
 mksquashfs "$squashfs_root" "$new_sqf" -noappend -comp zstd -Xcompression-level 19 \
-    -b 1M -processors "$(nproc)" -quiet
+    -b 1M -processors "$(nproc 2>/dev/null || sysctl -n hw.ncpu)" -quiet \
+    ${sqf_xattr_opts[@]+"${sqf_xattr_opts[@]}"}
 # Replace the squashfs in the ISO tree
 cp -f "$new_sqf" "$sqf"
 echo "    Squashfs size  : $(du -sh "$sqf" | cut -f1)"
