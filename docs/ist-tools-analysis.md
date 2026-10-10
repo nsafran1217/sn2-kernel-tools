@@ -1,5 +1,31 @@
 # SGI Internal Service Tools (IST) — Analysis for SN2 GPU/PCI Debugging
 
+> **Verified on pople, 2026-10-10.** The tool descriptions below come from reading the
+> IST sources; the sections marked *(verified)* have been checked against the real
+> machine. Day to day, drive everything through `../claude_tools/altix` (see its
+> README). Summary of what holds on *this* box (Altix 350, IP41, one C-brick `001c02`,
+> SHub 1.2, NASID 0):
+>
+> - The L2 is the software L2 on `l3.ad.nsafran.com`, so IST tools there use `--l2 localhost`.
+> - **The PIC is not on the JTAG chain.** `mmr_dump` only works with
+>   `-chip 001c02:NODE:SHUB0`. `errdmp -pic` is a no-op (it targets PICs in separate
+>   Ix/Px bricks). **`errdmp -ii` is the only IST path to PIC registers**: it reads
+>   them through the SHub packet generator.
+> - `errdmp -ii` gets these PIC registers for BUS0 and BUS1: BRIDGE_ID/STAT/CTRL,
+>   INT_STATUS, ERR_INT_VIEW, MULT_INT, PCI_ERR_UPPER/LOWER_ADDR,
+>   PCI_X_ERR_ADDR/ATTR/DATA, PCI_X_DMA_ERR_ADDR/ATTR, PCI_X_PIO_SPLIT_ERR_ADDR/ATTR,
+>   DEV0-3_REG, plus crossbow XB_* registers. It does **not** get DIR_MAP,
+>   RR_BUFF_STATUS, PCI_RD_RESP*, retry/latency counters, PCI_X_WR_BUF*, or
+>   INT_ENABLE/INT_DEV/INT*_HOST_ADDR. Those have to be read from the kernel.
+> - The "Deallocated WRB count != 20. Actual value: 0x0" line appears in **every**
+>   dump, healthy ones included. errdmp only counts WRBs that carry a boot-PROM
+>   timeout signature (NASID^0x400 with TO set). To check WRB/RRB exhaustion, look at
+>   the `WRB[n]`/`RRB[n]` `STATE=` fields instead; `altix errdmp-summary` tallies them.
+>   In every MCA/hang dump so far, all 32 WRBs were FREE.
+> - `errdmp -verbose -fast | grep ^ADD` prints nothing in V4.14.
+> - Running `errdmp -ii` and SHub `mmr_dump` against a live Linux system is safe
+>   (done repeatedly).
+
 ## Overview
 
 This document analyzes the SGI Internal Service Tools CD contents for tools
@@ -73,14 +99,17 @@ For SHub II (I/O Interface) registers (with `-ii` flag):
 - Crossbow registers on connected I/O bricks
 
 **Direct relevance to GPU MCA:**
-- WRB deallocation check: errdmp verifies all 20 WRBs are freed. If fewer than
-  18 are deallocated, it flags an error. This directly tests the theory that
-  heavy GPU DMA exhausts WRBs → MCA.
+- ~~WRB deallocation check~~ *(verified: meaningless here)*: the "Deallocated WRB
+  count" check looks for a boot-PROM signature and reports 0 on every running system.
+  For WRB exhaustion, count non-FREE `WRB[n] STATE=` entries in the PI CRB dump.
 - PIC DMA error registers capture the exact failing DMA address and attributes.
 - SHub PI error registers tell us exactly what class of error triggered the MCA.
 - II CRB state shows what I/O operations were in flight at crash time.
 
-**Usage:**
+**Usage** *(verified: on pople use `--l2 localhost` from the L3, or `altix errdmp`;
+output goes to `/usr/people/sgidiag/sn2/dumps/errdmp/errdmp_26_<Day>_<Mon>_<DD>_<HH>_<MM>`,
+which is a symlink to NFS, `~/projects/altix_cross/sn2-ist-dumps/dumps/errdmp/`;
+`-ii` takes about 28 s)*:
 ```bash
 # Basic error dump (all SHub nodes)
 errdmp --l2 <L2_IP_or_hostname>
@@ -114,7 +143,9 @@ errdmp --l2 <L2_IP> -nocrb
 - `-noparse` — Raw MMR values without decode
 - `-flush` — System flush mode (0=none, 1=single, 2=all)
 
-**CAUTION:** The `-pic` flag warning from SGI: "Dumping the PIC MMR's on a system
+**On the Altix 350 `-pic` does nothing** *(verified)*: there are no Ix/Px bricks, so it
+has no target. It ran on a live system without effect. The general SGI caution, for
+systems that do have I/P bricks: "Dumping the PIC MMR's on a system
 running Linux will likely cause the system to crash. PIC MMR dumping usually causes
 bogus Unexpected Response errors on PIC2." **Use only after MCA, not during operation.**
 
@@ -152,52 +183,19 @@ $ mmr_dump -chip 001c01:NODE1:SHUB1 --l2 l2-coot -i pi_mmrs.lst
 $ mmr_dump -chip 101t01:MOATB:TIO0  --l2 l2-torpedo -n "TIO_NODE_ID TIO_CA_IDENTIFICATION"
 ```
 
-**CRITICAL — Discovering the correct -chip name:**
-
-The `-chip` value must be an exact `<brick>:<board>:<chip>` triplet as
-discovered from the hardware JTAG scan chain. These names are NOT
-standardized — they depend on your specific system configuration.
-
-**Brick name** is derived from physical location: `<rack><type><slot>`,
-e.g., `001c01` = rack 0, C-brick, slot 01; `001i14` = rack 0, I-brick,
-slot 14. The exact slot number depends on your physical cabling.
-
-**Board and chip names** (e.g., `NODE0`, `SHUB0`, `IO9`, `PIC0`) are
-defined in JTAG chain description files and vary by brick type. On an
-IX-brick, the board name could be `IO9`, `IO10`, `PCI12`, or others
-depending on which baseIO/PCI carrier card is installed. On a C-brick,
-boards are `NODE0`/`NODE1` with chips `SHUB0`/`SHUB1`.
-
-To discover available chips, use one of these methods:
-
-1. **Run errdmp with -verbose** — it prints discovery lines like:
-   `ADD PIC: brick=001i14 board=IO9 chip=PIC0`
-   `ADD SH1 SHUB0: brick=001c01 board=NODE0 chip=SHUB0`
-   ```bash
-   errdmp --l2 <L2_host> -verbose -fast 2>&1 | grep "^ADD"
-   ```
-
-2. **Run superscope** — the GUI shows all discovered chips interactively:
-   ```bash
-   superscope --l2 <L2_host>
-   ```
-
-3. **Run mmr_dump with -debug** — prints scan chain details before failing:
-   ```bash
-   mmr_dump --l2 <L2_host> -chip DUMMY:DUMMY:DUMMY -debug 1
-   ```
-
-4. **Use a scan config file** — if auto-discovery doesn't work, provide
-   a .cfg file that defines your system's JTAG chain layout:
-   ```bash
-   mmr_dump --l2 <L2_host> -f /stand/sysco/cfg/scan/<your_config>.cfg -chip <brick>:<board>:<chip>
-   ```
+**Chip names on pople** *(verified)*: the only chip is **`001c02:NODE:SHUB0`** (alias
+`shub` in `altix mmr`). The IP41 scan descriptions
+(`/stand/sysco/data/scan/cmp/ip41_*.cmp`) have no PIC, so `001c02:NODE:PIC0` and
+similar names don't exist. The generic discovery methods (errdmp `-verbose` `ADD`
+lines, `mmr_dump -debug`) don't print chip lists in these versions. If you need
+names on another machine, read the brick type's `.cmp` files under
+`/stand/sysco/data/scan/cmp/`.
 
 If no `-n` or `-i` is given, ALL MMRs for that chip type are dumped.
 
-**Key for GPU debugging:** Can read specific PIC registers before and after
-triggering the MCA to compare state. Useful for monitoring DIR_MAP, DEV registers,
-and RRB status during controlled testing.
+**Key for GPU debugging:** reads SHub registers (PI/LB/XN/MD error registers, CRB
+state) by name before and after an event. It **cannot** read PIC registers on the 350;
+see `errdmp -ii` above.
 
 ---
 
@@ -480,79 +478,51 @@ DIR_OFF provides bits [47:31]. Together they form the full 48-bit physical targe
 3. L1 firmware version ≥ 1.19.10 for auto-configuration
 4. **Know your L2 hostname or IP** (e.g., `l2-myaltix`)
 
-### Before First Use: Discover Chip Names
+### Setup *(verified)*
 
-You must discover the exact `-chip` triplets for your system. Run
-errdmp once while the system is healthy to capture them:
-```bash
-errdmp --l2 <L2_host> -verbose -fast 2>&1 | grep "^ADD"
-```
-This will print lines like:
-```
-ADD SH1 SHUB0: brick=001c01 board=NODE0 chip=SHUB0
-ADD SH1 SHUB1: brick=001c01 board=NODE1 chip=SHUB1
-ADD PIC: brick=001i14 board=IO9 chip=PIC0
-```
-
-Record the triplets. For the examples below, substitute your actual values:
-- `$PIC_CHIP` → your PIC triplet, e.g., `001i14:IO9:PIC0`
-- `$SHUB_CHIP` → your SHub triplet, e.g., `001c01:NODE0:SHUB0`
+The software L2 must be running on the L3 (`altix l3 start-l2`). The SHub chip is
+`001c02:NODE:SHUB0`, and there is no PIC chip to discover.
 
 ### After MCA occurs:
 
-**Step 1: Do NOT reboot.** System controllers remain powered.
+**Step 1: Do NOT reset.** The SHub error registers survive until reset. The `test`
+ELILO label has `panic=0`, so a panic also leaves the box frozen.
 
-**Step 2: Full error dump (errdmp auto-discovers, no -chip needed)**
+**Step 2: Full error dump, including PIC registers through the II**
 ```bash
-errdmp --l2 <L2_host> -pic -ii > post_mca_$(date +%Y%m%d_%H%M%S).txt
+altix errdmp --name <what-happened>      # = errdmp --l2 localhost -ii on the L3, plus a triage summary
 ```
 
-This captures ~30 seconds per node. The dump includes:
-- All SHub error registers (tells us WHAT error)
-- PIC bridge registers (tells us WHERE on PCI bus)
-- II CRB/WRB state (tells us what I/O operations were in flight)
-- PIC DMA error address registers (tells us the exact failing address)
-
-**Step 3: Check specific PIC registers for the GPU's bus**
+**Step 3: Look at the PIC BUS1 registers (the GPU's bus) in that dump**
 ```bash
-# Substitute your actual PIC chip triplet discovered above
-mmr_dump --l2 <L2_host> -chip $PIC_CHIP \
-  -n "BUS1_INT_STATUS BUS1_PCI_X_DMA_ERR_ADDR BUS1_PCI_X_DMA_ERR_ATTR BUS1_DIR_MAP BUS1_DEV2_REG BUS1_RR_BUFF_STATUS BUS1_BRIDGE_STAT BUS1_PCI_X_READ_REQ_TOUT"
+grep -A6 -E "BUS1_(INT_STATUS|ERR_INT_VIEW|PCI_X_DMA_ERR|PCI_X_ERR|PCI_ERR|DEV[0-3]_REG|BRIDGE_STAT)" <dump>
 ```
 
-**Step 4: Check SHub error state**
+**Step 4: Extra SHub registers, if errdmp's set isn't enough**
 ```bash
-# Substitute your actual SHub chip triplet discovered above
-mmr_dump --l2 <L2_host> -chip $SHUB_CHIP \
-  -n "SH_PI_FIRST_ERROR SH_PI_ERROR_SUMMARY SH_PI_ERROR_DETAIL_1 SH_PI_ERROR_DETAIL_2 SH_FIRST_ERROR"
+altix mmr shub SH_PI_FIRST_ERROR SH_PI_ERROR_SUMMARY SH_PI_ERROR_DETAIL_1 SH_PI_ERROR_DETAIL_2 SH_FIRST_ERROR
 ```
 
-**Step 5: Read WRB state (if errdmp didn't capture it)**
-```bash
-mmr_dump --l2 <L2_host> -chip $SHUB_CHIP \
-  -n "II_ICRB0_A II_ICRB0_B II_ICRB0_C II_ICRB0_D II_ICRB0_E II_ICRB1_A II_ICRB1_B II_ICRB1_C II_ICRB1_D II_ICRB1_E"
-```
+**Step 5: CRB state.** The dump already includes the PI RRB/WRB/IRB/PRB tables and the
+II CRBs (`II_ICRB*`). `altix errdmp-summary` prints the busy/total counts and the
+entries that aren't FREE.
 
 ### Interpreting Results
 
-1. **Check SH_PI_FIRST_ERROR** — This tells us the class of error:
-   - Bits indicating FSB/memory errors → memory corruption
-   - Bits indicating II errors → I/O interface problem → PIC/PCI
-   - Bits indicating XN errors → crossbar/NUMAlink
-
-2. **Check BUS1_INT_STATUS** — Look for:
-   - `PCI_X_REQ_TOUT` (bit 39) → Read request timed out (device not responding)
-   - `PCI_X_MTOUT` (bit 34) → Master timeout (PIO stuck)
-   - `UNEXPECTED_RESP` (bit 29) → Spurious response from device
-   - `PMU_PAGE_FAULT` (bit 30) → Invalid DMA address through GART
-
-3. **Check BUS1_PCI_X_DMA_ERR_ADDR** — The exact DMA address that caused error
-
-4. **Check BUS1_RR_BUFF_STATUS** — If all INUSE bits are set and no VALID bits,
-   RRBs are exhausted (device consuming all read response buffers)
-
-5. **Check WRB deallocation** — errdmp reports count; should be 20 (all free).
-   If fewer are free, WRBs are stuck/exhausted.
+1. **SH_FIRST_ERROR / SH_PI_FIRST_ERROR** give the error class (e.g. PI_HW_INT +
+   FSB_PROTO_ERR in the April MCAs). **SH_PI_ERROR_DETAIL_1/2** carry the address,
+   command, and source; errdmp decodes them in the Final Error Summary.
+2. **BUS1_INT_STATUS**: look for `PCI_X_REQ_TOUT` (39), `PCI_X_MTOUT` (34),
+   `UNEXPECTED_RESP` (29), `PMU_PAGE_FAULT` (30).
+3. **BUS1_PCI_X_DMA_ERR_ADDR/ATTR**: the failing DMA address, if the PIC latched one.
+4. PIC RRB status (`RR_BUFF_STATUS`) is **not** readable through IST on the 350.
+   Read it from the kernel (pcibr MMIO).
+5. CPU LEDs: "Not toggling!" plus `SAL_PMI entered` means a CPU is stuck in the
+   MCA/PMI path. Both CPUs at `Kernel: CPU busy` "Not toggling!" with no error
+   registers set is a software panic (sysrq-c baseline).
+6. Known-normal flags on this box: NI0/NI1 LLP (no NUMAlink), XN flow test values,
+   PIO_WRITE_STATUS pending counts, BUS0 PCI_X_ARB_ERR. `altix errdmp-summary`
+   hides them.
 
 ---
 

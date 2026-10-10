@@ -1,0 +1,853 @@
+#!/usr/bin/env python3
+"""altix - drive the SGI Altix 350 test box end to end.
+
+L2 control (power/reset/arbitrary L2 commands), a persistent system-console
+logger, IST tools (errdmp/mmr_dump) on the L3, and boot-cycle orchestration.
+See README.md in this directory.
+
+All settings come from the environment (see CONFIG below); defaults match the
+current lab setup: software L2 running on l3.ad.nsafran.com, target "pople".
+"""
+
+import argparse
+import datetime
+import os
+import re
+import select
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+# --------------------------------------------------------------------------
+# CONFIG
+# --------------------------------------------------------------------------
+
+def _env(name, default):
+    return os.environ.get(name, default)
+
+# L2 SMP terminal. Software L2 on the L3 listens on 8001 (plain text);
+# the hardware L2 (nl4r) is telnet on port 23.
+L2_HOST = _env("ALTIX_L2_HOST", "l3.ad.nsafran.com")
+L2_PORT = int(_env("ALTIX_L2_PORT", "8001"))
+# What the IST tools on the L3 should pass to --l2 (localhost when the software
+# L2 is running on the L3 itself, "nl4r" when using the hardware L2).
+IST_L2 = _env("ALTIX_IST_L2", "localhost")
+L3_SSH = _env("ALTIX_L3", "nathan@l3.ad.nsafran.com")
+TARGET_SSH = _env("ALTIX_TARGET", "root@pople")
+BRICK = _env("ALTIX_BRICK", "001c02")
+LOG_DIR = os.path.expanduser(_env("ALTIX_LOG_DIR", "~/projects/altix_cross/logs/altix"))
+# errdmp writes to /usr/people/sgidiag/sn2 on the L3, which is a symlink to
+# this NFS directory; it is visible locally at the same path.
+ERRDMP_DIR = _env("ALTIX_ERRDMP_DIR", "/mnt/nfs/altix/sn2-ist/dumps/errdmp")
+
+# On the Altix 350 (IP41) the PIC is not on the JTAG chain; errdmp -ii reads
+# its BUS0/BUS1 registers through the SHub packet generator instead.
+CHIP_ALIASES = {
+    "shub": f"{BRICK}:NODE:SHUB0",
+}
+
+# errdmp flags with "<<<<<<<" that are present on a healthy, idle box here.
+ERRDMP_NOISE = re.compile(
+    r"SH_NI[01]_LLP_(ERR|STAT)\b"         # no NUMAlink cable on a lone 350
+    r"|SH_XNLB_INTRA_FLOW|SH_XNPI_FR_IILB_PORT_FLOW_FIFO"
+    r"|SH_PIO_WRITE_STATUS_[01]\b"        # live system: PIO writes in flight
+    r"|BUS0_(ERR_INT_VIEW|MULT_INT)\b.*= 0x0000010000000000"  # base-IO PCI_X_ARB_ERR, always latched
+    r"|power (down|up) \(PANEL\)")
+
+CONSOLE_LOG = os.path.join(LOG_DIR, "console.log")
+CONSOLE_SOCK = os.path.join(LOG_DIR, "console.sock")
+CONSOLE_PID = os.path.join(LOG_DIR, "console.pid")
+BOOT_DIR = os.path.join(LOG_DIR, "boots")
+
+SSH_L3_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+               "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa",
+               "-o", "HostKeyAlgorithms=+ssh-rsa",
+               "-i", os.path.expanduser("~/.ssh/id_rsa")]
+SSH_TARGET_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+                   "-o", "StrictHostKeyChecking=no",
+                   "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"]
+
+L2_PROMPT_RE = re.compile(rb"L2>\s*$")
+
+CTRL_D = b"\x04"   # L2 -> system console
+CTRL_T = b"\x14"   # system console -> L2
+
+def die(msg, code=1):
+    print(f"altix: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+def now_ts():
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+# --------------------------------------------------------------------------
+# L2 connection (plain TCP or telnet; IAC sequences are refused and stripped)
+# --------------------------------------------------------------------------
+
+IAC, DONT, DO, WONT, WILL, SB, SE = 255, 254, 253, 252, 251, 250, 240
+
+class L2Conn:
+    def __init__(self, host=L2_HOST, port=L2_PORT, timeout=10):
+        self.sock = socket.create_connection((host, port), timeout=timeout)
+        self.sock.setblocking(False)
+        self._tstate = 0      # telnet parser state
+        self._tcmd = 0
+
+    def fileno(self):
+        return self.sock.fileno()
+
+    def close(self):
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+    def send(self, data):
+        if isinstance(data, str):
+            data = data.encode("latin1")
+        data = data.replace(bytes([IAC]), bytes([IAC, IAC]))
+        self.sock.setblocking(True)
+        try:
+            self.sock.sendall(data)
+        finally:
+            self.sock.setblocking(False)
+
+    def _strip_telnet(self, data):
+        out = bytearray()
+        reply = bytearray()
+        for b in data:
+            st = self._tstate
+            if st == 0:
+                if b == IAC:
+                    self._tstate = 1
+                else:
+                    out.append(b)
+            elif st == 1:                      # after IAC
+                if b == IAC:
+                    out.append(IAC); self._tstate = 0
+                elif b in (DO, DONT, WILL, WONT):
+                    self._tcmd = b; self._tstate = 2
+                elif b == SB:
+                    self._tstate = 3
+                else:
+                    self._tstate = 0
+            elif st == 2:                      # option byte
+                if self._tcmd == DO:
+                    reply += bytes([IAC, WONT, b])
+                elif self._tcmd == WILL:
+                    # accept echo/suppress-go-ahead so the server stays sane
+                    reply += bytes([IAC, DO if b in (1, 3) else DONT, b])
+                self._tstate = 0
+            elif st == 3:                      # inside SB
+                if b == IAC:
+                    self._tstate = 4
+            elif st == 4:
+                self._tstate = 0 if b == SE else 3
+        if reply:
+            self.sock.setblocking(True)
+            try:
+                self.sock.sendall(bytes(reply))
+            finally:
+                self.sock.setblocking(False)
+        return bytes(out)
+
+    def recv(self, timeout):
+        """Return bytes received within timeout (b'' if none). Raises EOFError."""
+        r, _, _ = select.select([self.sock], [], [], timeout)
+        if not r:
+            return b""
+        try:
+            data = self.sock.recv(65536)
+        except BlockingIOError:
+            return b""
+        if not data:
+            raise EOFError("L2 connection closed")
+        return self._strip_telnet(data)
+
+    def read_until(self, regex, timeout):
+        buf = b""
+        end = time.time() + timeout
+        while time.time() < end:
+            buf += self.recv(min(0.5, max(0.01, end - time.time())))
+            if regex.search(buf):
+                return buf, True
+        return buf, False
+
+    def to_l2_prompt(self, timeout=8):
+        """Get this session to an L2 prompt (escaping console mode if needed)
+        and engage the L2 command processor with "l2", so that a blank line
+        no longer drops back into console mode."""
+        buf, ok = self.read_until(L2_PROMPT_RE, 2)
+        if not ok:
+            self.send(CTRL_T)
+            buf, ok = self.read_until(L2_PROMPT_RE, timeout)
+            if not ok:
+                raise RuntimeError("no L2 prompt from %s:%d (got %r)" % (L2_HOST, L2_PORT, buf[-200:]))
+        self.send("l2\r")
+        self.read_until(L2_PROMPT_RE, timeout)
+
+    def command(self, cmd, timeout=30):
+        """Run an L2 command; return its output (echo and prompt removed)."""
+        if not cmd.strip():
+            raise ValueError("empty L2 command (a blank line enters console mode)")
+        self.send(cmd + "\r")
+        buf, ok = self.read_until(L2_PROMPT_RE, timeout)
+        text = buf.decode("latin1").replace("\r", "")
+        lines = text.split("\n")
+        if lines and lines[0].strip() == cmd.strip():
+            lines = lines[1:]
+        if lines and L2_PROMPT_RE.search(lines[-1].encode("latin1")):
+            lines = lines[:-1]
+        out = "\n".join(lines).strip("\n")
+        if not ok:
+            out += "\n[altix: timed out waiting for L2 prompt]"
+        return out, ok
+
+def l2_command(cmd, timeout=30):
+    c = L2Conn()
+    try:
+        c.to_l2_prompt()
+        return c.command(cmd, timeout)
+    finally:
+        c.close()
+
+# --------------------------------------------------------------------------
+# Console daemon
+# --------------------------------------------------------------------------
+
+class ConsoleLogger:
+    """Holds one L2 session in system-console mode and appends everything to
+    CONSOLE_LOG with a timestamp per line. A unix socket accepts input to send
+    to the console ('S' + bytes) and marker lines ('M' + text)."""
+
+    def __init__(self):
+        self.log = open(CONSOLE_LOG, "a", buffering=1, encoding="utf-8", errors="replace")
+        self.at_bol = True
+        self.esc = 0             # escape-sequence parser state, see strip_escapes
+        self.conn = None
+        self.tail = b""          # recent raw output, for prompt detection
+        self.last_rx = time.time()
+
+    # escape parser states
+    _NORMAL, _ESC, _CSI, _STR, _STR_ESC, _CHARSET = range(6)
+
+    def strip_escapes(self, text):
+        """Drop ANSI/VT escape sequences (CSI, OSC/DCS strings such as systemd's
+        OSC 3008 markers, ESC 7/8, charset selects) and control characters,
+        keeping parser state across chunks."""
+        out = []
+        st = self.esc
+        for ch in text:
+            o = ord(ch)
+            if st == self._NORMAL:
+                if ch == "\x1b":
+                    st = self._ESC
+                elif ch in "\n\t" or o >= 32:
+                    out.append(ch)
+            elif st == self._ESC:
+                if ch == "[":
+                    st = self._CSI
+                elif ch in "]P^_X":
+                    st = self._STR
+                elif ch in "()*+#%":
+                    st = self._CHARSET
+                else:
+                    st = self._NORMAL
+            elif st == self._CSI:
+                if 0x40 <= o <= 0x7e:
+                    st = self._NORMAL
+            elif st == self._STR:
+                if ch == "\x07":
+                    st = self._NORMAL
+                elif ch == "\x1b":
+                    st = self._STR_ESC
+            elif st == self._STR_ESC:
+                st = self._NORMAL if ch == "\\" else self._STR
+            else:                                   # _CHARSET
+                st = self._NORMAL
+        self.esc = st
+        return "".join(out)
+
+    def write_text(self, text):
+        text = self.strip_escapes(text)
+        out = []
+        for ch in text:
+            if self.at_bol:
+                out.append("[%s] " % now_ts())
+                self.at_bol = False
+            out.append(ch)
+            if ch == "\n":
+                self.at_bol = True
+        self.log.write("".join(out))
+
+    def meta(self, msg):
+        if not self.at_bol:
+            self.log.write("\n")
+            self.at_bol = True
+        self.log.write("[%s] ### %s\n" % (now_ts(), msg))
+
+    def connect(self):
+        self.conn = L2Conn(timeout=10)
+        self.conn.to_l2_prompt()
+        self.conn.send(CTRL_D)
+        self.meta("console logger connected to %s:%d" % (L2_HOST, L2_PORT))
+
+    def run(self):
+        if os.path.exists(CONSOLE_SOCK):
+            os.unlink(CONSOLE_SOCK)
+        lsock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        lsock.bind(CONSOLE_SOCK)
+        lsock.listen(8)
+        clients = {}
+        stop = []
+        signal.signal(signal.SIGTERM, lambda *a: stop.append(1))
+        self.meta("console logger started (pid %d)" % os.getpid())
+        while not stop:
+            if self.conn is None:
+                try:
+                    self.connect()
+                except Exception as e:  # noqa: BLE001 - keep retrying forever
+                    self.meta("connect failed: %s; retrying in 10s" % e)
+                    self.conn = None
+                    time.sleep(10)
+                    continue
+            rlist = [self.conn, lsock] + list(clients)
+            try:
+                r, _, _ = select.select(rlist, [], [], 1.0)
+            except InterruptedError:
+                continue
+            for s in r:
+                if s is self.conn:
+                    try:
+                        data = self.conn.recv(0)
+                    except (EOFError, OSError) as e:
+                        self.meta("L2 connection lost: %s" % e)
+                        self.conn.close()
+                        self.conn = None
+                        break
+                    if data:
+                        self.last_rx = time.time()
+                        self.tail = (self.tail + data)[-256:]
+                        self.write_text(data.decode("latin1"))
+                elif s is lsock:
+                    cs, _ = lsock.accept()
+                    clients[cs] = b""
+                else:
+                    d = s.recv(65536)
+                    if d:
+                        clients[s] += d
+                        continue
+                    msg = clients.pop(s)
+                    s.close()
+                    if msg[:1] == b"M":
+                        self.meta("MARK " + msg[1:].decode("utf-8", "replace"))
+                    elif msg[:1] == b"S" and self.conn is not None:
+                        try:
+                            self.conn.send(msg[1:])
+                        except OSError as e:
+                            self.meta("send failed: %s" % e)
+            # If our session fell back to the L2 prompt (L2 restart, stray
+            # CTRL-T), go back into console mode once things are quiet.
+            if (self.conn is not None and L2_PROMPT_RE.search(self.tail)
+                    and time.time() - self.last_rx > 2):
+                self.tail = b""
+                self.meta("session at L2 prompt; re-entering console mode")
+                self.conn.send(CTRL_D)
+        self.meta("console logger stopping")
+        lsock.close()
+        os.unlink(CONSOLE_SOCK)
+
+def console_pid():
+    try:
+        pid = int(open(CONSOLE_PID).read().strip())
+        os.kill(pid, 0)
+        return pid
+    except (OSError, ValueError):
+        return None
+
+def console_ctl(payload):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        s.connect(CONSOLE_SOCK)
+    except OSError:
+        die("console logger not running (altix console start)")
+    s.sendall(payload)
+    s.close()
+
+def console_start(quiet=False):
+    os.makedirs(LOG_DIR, exist_ok=True)
+    pid = console_pid()
+    if pid:
+        if not quiet:
+            print("console logger already running (pid %d), log: %s" % (pid, CONSOLE_LOG))
+        return pid
+    p = subprocess.Popen([sys.executable, os.path.abspath(__file__), "console", "_run"],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=open(os.path.join(LOG_DIR, "console-daemon.err"), "a"),
+                         start_new_session=True)
+    open(CONSOLE_PID, "w").write(str(p.pid))
+    for _ in range(50):
+        if os.path.exists(CONSOLE_SOCK):
+            break
+        time.sleep(0.1)
+    if not quiet:
+        print("console logger started (pid %d), log: %s" % (p.pid, CONSOLE_LOG))
+    return p.pid
+
+def log_size():
+    try:
+        return os.path.getsize(CONSOLE_LOG)
+    except OSError:
+        return 0
+
+def read_log_from(offset):
+    with open(CONSOLE_LOG, "rb") as f:
+        f.seek(offset)
+        return f.read().decode("utf-8", "replace")
+
+def wait_log(patterns, offset, timeout, poll=1.0):
+    """Wait for any of patterns (name -> compiled regex) to appear in the console
+    log after offset. Returns (name, line, pos) or (None, None, pos) on timeout;
+    pos is where to resume reading."""
+    end = time.time() + timeout
+    pos = offset
+    partial = ""
+    while True:
+        size = log_size()
+        if size > pos:
+            chunk = partial + read_log_from(pos)
+            pos = size
+            lines = chunk.split("\n")
+            partial = lines.pop()       # incomplete last line
+            for line in lines + [partial]:
+                for name, rx in patterns.items():
+                    if rx.search(line):
+                        return name, line, pos
+            pos -= len(partial.encode("utf-8"))
+            partial = ""
+        if time.time() >= end:
+            return None, None, pos
+        time.sleep(poll)
+
+def strip_ts(line):
+    return re.sub(r"^\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\] ", "", line)
+
+# --------------------------------------------------------------------------
+# Remote helpers
+# --------------------------------------------------------------------------
+
+def ssh_l3(cmd, check=False, capture=False, timeout=None):
+    full = ["ssh"] + SSH_L3_OPTS + [L3_SSH, "export PATH=$PATH:/stand/sysco/bin; " + cmd]
+    return subprocess.run(full, check=check, timeout=timeout,
+                          capture_output=capture, text=capture)
+
+def ssh_target(cmd, timeout=None, capture=False):
+    full = ["ssh"] + SSH_TARGET_OPTS + [TARGET_SSH, cmd]
+    return subprocess.run(full, timeout=timeout, capture_output=capture, text=capture)
+
+def target_up(timeout=15):
+    try:
+        r = ssh_target("uname -r", timeout=timeout, capture=True)
+    except subprocess.TimeoutExpired:
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+L3_L2_START = (
+    "cd ~; if pgrep -x l2 >/dev/null; then echo 'l2 already running'; exit 0; fi; "
+    "rm -f ~/.l2.fifo; mkfifo ~/.l2.fifo; "
+    "setsid sh -c 'sleep 2147483647 > ~/.l2.fifo & "
+    "exec /stand/sysco/bin/l2 < ~/.l2.fifo > ~/l2.log 2>&1' </dev/null >/dev/null 2>&1 & "
+    "sleep 6; pgrep -x l2 >/dev/null && echo 'l2 started' && tail -6 ~/l2.log"
+)
+L3_L2_STOP = (
+    "pkill -x l2; sleep 1; pkill -f 'sleep 2147483647'; rm -f ~/.l2.fifo; "
+    "pgrep -x l2 >/dev/null && echo 'l2 still running' || echo 'l2 stopped'"
+)
+
+# --------------------------------------------------------------------------
+# Boot orchestration
+# --------------------------------------------------------------------------
+
+# Patterns watched on the console during a boot. Order matters only for
+# reporting; the first match of any pattern ends the wait.
+FAIL_PATTERNS = {
+    "panic": re.compile(r"Kernel panic|---\[ end Kernel panic"),
+    "oops": re.compile(r"\bOops\b|BUG: unable|Unable to handle kernel"),
+    "mca": re.compile(r"\bMCA\b.*(error|occurred|in progress)|Machine Check|SAL_GET_STATE_INFO|OS_MCA", re.I),
+    "init-mca": re.compile(r"INIT (event|in progress)|OS_INIT"),
+}
+LOGIN_RE = re.compile(r"login:\s*$")
+
+def boot_cycle(args):
+    console_start(quiet=True)
+    os.makedirs(BOOT_DIR, exist_ok=True)
+    tag = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    label = "boot %s%s" % (tag, (" " + args.label) if args.label else "")
+    offset = log_size()
+    console_ctl(("M" + label).encode())
+    status, _ = l2_command("pwr")
+    off = "appears off" in status
+    action = args.action
+    if action == "auto":
+        action = "up" if off else ("reboot" if target_up() else "reset")
+    if action == "reboot":
+        print("rebooting via ssh...")
+        ssh_target("(sleep 1; reboot) >/dev/null 2>&1 &", timeout=30)
+        # don't mistake the still-running old system for the new boot
+        for _ in range(60):
+            time.sleep(5)
+            if not target_up(timeout=8):
+                break
+        else:
+            print("ssh still up after 5 min; resetting via L2")
+            action = "reset"
+    if action == "power-cycle" and not off:
+        print("powering down...")
+        print(l2_command("pwr d")[0])
+        time.sleep(10)
+        off = True
+    if action in ("up", "power-cycle") or (off and action != "reboot"):
+        print("powering up...")
+        print(l2_command("pwr u", timeout=120)[0])
+    elif action == "reset":
+        print("resetting...")
+        print(l2_command("rst", timeout=60)[0])
+
+    start = time.time()
+    patterns = dict(FAIL_PATTERNS)
+    patterns["login"] = LOGIN_RE
+    result = None
+    pos = offset
+    while time.time() - start < args.timeout:
+        name, line, pos = wait_log(patterns, pos, timeout=20)
+        if name == "login":
+            result = ("login", line)
+            break
+        if name:
+            # give the kernel a few seconds to finish dumping the trace
+            time.sleep(args.settle)
+            result = (name, line)
+            break
+        kver = target_up()
+        if kver:
+            result = ("ssh", kver)
+            break
+    seg_path = os.path.join(BOOT_DIR, tag + ".log")
+    seg = read_log_from(offset)
+    open(seg_path, "w").write(seg)
+    elapsed = int(time.time() - start)
+    if result and result[0] in ("login", "ssh"):
+        kver = target_up(timeout=30) if result[0] == "login" else result[1]
+        for _ in range(12):
+            if kver:
+                break
+            time.sleep(10)
+            kver = target_up()
+        print("BOOT OK after %ds; uname -r: %s" % (elapsed, kver or "(ssh not up yet)"))
+        if kver and args.panic is not None:
+            ssh_target("sysctl -q -w kernel.panic=%d" % args.panic, timeout=30)
+            print("kernel.panic set to %d" % args.panic)
+        print("console log: %s" % seg_path)
+        return 0 if kver else 2
+    if result:
+        print("BOOT FAILED (%s) after %ds: %s" % (result[0], elapsed, strip_ts(result[1])))
+    else:
+        print("BOOT TIMED OUT after %ds" % elapsed)
+    print("console log: %s" % seg_path)
+    print("---- last %d console lines ----" % args.tail)
+    print("\n".join(strip_ts(l) for l in seg.rstrip("\n").split("\n")[-args.tail:]))
+    return 1
+
+# --------------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------------
+
+def cmd_l2(a):
+    out, ok = l2_command(" ".join(a.command), timeout=a.timeout)
+    print(out)
+    return 0 if ok else 1
+
+def cmd_power(a):
+    cmd = {"status": "pwr", "up": "pwr u", "down": "pwr d"}[a.state]
+    out, ok = l2_command(cmd, timeout=120)
+    print(out)
+    return 0 if ok else 1
+
+def cmd_reset(a):
+    out, ok = l2_command("rst", timeout=60)
+    print(out)
+    return 0 if ok else 1
+
+def cmd_console(a):
+    if a.op == "_run":
+        os.makedirs(LOG_DIR, exist_ok=True)
+        ConsoleLogger().run()
+        return 0
+    if a.op == "start":
+        console_start()
+    elif a.op == "stop":
+        pid = console_pid()
+        if not pid:
+            print("console logger not running")
+        else:
+            os.kill(pid, signal.SIGTERM)
+            print("stopped console logger (pid %d)" % pid)
+    elif a.op == "status":
+        pid = console_pid()
+        print("running (pid %d)" % pid if pid else "not running")
+        print("log: %s (%d bytes)" % (CONSOLE_LOG, log_size()))
+        return 0 if pid else 1
+    elif a.op == "send":
+        data = " ".join(a.args)
+        data = data.encode("latin1").decode("unicode_escape").encode("latin1") if a.raw else data.encode()
+        if not a.raw:
+            data += b"\r"
+        console_ctl(b"S" + data)
+    elif a.op == "mark":
+        console_ctl(("M" + " ".join(a.args)).encode())
+    elif a.op == "tail":
+        lines = read_log_from(0).rstrip("\n").split("\n") if log_size() else []
+        for l in lines[-a.n:]:
+            print(l)
+        if a.follow:
+            subprocess.call(["tail", "-n0", "-F", CONSOLE_LOG])
+    elif a.op == "since-mark":
+        text = read_log_from(0) if log_size() else ""
+        key = "### MARK " + " ".join(a.args)
+        idx = text.rfind(key)
+        if idx < 0:
+            die("no mark matching %r" % key)
+        print(text[text.rfind("\n", 0, idx) + 1:], end="")
+    elif a.op == "wait":
+        pats = {"match": re.compile(" ".join(a.args))}
+        name, line, _ = wait_log(pats, log_size(), a.timeout)
+        if name:
+            print(line)
+            return 0
+        print("timeout", file=sys.stderr)
+        return 1
+    return 0
+
+def cmd_l3(a):
+    if a.op == "start-l2":
+        return ssh_l3(L3_L2_START).returncode
+    if a.op == "stop-l2":
+        return ssh_l3(L3_L2_STOP).returncode
+    if a.op == "status":
+        return ssh_l3("pgrep -lx l2 || echo 'l2 not running'; tail -5 ~/l2.log").returncode
+    if a.op == "run":
+        return ssh_l3(" ".join(a.args)).returncode
+    return 1
+
+def cmd_errdmp(a):
+    before = set(os.listdir(ERRDMP_DIR)) if os.path.isdir(ERRDMP_DIR) else set()
+    args = a.args[1:] if a.args[:1] == ["--"] else a.args
+    extra = " ".join(args) if args else "-ii"
+    print("running on L3: errdmp --l2 %s %s" % (IST_L2, extra), file=sys.stderr)
+    rc = ssh_l3("errdmp --l2 %s %s </dev/null" % (IST_L2, extra), timeout=a.timeout).returncode
+    after = set(os.listdir(ERRDMP_DIR)) if os.path.isdir(ERRDMP_DIR) else set()
+    new = sorted(after - before, key=lambda f: os.path.getmtime(os.path.join(ERRDMP_DIR, f)))
+    if new:
+        path = os.path.join(ERRDMP_DIR, new[-1])
+        if a.name:
+            dst = path + "-" + a.name
+            os.rename(path, dst)
+            path = dst
+        print("errdmp output: %s" % path)
+        if not a.no_summary:
+            print(errdmp_summary(path))
+    else:
+        print("errdmp: no new dump file in %s" % ERRDMP_DIR, file=sys.stderr)
+    return rc
+
+def errdmp_summary(path):
+    """Triage view of an errdmp log: flagged registers (minus known noise),
+    alerts, CPU LED state, and the Final Error / FRU summaries."""
+    text = open(path, errors="replace").read()
+    lines = text.split("\n")
+    out = ["== %s" % path]
+    flagged = [l for l in lines if "<<<<<<<" in l]
+    real = [l for l in flagged if not ERRDMP_NOISE.search(l)]
+    out.append("-- flagged registers: %d (%d known-normal noise hidden)"
+               % (len(real), len(flagged) - len(real)))
+    out += ["   " + l.strip() for l in real]
+    alerts = list(dict.fromkeys(l.strip() for l in lines
+                                if re.search(r"\bALERT\b|^\s*Alert:", l)))
+    if alerts:
+        out.append("-- alerts:")
+        out += ["   " + l for l in alerts]
+    # SHub PI CRBs (processor side, not PIC buffers). errdmp's own
+    # "Deallocated WRB count != 20" check looks for a boot-PROM signature and
+    # reads 0 on every running system; busy (non-FREE) entries are what matter.
+    crbs = re.findall(r"^\S+: (RRB|WRB|IRB|PRB)\[ *\d+\].*?STATE=0x[0-9A-Fa-f]+ \(([A-Z_ ]*)\)", text, re.M)
+    if crbs:
+        tally = {}
+        for kind, state in crbs:
+            t = tally.setdefault(kind, [0, 0])
+            t[0] += 1
+            t[1] += state != "FREE"
+        out.append("-- SHub PI CRBs busy/total: " + "  ".join(
+            "%s %d/%d" % (k, tally[k][1], tally[k][0]) for k in ("RRB", "WRB", "IRB", "PRB") if k in tally))
+        busy = [l.strip() for l in lines
+                if re.match(r"^\S+: (RRB|WRB|IRB|PRB)\[", l) and "(FREE)" not in l]
+        out += ["   " + l[:220] for l in busy]
+    m = re.search(r"->Recording LED status.*?\n(.*?)\n<<<<", text, re.S)
+    if m:
+        leds = [l.rstrip() for l in m.group(1).split("\n") if re.search(r"0x[0-9a-fA-F]{2}:", l)]
+        out.append("-- CPU LEDs:")
+        out += ["   " + l.strip() for l in leds]
+    m = re.search(r"^Final Error Summary\.(.*?)(?=^Memory Configuration Summary|^Final L1 Error Summary|\Z)",
+                  text, re.S | re.M)
+    if m:
+        body = re.sub(r"\n{3,}", "\n\n", m.group(1)).strip("\n")
+        out.append("-- Final Error Summary:")
+        out.append(body)
+    return "\n".join(out)
+
+def latest_errdmp():
+    files = [os.path.join(ERRDMP_DIR, f) for f in os.listdir(ERRDMP_DIR)]
+    files = [f for f in files if os.path.isfile(f)]
+    if not files:
+        die("no dumps in %s" % ERRDMP_DIR)
+    return max(files, key=os.path.getmtime)
+
+def cmd_errdmp_summary(a):
+    for f in a.files or [latest_errdmp()]:
+        print(errdmp_summary(f))
+    return 0
+
+def cmd_mmr(a):
+    chip = CHIP_ALIASES.get(a.chip, a.chip)
+    regs = " ".join(a.regs)
+    return ssh_l3("mmr_dump -chip %s --l2 %s -n '%s' </dev/null" % (chip, IST_L2, regs),
+                  timeout=a.timeout).returncode
+
+def cmd_watch(a):
+    """Block until the console shows a panic/oops/MCA (exit 1) or the timeout
+    expires with the box still healthy (exit 0)."""
+    console_start(quiet=True)
+    offset = log_size()
+    if a.label:
+        console_ctl(("Mwatch " + a.label).encode())
+    name, line, _ = wait_log(FAIL_PATTERNS, offset, a.timeout)
+    if not name:
+        print("no crash within %ds" % a.timeout)
+        return 0
+    print("CRASH (%s): %s" % (name, strip_ts(line)))
+    time.sleep(a.settle)
+    seg = read_log_from(offset).rstrip("\n").split("\n")
+    print("---- last %d console lines ----" % a.tail)
+    print("\n".join(strip_ts(l) for l in seg[-a.tail:]))
+    if a.errdmp:
+        tag = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        cmd_errdmp(argparse.Namespace(args=["-ii"], timeout=1800, no_summary=False,
+                                      name="%s-%s" % (name, a.label or tag)))
+    return 1
+
+def cmd_ssh(a):
+    return ssh_target(" ".join(a.command)).returncode
+
+def cmd_wait_ssh(a):
+    end = time.time() + a.timeout
+    while time.time() < end:
+        k = target_up()
+        if k:
+            print(k)
+            return 0
+        time.sleep(10)
+    print("timeout waiting for ssh to %s" % TARGET_SSH, file=sys.stderr)
+    return 1
+
+def main():
+    p = argparse.ArgumentParser(prog="altix", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sp = p.add_subparsers(dest="cmd", required=True)
+
+    s = sp.add_parser("l2", help="run an L2 command and print the output")
+    s.add_argument("--timeout", type=int, default=30)
+    s.add_argument("command", nargs="+")
+    s.set_defaults(fn=cmd_l2)
+
+    s = sp.add_parser("power", help="power status/up/down")
+    s.add_argument("state", choices=["status", "up", "down"], nargs="?", default="status")
+    s.set_defaults(fn=cmd_power)
+
+    s = sp.add_parser("reset", help="reset the brick")
+    s.set_defaults(fn=cmd_reset)
+
+    s = sp.add_parser("console", help="system console logger and input")
+    s.add_argument("op", choices=["start", "stop", "status", "send", "mark", "tail",
+                                  "since-mark", "wait", "_run"])
+    s.add_argument("args", nargs="*")
+    s.add_argument("-n", type=int, default=50, help="tail: number of lines")
+    s.add_argument("-f", "--follow", action="store_true", help="tail: follow")
+    s.add_argument("--raw", action="store_true",
+                   help="send: no trailing CR; interpret \\xNN / \\r escapes")
+    s.add_argument("--timeout", type=int, default=300, help="wait: seconds")
+    s.set_defaults(fn=cmd_console)
+
+    s = sp.add_parser("boot", help="power up (or reset) and wait for the box to come up")
+    s.add_argument("action", choices=["auto", "reboot", "reset", "power-cycle"], nargs="?",
+                   default="auto",
+                   help="auto: power up if off, ssh reboot if up, otherwise L2 reset")
+    s.add_argument("--timeout", type=int, default=1200)
+    s.add_argument("--settle", type=int, default=15,
+                   help="seconds to keep logging after a panic/MCA match")
+    s.add_argument("--tail", type=int, default=60)
+    s.add_argument("--label", default="", help="text for the console log marker")
+    s.add_argument("--panic", type=int, metavar="N",
+                   help="after boot, set kernel.panic=N (0 = hang on panic, for errdmp)")
+    s.set_defaults(fn=boot_cycle)
+
+    s = sp.add_parser("l3", help="manage the software L2 on the L3 / run commands there")
+    s.add_argument("op", choices=["start-l2", "stop-l2", "status", "run"])
+    s.add_argument("args", nargs="*")
+    s.set_defaults(fn=cmd_l3)
+
+    s = sp.add_parser("errdmp", help="run errdmp on the L3 (default args: -ii)")
+    s.add_argument("--name", help="suffix to append to the dump file name")
+    s.add_argument("--no-summary", action="store_true", help="don't print the triage summary")
+    s.add_argument("--timeout", type=int, default=1800)
+    s.add_argument("args", nargs=argparse.REMAINDER)
+    s.set_defaults(fn=cmd_errdmp)
+
+    s = sp.add_parser("errdmp-summary", help="triage summary of errdmp logs (default: newest)")
+    s.add_argument("files", nargs="*")
+    s.set_defaults(fn=cmd_errdmp_summary)
+
+    s = sp.add_parser("mmr", help="mmr_dump SHub registers via JTAG (chip: shub or full name)")
+    s.add_argument("--timeout", type=int, default=600)
+    s.add_argument("chip")
+    s.add_argument("regs", nargs="+")
+    s.set_defaults(fn=cmd_mmr)
+
+    s = sp.add_parser("watch", help="wait for a panic/oops/MCA on the console")
+    s.add_argument("--timeout", type=int, default=3600)
+    s.add_argument("--settle", type=int, default=20,
+                   help="seconds to keep logging after the first match")
+    s.add_argument("--tail", type=int, default=80)
+    s.add_argument("--errdmp", action="store_true", help="run errdmp -ii after a crash")
+    s.add_argument("--label", default="")
+    s.set_defaults(fn=cmd_watch)
+
+    s = sp.add_parser("ssh", help="run a command on the target as root")
+    s.add_argument("command", nargs="+")
+    s.set_defaults(fn=cmd_ssh)
+
+    s = sp.add_parser("wait-ssh", help="wait until the target answers ssh")
+    s.add_argument("--timeout", type=int, default=900)
+    s.set_defaults(fn=cmd_wait_ssh)
+
+    a, extra = p.parse_known_args()
+    if extra:
+        if a.cmd != "errdmp":
+            p.error("unrecognized arguments: %s" % " ".join(extra))
+        a.args = extra + a.args
+    try:
+        sys.exit(a.fn(a) or 0)
+    except KeyboardInterrupt:
+        sys.exit(130)
+
+if __name__ == "__main__":
+    main()
