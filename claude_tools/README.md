@@ -80,7 +80,9 @@ Stop the software L2 first: both cannot own the L1. Then:
 export ALTIX_L2_HOST=nl4r ALTIX_L2_PORT=23 ALTIX_IST_L2=nl4r
 ```
 
-`altix` handles telnet IAC negotiation. This path has not been tested yet. The IST
+`altix` handles telnet IAC negotiation. Verified 2026-10-10 with the 8-node pople:
+`altix l2 pwr`, `altix console start` and `altix mmr shub …` all work through nl4r
+(9 bricks in the scan chain). The IST
 tools still run on the L3, pointed at `--l2 nl4r` (your history has `errdmp --l2 l2 -ii`
 from when that was the setup).
 
