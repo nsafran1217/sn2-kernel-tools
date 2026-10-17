@@ -12,7 +12,8 @@ echo $_BASE_DIR
 cd $_BASE_DIR
 source sn2-kernel-tools/setup_cross.sh
 
-cd src/mainline/linux-sn2
+# KSRC overrides the tree to build (absolute, or relative to $_BASE_DIR)
+cd "${KSRC:-src/mainline/linux-sn2}"
 
 _BOOTSERVER="10.40.0.121"
 
@@ -63,7 +64,6 @@ echo $_localversion
 pwd
 
 make LOCALVERSION="${_localversion}" ARCH=ia64 CROSS_COMPILE=ia64-linux- olddefconfig >/dev/null 2>&1
-_kernelrelease=$(make -s LOCALVERSION="${_localversion}" ARCH=ia64 CROSS_COMPILE=ia64-linux- kernelrelease)
 
 _srclocation=$(pwd)
 _tarinstall="$_srclocation/tar-install"
@@ -71,6 +71,8 @@ rm -rf "$_tarinstall" # stale module dirs here would get rsynced to the boot ser
 mkdir -p "$_tarinstall/boot"
 
 make -j$(nproc) LOCALVERSION="${_localversion}" ARCH=ia64 CROSS_COMPILE=ia64-linux- >/dev/null
+# only valid after the build: before it, kernel.release is the previous build's
+_kernelrelease=$(make -s LOCALVERSION="${_localversion}" ARCH=ia64 CROSS_COMPILE=ia64-linux- kernelrelease)
 
 make -j$(nproc) LOCALVERSION="${_localversion}" ARCH=ia64 CROSS_COMPILE=ia64-linux- \
     INSTALL_MOD_PATH="$_tarinstall" modules_install >/dev/null
@@ -85,15 +87,26 @@ if [[ $_RELEASE -eq 1 ]]; then
 	cp "$_srclocation/vmlinux"     "$_tarinstall/boot/vmlinux-${_kernelrelease}"
 fi
 
-# Copy to NFS server
-echo "copy to NFS boot server"
+# DEPLOY: space-separated targets.  "netboot" (the default) copies to the
+# NFS boot server for pople; any other word is a grub-booted box (rx2800,
+# hprx) that gets the kernel via deploy-host.sh as /boot/vmlinuz-<suffix>.
+# "none" deploys nothing (use with --release to deploy the tarball later).
+for _target in ${DEPLOY:-netboot}; do
+	if [[ $_target == none ]]; then
+		continue
+	elif [[ $_target == netboot ]]; then
+		echo "copy to NFS boot server"
 
-scp "$_tarinstall/boot/vmlinuz-${_kernelrelease}" $_BOOTSERVER:/t2/tftproot/t2/kernel/vmlinuz-$_KERNSUFFIX
-scp "$_tarinstall/boot/vmlinuz-${_kernelrelease}" $_BOOTSERVER:/t2/altixroot/boot/vmlinuz-$_KERNSUFFIX
+		scp "$_tarinstall/boot/vmlinuz-${_kernelrelease}" $_BOOTSERVER:/t2/tftproot/t2/kernel/vmlinuz-$_KERNSUFFIX
+		scp "$_tarinstall/boot/vmlinuz-${_kernelrelease}" $_BOOTSERVER:/t2/altixroot/boot/vmlinuz-$_KERNSUFFIX
 
-scp "$_srclocation/System.map"  "$_BOOTSERVER:/t2/altixroot/boot/System.map-${_kernelrelease}"
-scp "$_srclocation/System.map"  "$_BOOTSERVER:/t2/altixroot/boot/System.map"
-rsync -rl "$_tarinstall/lib/modules/" $_BOOTSERVER:/t2/altixroot/lib/modules/
+		scp "$_srclocation/System.map"  "$_BOOTSERVER:/t2/altixroot/boot/System.map-${_kernelrelease}"
+		scp "$_srclocation/System.map"  "$_BOOTSERVER:/t2/altixroot/boot/System.map"
+		rsync -rl "$_tarinstall/lib/modules/" $_BOOTSERVER:/t2/altixroot/lib/modules/
+	else
+		"$_BASE_DIR/sn2-kernel-tools/deploy-host.sh" "$_target" "$_tarinstall" "$_KERNSUFFIX"
+	fi
+done
 
 echo "Copy complete, reboot to test ${_kernelrelease}"
 
