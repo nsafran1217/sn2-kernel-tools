@@ -1,0 +1,52 @@
+From 4eb15ad53af653df5f5df91039b2847d24c9b944 Mon Sep 17 00:00:00 2001
+From: Nathan <nsafran1217@gmail.com>
+Date: Fri, 16 Oct 2026 20:54:38 -0400
+Subject: [PATCH 2/3] sn2: drain the old CPU's PIO writes when a task migrates
+
+SN2 doesn't order PIO writes issued from different CPUs.  sn_setup()
+sets IA64_THREAD_MIGRATION on the boot task, which every task inherits,
+and until 5.4 switch_to() then called platform_migrate() = sn_migrate()
+whenever a task resumed on a CPU other than the one it last ran on.
+sn_migrate() waits for the previous CPU's SHub to drain its PIO writes,
+so a thread with MMIO mapped (a user-space driver, mspec, a DRM BO in
+VRAM) can't have its writes overtaken by writes from its new CPU.
+
+The machvec removal dropped the call but left the IA64_THREAD_MIGRATION
+test and the last_cpu update, and the SN2 restore didn't put the call
+back, so sn_migrate() has had no caller.  Restore it.  On a non-SN2
+kernel nothing sets IA64_THREAD_MIGRATION and the hook is empty.
+
+Assisted-by: Claude Opus 5.5
+---
+ arch/ia64/include/asm/switch_to.h | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/arch/ia64/include/asm/switch_to.h b/arch/ia64/include/asm/switch_to.h
+index 1202b3160dac..3b5369630df4 100644
+--- a/arch/ia64/include/asm/switch_to.h
++++ b/arch/ia64/include/asm/switch_to.h
+@@ -53,6 +53,13 @@ extern void ia64_load_extra (struct task_struct *task);
+ } while (0)
+ 
+ #ifdef CONFIG_SMP
++#ifdef CONFIG_IA64_SGI_SN2
++extern void sn_migrate(struct task_struct *task);
++#define ia64_platform_migrate(task)	sn_migrate(task)
++#else
++#define ia64_platform_migrate(task)	do { } while (0)
++#endif
++
+ /*
+  * In the SMP case, we save the fph state when context-switching away from a thread that
+  * modified fph.  This way, when the thread gets scheduled on another CPU, the CPU can
+@@ -70,6 +77,7 @@ extern void ia64_load_extra (struct task_struct *task);
+ 	if (unlikely((current->thread.flags & IA64_THREAD_MIGRATION) &&	       \
+ 		     (task_cpu(current) !=				       \
+ 		      		      task_thread_info(current)->last_cpu))) { \
++		ia64_platform_migrate(current);				       \
+ 		task_thread_info(current)->last_cpu = task_cpu(current);       \
+ 	}								       \
+ } while (0)
+-- 
+2.47.3
+
