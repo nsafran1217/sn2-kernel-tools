@@ -3,7 +3,7 @@
 # entry, boot it with boot-host.sh, check uname, and run
 # /opt/machvec-bench/mvbench.sh <entry> <reps> on the box.  Results stay on
 # the box under /opt/machvec-bench/results/<host>/<entry>/boot-*/; fetch them
-# with rsync afterwards.  Restores grub's default to 0 at the end.
+# with rsync afterwards (MVB_OUT overrides the results root).  Restores grub's default to 0 at the end.
 #
 #   ab-host.sh <host> <reps> <entry>...   e.g. ab-host.sh rx2800 10 hp-epic hp-generic hp-combined hp-epic hp-generic hp-combined
 set -euo pipefail
@@ -24,7 +24,7 @@ for e in "$@"; do
 	echo "== $HOST: booting $e"
 	TIMEOUT=${TIMEOUT:-1500} "$TOOLS/boot-host.sh" "$HOST" "$e" "$(tag "$e")"
 	sleep 60	# let boot-time services settle
-	ssh root@$HOST "bash /opt/machvec-bench/mvbench.sh $e $REPS 2>&1 | tail -2"
+	ssh root@$HOST "${MVB_OUT:+MVB_OUT=$MVB_OUT }bash /opt/machvec-bench/mvbench.sh $e $REPS 2>&1 | tail -2"
 done
 "$TOOLS/boot-host.sh" "$HOST" 0 >/dev/null 2>&1 || echo "$HOST: restoring default=0 failed" >&2
 echo "== $HOST: done"

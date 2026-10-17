@@ -192,6 +192,44 @@ a spinlock. It never runs on HP but takes up I-cache and TLB reach. The PDA
 `mmiowb` removed the flag loads, but the cold loop is still there (+575 KB in
 1795 functions).
 
+## Rerun with threads off in firmware (2026-10-17)
+
+Threads disabled in firmware on both HPs (rx2800 8 CPUs, hprx 2; every CPU
+its own sibling, so `mvbench.sh` offlined nothing). All three kernels from the
+current tree: hp-epic = `master-epic` `67a35586068b`; hp-generic (`SN2=n`)
+and hp-mvpda (combined + PDA `mmiowb`) = `1c1ece802bde`, the rebased series
+with the timer and migrate hooks. 4 boots per kernel, interleaved
+epic/generic/mvpda, 10 reps each (40 samples). Raw data:
+`src/machvec/results-fwsmt/<host>/<kernel>/`, comparisons in
+`src/machvec/compare-fwsmt.txt`. Not comparable with the sections above.
+
+| rx2800 | hp-epic | hp-generic | hp-mvpda |
+|--|--|--|--|
+| lat_ctx min per boot (µs) | 3.63 3.62 3.62 3.61 | 3.58 3.62 3.60 3.59 | 3.63 3.63 3.64 3.64 |
+| lat_ctx fast-mode median (µs) | 3.650 | 3.625 | 3.650 |
+
+- **rx2800 lat_ctx:** combined is now 0.03–0.04 µs (about 1%) over generic in
+  every boot, half the old +0.07–0.09 µs, and inside the epic control's
+  range (epic and generic differ only in a few hundred bytes of init code). So the old +2% is
+  down to the size of the boot-layout noise.
+- **hprx lat_ctx is still bimodal with threads off** (only 8–10 of 40
+  samples in the fast mode), so CGMT wasn't the cause; it still can't resolve
+  1–2%.
+- **Everything else:** the flagged changes in generic→mvpda are the same size
+  as the epic→generic control's (rx2800 lat_pagefault +3.4%, hprx
+  lat_syscall +2.0% and ipi.min +2.7% in the control; mvpda is *faster* than
+  generic on syscall, IPI, tlbbench and hackbench by 1–4%). The flagged
+  `lat_ctx/lat_mmap .instructions` are totals of fixed-time runs and scale
+  with the iteration count (lat_mmap ran 2.7% faster); lat_mmap ipo moved
+  +0.09%. `readl` and `is_sn2` cost the same in all three kernels.
+- **The one per-work instruction increase:** hackbench (fixed work) runs
+  +0.94% instructions on rx2800 and +0.26% on hprx with combined, against
+  +0.27%/+0.10% for the control, while its wall time is 0.6–0.7% lower.
+
+**Conclusion:** with threads off and the rebased series, no Integrity
+benchmark shows a cost outside the control's noise. The case for jump labels
+or a per-CPU flag is now weaker than in the "Conclusions" above.
+
 ## Conclusions and next steps
 
 1. **Take the PDA `mmiowb` (`38c29fc484be`).** It is strictly better on both
