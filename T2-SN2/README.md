@@ -20,6 +20,8 @@ The resultant ISO can be burned to a DVD or `dd`'ed to a disk.
 * cpio, zstd, curl
 * mtools         (mkfs.vfat, mmd, mcopy) — for the EFI FAT image
 
+Building on macOS works too, see [Building on macOS](#building-on-macos) below.
+
 ## Howto:
 
 I suggest making a new directory to do this in
@@ -82,3 +84,35 @@ fs1:\> efi\boot\bootia64
 ```
 
 8. Cleanup your workdir if needed
+
+## Building on macOS
+
+The script also runs on macOS (tested on Apple Silicon with Homebrew). The steps are the same as above, with these differences.
+
+1. Install the tools with Homebrew. The GNU tools are needed because T2's `mkinitrd` expects GNU `sed`, `grep` and `find`, bash 4 or newer, and `readelf`. `x86_64-elf-grub` provides `x86_64-elf-grub-mkimage`, which builds ia64 EFI images like any other `grub-mkimage`. `wget` is only for the download commands in this guide.
+```
+brew install xorriso squashfs zstd mtools coreutils findutils gnu-sed grep bash binutils x86_64-elf-grub wget
+```
+
+2. Download `kmod-shim.py` next to the script. macOS has no `modinfo` or `depmod`; the shim stands in for both. Its `depmod` rebuilds the initrd's module index files from the ones in the kernel tarball, in the same binary format kmod writes.
+```
+wget https://raw.githubusercontent.com/nsafran1217/sn2-kernel-tools/refs/heads/main/T2-SN2/kmod-shim.py
+chmod +x ./kmod-shim.py
+```
+
+3. Do not extract the kernel tarball yourself. A normal Mac disk is case-insensitive, so files whose names only differ in case overwrite each other (for example `xt_DSCP.ko` and `xt_dscp.ko`). Pass the tarball with `--kernel-tar` instead and the script unpacks it in its own work area. Extracting `grub-sn2.tar.gz` as in step 4 is fine.
+
+4. Create the ISO. If the work directory is not on a case-sensitive volume, the script creates a case-sensitive APFS disk image for it and removes it again at the end (keep it with `--keep-workdir`). It grows to about 15GB, so make sure you have that much free space.
+```
+sudo ./Generate-SN2-T2-ISO.sh \
+    -i t2-26.6-ia64-desktop-glibc-gcc-itanium2.iso \
+    -o t2-26.6-Altix.iso \
+    --kernel-tar ./linux-7.0.0-epic2-SN2-GPU-cf436192c70f-ia64-ia64.tar.gz \
+    --grub-dir   ./grub
+```
+
+5. Write it to a disk. Find the disk number with `diskutil list`, unmount it, then write to the raw device `/dev/rdiskN`:
+```
+diskutil unmountDisk /dev/diskN
+sudo dd if=t2-26.6-Altix.iso of=/dev/rdiskN bs=4m status=progress
+```
