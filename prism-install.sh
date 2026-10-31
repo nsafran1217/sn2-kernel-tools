@@ -7,7 +7,8 @@
 # Keeps the tarball in /root/prismkerns and installs
 #   /boot/{vmlinuz,vmlinux,System.map,config}-<release>, /lib/modules/<release>/
 # then adds a grub menuentry titled <release> that reuses the arguments the box
-# is running with.  grub.cfg is hand-written on T2, so it is edited directly
+# is running with, and selects it by --id: grub parses a default of 7.3.0-... as
+# index 7, so it can't be selected by title.  grub.cfg is hand-written on T2, so it is edited directly
 # (and backed up first) rather than regenerated.  The /boot/vmlinuz symlinks
 # and the stock entry they boot are left alone as the way back.
 #
@@ -43,7 +44,7 @@ REL=${REL%.tar.gz}
 
 # always fetched: a dirty tree rebuilds under the same release name
 echo "fetching $newest"
-scp -p "nathan@$REMOTE:$newest" "$tarball"
+scp -p "$REMOTE:$newest" "$tarball"
 
 # not -C /: the tarball's ./ and ./boot entries would change those directories
 tmp=$(mktemp -d "$DIR/.extract.XXXXXX")
@@ -58,6 +59,7 @@ mv "$tmp/lib/modules/$REL" /lib/modules/
 install -m 644 "$tmp"/boot/*-"$REL" /boot/
 depmod -a "$REL"
 
+ID=sn2-$REL
 cp -p "$GRUB" "$GRUB.before-$REL-$(date +%Y%m%d-%H%M%S)"
 if ! grep -Fq "menuentry \"$REL\"" "$GRUB"; then
 	args=$(sed -E 's/^BOOT_IMAGE=[^ ]* *//; s/(^| )root=[^ ]*//; s/^ +//; s/ *$//' /proc/cmdline)
@@ -65,11 +67,16 @@ if ! grep -Fq "menuentry \"$REL\"" "$GRUB"; then
 		*" rootwait "*) ;;
 		*) args="$args rootwait" ;;
 	esac
-	printf '\nmenuentry "%s" {\n\tlinux /boot/vmlinuz-%s root=%s %s\n}\n' "$REL" "$REL" "$ROOTDEV" "$args" >> "$GRUB"
+	printf '\nmenuentry "%s" --id "%s" {\n\tlinux /boot/vmlinuz-%s root=%s %s\n}\n' "$REL" "$ID" "$REL" "$ROOTDEV" "$args" >> "$GRUB"
 	echo "added grub entry \"$REL\""
 fi
-sed -i "s/^set default=.*/set default=\"$REL\"/" "$GRUB"
-grep -Fxq "set default=\"$REL\"" "$GRUB" || die "could not set the default in $GRUB"
+# entries from before --id was added
+sed -i "s/^menuentry \"$REL\" {/menuentry \"$REL\" --id \"$ID\" {/" "$GRUB"
+sed -i "s/^set default=.*/set default=\"$ID\"/" "$GRUB"
+# entries are appended, so the stock entry stays first and is the way back
+sed -i "s/^set fallback=.*/set fallback=0/" "$GRUB"
+grep -Fxq "set default=\"$ID\"" "$GRUB" && grep -Fq -- "--id \"$ID\"" "$GRUB" ||
+	die "could not set the default in $GRUB"
 sync
 
 echo "installed $REL as the grub default, reboot to use it"

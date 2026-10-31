@@ -67,10 +67,12 @@ change that removed it, took 3m16s on the 8-core workstation.
 
 ## Status
 
-- [ ] `prism-install.sh` run for the first time (not yet tested anywhere)
+- [x] `prism-install.sh` tested on pople with `REMOTE=nathan@nfs`
+- [x] No-initrd kernel boots on pople, through grub to a login
+- [ ] `prism-install.sh` run on the Prism through the VPN host
 - [ ] Confirm `/nfs/altix/prismkerns` on the VPN host; port 22 timed out from the workstation
 - [ ] Confirm the Prism's root disk is `/dev/sda2` and which IO brick it has
-- [ ] First boot of the no-initrd kernel
+- [ ] First boot of the no-initrd kernel on the Prism
 - [ ] Check the Prism's command line for `modprobe.blacklist=amdgpu,radeon`, which would block the GPU driver
 - [ ] AGP working
 
@@ -82,3 +84,20 @@ Set up the worktree, the config and the build and install scripts. Dropped `amdg
 moved `mspec` to a module. The Prism build at `0e787cc6dd9d` is on the share as `linux-7.3.0-rc3-epic1-SN2-PRISM-0e787cc6dd9d-ia64.tar.gz`.
 `System.map` confirms ext4, `qla1280`, `sata_vsc`, `tg3` and the 12160 firmware are built
 in. No kernel has been installed or booted yet.
+
+### 2026-10-31
+
+`set default="$REL"` didn't select the new kernel. grub runs `grub_strtoul` on the value
+first, so `7.3.0-...` parses as index 7 with no error, and an out-of-range index falls back
+to entry 0. `prism-install.sh` now gives entries `--id "sn2-$REL"` and sets the default to
+that id. Re-running it upgrades an existing entry that has no `--id`.
+
+Tested the whole flow on pople, which has the same OS. Installed the timer-fixed grub as
+`\EFI\boot\bootia64.efi`, with the old image kept beside it as `bootia64-old.efi`. Ran
+`prism-install.sh` with `REMOTE=nathan@nfs`, which upgraded the old entry to `--id`. With the
+firmware menu selected by hand, grub's 8 s countdown auto-booted the new default after about
+11 s, and the kernel mounted `/dev/sda2` with no initrd and reached a login 16 s after it
+started. No failed units.
+
+`prism-install.sh` also sets `fallback=0` now. `fallback=1` pointed at the new entry itself
+once it became the default. That line has not been run yet; pople's `grub.cfg` was edited by hand.
