@@ -3,3 +3,4 @@ diff/t2/0000.patch.ia64
 radeon/fglrx/fglrx.ko
 
 claude_tools/__pycache__
+prism/remote

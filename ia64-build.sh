@@ -121,9 +121,11 @@ echo "Copy complete, reboot to test ${_kernelrelease}"
 if [[ $_RELEASE -eq 1 ]]; then
 	echo "Tar'ing package"
 	_tarname="linux-${_kernelrelease}.tar"
-	mkdir -p "$_BASE_DIR/release"
-	tar cfz "$_BASE_DIR/release/${_tarname}.gz" -C "$_tarinstall" .
-	echo "Kernel package created at $_BASE_DIR/release/${_tarname}.gz"
+	# RELEASE_DIR overrides where the tarball goes
+	_reldir=${RELEASE_DIR:-$_BASE_DIR/release}
+	mkdir -p "$_reldir"
+	tar cfz "$_reldir/${_tarname}.gz" -C "$_tarinstall" .
+	echo "Kernel package created at $_reldir/${_tarname}.gz"
 fi
 
 rm -rf "$_tarinstall"
