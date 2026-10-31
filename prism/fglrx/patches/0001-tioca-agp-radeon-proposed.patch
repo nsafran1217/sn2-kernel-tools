@@ -1,0 +1,146 @@
+diff --git a/drivers/char/agp/sgi-agp.c b/drivers/char/agp/sgi-agp.c
+index e7d5bdc02d93..1fa4ee672477 100644
+--- a/drivers/char/agp/sgi-agp.c
++++ b/drivers/char/agp/sgi-agp.c
+@@ -76,9 +76,40 @@ sgi_tioca_mask_memory(struct agp_bridge_data *bridge, dma_addr_t addr,
+ 	return tioca_physpage_to_gart(addr);
+ }
+ 
++/*
++ * The CA has no AGP capability of its own, so only the card needs setting up.
++ * SGI's tagp diagnostic ORs 0x80006312 into AGP_COMMAND by hand after POST.
++ * Leave the card alone if firmware has already enabled AGP: the rate must not
++ * change while AGP_ENABLE is set.
++ */
+ static void sgi_tioca_agp_enable(struct agp_bridge_data *bridge, u32 mode)
+ {
+-	tioca_fastwrite_enable(bridge->dev_private_data);
++	struct pci_dev *pdev = bridge->dev;
++	int cap = pci_find_capability(pdev, PCI_CAP_ID_AGP);
++	u32 status, cmd;
++
++	if (!cap)
++		return;
++
++	pci_read_config_dword(pdev, cap + PCI_AGP_STATUS, &status);
++	pci_read_config_dword(pdev, cap + PCI_AGP_COMMAND, &cmd);
++	dev_info(&pdev->dev, "TIOCA AGP: status 0x%08x command 0x%08x requested 0x%08x\n",
++		 status, cmd, mode);
++
++	if (!(cmd & AGPSTAT_AGP_ENABLE)) {
++		u32 rq = min(status & AGPSTAT_RQ_DEPTH, bridge->mode & AGPSTAT_RQ_DEPTH);
++
++		cmd = rq | (3 << AGPSTAT_ARQSZ_SHIFT) | AGPSTAT_SBA;
++		cmd |= (mode & AGPSTAT3_4X) ? AGPSTAT3_4X : AGPSTAT3_8X;
++		pci_write_config_dword(pdev, cap + PCI_AGP_COMMAND, cmd);
++		cmd |= AGPSTAT_AGP_ENABLE;
++		pci_write_config_dword(pdev, cap + PCI_AGP_COMMAND, cmd);
++		pci_read_config_dword(pdev, cap + PCI_AGP_COMMAND, &cmd);
++		dev_info(&pdev->dev, "TIOCA AGP: command now 0x%08x\n", cmd);
++	}
++
++	if (mode & AGPSTAT_FW)
++		tioca_fastwrite_enable(bridge->dev_private_data);
+ }
+ 
+ /*
+@@ -166,9 +197,13 @@ static int sgi_tioca_insert_memory(struct agp_memory *mem, off_t pg_start,
+ 	if (num_entries < 0)
+ 		num_entries = 0;
+ 
+-	if (type != 0 || mem->type != 0) {
++	/*
++	 * TTM binds AGP_USER_MEMORY and AGP_USER_CACHED_MEMORY.  The CA has one
++	 * GART entry format, so these all map the same way as type 0.
++	 */
++	if (bridge->driver->agp_type_to_mask_type(bridge, type) != 0 ||
++	    bridge->driver->agp_type_to_mask_type(bridge, mem->type) != 0)
+ 		return -EINVAL;
+-	}
+ 
+ 	if ((pg_start + mem->page_count) > num_entries)
+ 		return -EINVAL;
+@@ -208,9 +243,9 @@ static int sgi_tioca_remove_memory(struct agp_memory *mem, off_t pg_start,
+ 	if (!bridge)
+ 		return -EINVAL;
+ 
+-	if (type != 0 || mem->type != 0) {
++	if (bridge->driver->agp_type_to_mask_type(bridge, type) != 0 ||
++	    bridge->driver->agp_type_to_mask_type(bridge, mem->type) != 0)
+ 		return -EINVAL;
+-	}
+ 
+ 	table = (u64 *)bridge->gatt_table;
+ 
+@@ -240,9 +275,9 @@ static struct agp_bridge_data *sgi_tioca_find_bridge(struct pci_dev *pdev)
+ 
+ 	list_for_each_entry(bridge, &agp_bridges, list) {
+ 		if (bridge->dev->bus == pdev->bus)
+-			break;
++			return bridge;
+ 	}
+-	return bridge;
++	return NULL;
+ }
+ 
+ const struct agp_bridge_driver sgi_tioca_driver = {
+@@ -273,7 +308,7 @@ static int agp_sgi_init(void)
+ {
+ 	unsigned int j;
+ 	struct tioca_kernel *info;
+-	struct pci_dev *pdev = NULL;
++	struct pci_dev *pdev;
+ 
+ 	if (tioca_gart_found)
+ 		printk(KERN_INFO PFX "SGI TIO CA GART driver initialized.\n");
+@@ -288,17 +323,24 @@ static int agp_sgi_init(void)
+ 
+ 	j = 0;
+ 	list_for_each_entry(info, &tioca_list, ca_list) {
+-		if (list_empty(info->ca_devices))
+-			continue;
+-		list_for_each_entry(pdev, info->ca_devices, bus_list) {
+-			u8 cap_ptr;
++		struct pci_dev *agp_dev = NULL;
+ 
++		/*
++		 * Must not use the iterator after the loop: when it runs to
++		 * the end, pdev is the list head and not a pci_dev.
++		 */
++		list_for_each_entry(pdev, info->ca_devices, bus_list) {
+ 			if (pdev->class != (PCI_CLASS_DISPLAY_VGA << 8))
+ 				continue;
+-			cap_ptr = pci_find_capability(pdev, PCI_CAP_ID_AGP);
+-			if (!cap_ptr)
+-				continue;
++			if (pci_find_capability(pdev, PCI_CAP_ID_AGP)) {
++				agp_dev = pdev;
++				break;
++			}
+ 		}
++		if (!agp_dev)
++			continue;
++		pdev = agp_dev;
++
+ 		sgi_tioca_agp_bridges[j] = agp_alloc_bridge();
+ 		printk(KERN_INFO PFX "bridge %d = 0x%p\n", j,
+ 		       sgi_tioca_agp_bridges[j]);
+diff --git a/drivers/gpu/drm/radeon/r300.c b/drivers/gpu/drm/radeon/r300.c
+index 60a784769120..827cc191fcd2 100644
+--- a/drivers/gpu/drm/radeon/r300.c
++++ b/drivers/gpu/drm/radeon/r300.c
+@@ -491,6 +491,14 @@ void r300_mc_init(struct radeon_device *rdev)
+ 	base = rdev->mc.aper_base;
+ 	if (rdev->flags & RADEON_IS_IGP)
+ 		base = (RREG32(RADEON_NB_TOM) & 0xffff) << 16;
++#ifdef CONFIG_IA64_SGI_SN2
++	/*
++	 * SN2: aper_base is a 64-bit CPU PIO address, not a bus address.  Keep
++	 * VRAM clear of the CA GART apertures at 0x80000000-0xffffffff, as
++	 * SGI's R300 diagnostics do (MC_FB_LOCATION 0x07ff0000).
++	 */
++	base = 0;
++#endif
+ 	radeon_vram_location(rdev, &rdev->mc, base);
+ 	rdev->mc.gtt_base_align = 0;
+ 	if (!(rdev->flags & RADEON_IS_AGP))

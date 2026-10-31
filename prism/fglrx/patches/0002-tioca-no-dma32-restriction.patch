@@ -1,0 +1,24 @@
+diff --git a/arch/ia64/sn/pci/pci_dma.c b/arch/ia64/sn/pci/pci_dma.c
+index d8c99ca8bee7..ced2b5eab6a7 100644
+--- a/arch/ia64/sn/pci/pci_dma.c
++++ b/arch/ia64/sn/pci/pci_dma.c
+@@ -378,6 +378,19 @@ static int sn_dma_map_sg(struct device *dev, struct scatterlist *sgl,
+ 
+ static u64 sn_dma_get_required_mask(struct device *dev)
+ {
++	/*
++	 * The CA GART reaches all memory from a 32-bit bus address, so a
++	 * 32-bit mask isn't limiting there.  Without this, TTM confines the
++	 * device to ZONE_DMA32, which is sized for the PIC's direct32 window.
++	 */
++	if (dev_is_pci(dev)) {
++		struct pcidev_info *pcidev_info = SN_PCIDEV_INFO(to_pci_dev(dev));
++
++		if (pcidev_info &&
++		    pcidev_info->pdi_provider == sn_pci_provider[PCIIO_ASIC_TYPE_TIOCA])
++			return DMA_BIT_MASK(32);
++	}
++
+ 	return DMA_BIT_MASK(64);
+ }
+ 

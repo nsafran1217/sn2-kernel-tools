@@ -1,0 +1,17 @@
+diff --git a/arch/ia64/sn/kernel/io_common.c b/arch/ia64/sn/kernel/io_common.c
+index a35557f973ea..ef73a0b77766 100644
+--- a/arch/ia64/sn/kernel/io_common.c
++++ b/arch/ia64/sn/kernel/io_common.c
+@@ -235,6 +235,12 @@ void sn_pci_fixup_slot(struct pci_dev *dev, struct pcidev_info *pcidev_info,
+ 
+ 	pci_dev_get(dev); /* for the sysdata pointer */
+ 
++	/*
++	 * pci_device_add() copied the node before the bus fixup set it.
++	 * PIC, TIOCP and TIOCE get theirs later, in sn_io_late_init().
++	 */
++	set_dev_node(&dev->dev, pcibus_to_node(dev->bus));
++
+ 	/* Add pcidev_info to list in pci_controller.platform_data */
+ 	list_add_tail(&pcidev_info->pdi_list,
+ 		      &(SN_PLATFORM_DATA(dev->bus)->pcidev_info));
