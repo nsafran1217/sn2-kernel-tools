@@ -1,0 +1,22 @@
+diff --git a/drivers/gpu/drm/radeon/radeon_device.c b/drivers/gpu/drm/radeon/radeon_device.c
+index 705c012fcf9e..4676dc89a69f 100644
+--- a/drivers/gpu/drm/radeon/radeon_device.c
++++ b/drivers/gpu/drm/radeon/radeon_device.c
+@@ -513,6 +513,17 @@ int radeon_wb_init(struct radeon_device *rdev)
+ 			}
+ 		}
+ 	}
++#ifdef CONFIG_IA64_SGI_SN2
++	/*
++	 * An AGP card forced to PCI mode has lost RADEON_IS_AGP by now.  The
++	 * CP's writes to the WB page make the TIO fail with
++	 * WRC_CT_WR_REQ_BAD_BE, a fatal error, so keep WB off as on AGP.
++	 */
++	if (pci_find_capability(rdev->pdev, PCI_CAP_ID_AGP)) {
++		rdev->wb.enabled = false;
++		rdev->wb.use_event = false;
++	}
++#endif
+ 	/* always use writeback/events on NI, APUs */
+ 	if (rdev->family >= CHIP_PALM) {
+ 		rdev->wb.enabled = true;

@@ -4,3 +4,7 @@ radeon/fglrx/fglrx.ko
 
 claude_tools/__pycache__
 prism/remote
+prism/logs/
+prism/probe/*
+!prism/probe/prism_probe.c
+!prism/probe/Makefile

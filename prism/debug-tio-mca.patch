@@ -1,0 +1,148 @@
+diff --git a/arch/ia64/kernel/mca.c b/arch/ia64/kernel/mca.c
+index d6fa31665221..a5167692ff24 100644
+--- a/arch/ia64/kernel/mca.c
++++ b/arch/ia64/kernel/mca.c
+@@ -167,6 +167,7 @@ static int cmc_polling_enabled = 1;
+  * necessary for debugging.
+  */
+ static int cpe_poll_enabled = 1;
++static int mca_hang;
+ 
+ extern void salinfo_log_wakeup(int type, u8 *buffer, u64 size, int irqsafe);
+ 
+@@ -1345,6 +1346,16 @@ ia64_mca_handler(struct pt_regs *regs, struct switch_stack *sw,
+ 	} else {
+ 		/* Dump buffered message to console */
+ 		ia64_mlogbuf_finish(1);
++
++		/*
++		 * Debug: returning to SAL cold boots the box, which clears the
++		 * SHub and TIO error state before errdmp can read it.
++		 */
++		if (mca_hang) {
++			mprintk(KERN_EMERG "mca_hang: spinning here, run errdmp\n");
++			while (1)
++				cpu_relax();
++		}
+ 	}
+ 
+ 	if (__this_cpu_read(ia64_mca_tr_reload)) {
+@@ -1772,6 +1783,15 @@ ia64_mca_disable_cpe_polling(char *str)
+ 
+ __setup("disable_cpe_poll", ia64_mca_disable_cpe_polling);
+ 
++static int __init
++ia64_mca_hang_setup(char *str)
++{
++	mca_hang = 1;
++	return 1;
++}
++
++__setup("mca_hang", ia64_mca_hang_setup);
++
+ /* Minimal format of the MCA/INIT stacks.  The pseudo processes that run on
+  * these stacks can never sleep, they cannot return from the kernel to user
+  * space, they do not appear in a normal ps listing.  So there is no need to
+diff --git a/arch/ia64/kernel/mca_drv.c b/arch/ia64/kernel/mca_drv.c
+index e77cece9ba1c..d08b2aa30b59 100644
+--- a/arch/ia64/kernel/mca_drv.c
++++ b/arch/ia64/kernel/mca_drv.c
+@@ -705,8 +705,30 @@ recover_from_processor_error(int platform, slidx_table_t *slidx,
+ 
+ 	if (pbci->ib)
+ 		return fatal_mca("Internal Bus error");
+-	if (pbci->eb && pbci->bsi > 0)
++	if (pbci->eb && pbci->bsi > 0) {
++		sal_log_mod_error_info_t *smei = peidx_bus_check(peidx, 0);
++		struct pal_min_state_area *pmsa = peidx_minstate_area(peidx);
++
++		/* Debug: which access failed.  Valid bits: target, req, resp */
++		if (smei)
++			ia64_mca_printk(KERN_ALERT
++				"MCA: bus check %llx valid %d%d%d target %llx requestor %llx responder %llx ip %llx\n",
++				(unsigned long long)smei->check_info,
++				(int)smei->valid.target_identifier,
++				(int)smei->valid.requestor_identifier,
++				(int)smei->valid.responder_identifier,
++				(unsigned long long)smei->target_identifier,
++				(unsigned long long)smei->requestor_identifier,
++				(unsigned long long)smei->responder_identifier,
++				(unsigned long long)smei->precise_ip);
++		ia64_mca_printk(KERN_ALERT
++				"MCA: bsi 0x%x type 0x%x size %d iip %llx br0 %llx xip %llx\n",
++				(int)pbci->bsi, (int)pbci->type, (int)pbci->size,
++				(unsigned long long)pmsa->pmsa_iip,
++				(unsigned long long)pmsa->pmsa_br0,
++				(unsigned long long)pmsa->pmsa_xip);
+ 		return fatal_mca("External bus check fatal status");
++	}
+ 
+ 	/*
+ 	 * This is a local MCA and estimated as a recoverable error.
+diff --git a/arch/ia64/sn/kernel/huberror.c b/arch/ia64/sn/kernel/huberror.c
+index 97fa56dddf50..69cb58453aa4 100644
+--- a/arch/ia64/sn/kernel/huberror.c
++++ b/arch/ia64/sn/kernel/huberror.c
+@@ -36,9 +36,17 @@ static irqreturn_t hub_eint_handler(int irq, void *arg)
+ 		SAL_CALL_NOLOCK(ret_stuff, SN_SAL_HUB_ERROR_INTERRUPT,
+ 			(u64) nasid, 0, 0, 0, 0, 0, 0);
+ 
+-		if ((int)ret_stuff.v0)
++		if ((int)ret_stuff.v0) {
++			if (nasid & 1) {
++				extern void tioca_dump_error_state(void);
++
++				pr_emerg("%s: fatal error on TIO nasid %d\n",
++					 __func__, nasid);
++				tioca_dump_error_state();
++			}
+ 			panic("%s: Fatal %s Error", __func__,
+ 				((nasid & 1) ? "TIO" : "HUBII"));
++		}
+ 
+ 		if (!(nasid & 1)) /* Not a TIO, handle CRB errors */
+ 			(void)hubiio_crb_error_handler(hubdev_info);
+diff --git a/arch/ia64/sn/pci/tioca_provider.c b/arch/ia64/sn/pci/tioca_provider.c
+index a70b11fd57d6..1ec0e0b994b9 100644
+--- a/arch/ia64/sn/pci/tioca_provider.c
++++ b/arch/ia64/sn/pci/tioca_provider.c
+@@ -541,6 +541,39 @@ tioca_dma_map(struct pci_dev *pdev, unsigned long paddr, size_t byte_count, int
+ 	return mapaddr;
+ }
+ 
++/*
++ * Debug: print each CA's error state.  Called just before the Fatal TIO panic,
++ * because errdmp can't finish before the box resets.
++ */
++void tioca_dump_error_state(void)
++{
++	struct tioca_kernel *k;
++
++	list_for_each_entry(k, &tioca_list, ca_list) {
++		struct tioca __iomem *ca =
++		    (struct tioca __iomem *)k->ca_common->ca_common.bs_base;
++
++		pr_emerg("CA seg %llx nasid %d: first %llx mult %llx status %llx\n",
++			 k->ca_common->ca_common.bs_persist_segment,
++			 NASID_GET(k->ca_common->ca_common.bs_base),
++			 __sn_readq_relaxed(&ca->ca_first_error),
++			 __sn_readq_relaxed(&ca->ca_mult_error),
++			 __sn_readq_relaxed(&ca->ca_int_status));
++		pr_emerg("CA pcierr_type %llx pcierr_addr %llx gart_err %llx\n",
++			 __sn_readq_relaxed(&ca->ca_pcierr_type),
++			 __sn_readq_relaxed(&ca->ca_pcierr_addr),
++			 __sn_readq_relaxed(&ca->ca_gart_err));
++		pr_emerg("CA crm_pkterr %llx detail1 %llx detail2 %llx tnumto %llx\n",
++			 __sn_readq_relaxed(&ca->ca_crm_pkterr_type),
++			 __sn_readq_relaxed(&ca->ca_crm_ct_error_detail_1),
++			 __sn_readq_relaxed(&ca->ca_crm_ct_error_detail_2),
++			 __sn_readq_relaxed(&ca->ca_crm_tnumto));
++		pr_emerg("CA status1 %llx status2 %llx\n",
++			 __sn_readq_relaxed(&ca->ca_status1),
++			 __sn_readq_relaxed(&ca->ca_status2));
++	}
++}
++
+ /**
+  * tioca_error_intr_handler - SGI TIO CA error interrupt handler
+  * @irq: unused
