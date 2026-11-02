@@ -498,6 +498,26 @@ cat > "$squashfs_root/etc/systemd/system/dev-ttySG0.device.d/timeout.conf" <<'UN
 JobRunningTimeoutSec=infinity
 UNIT
 
+# ── Prism AGP defaults for radeon ────────────────────────────────────────────
+# Without this file radeon falls back to PCI mode on a Prism's AGP cards, and
+# CP writeback then panics the box with a Fatal TIO Error. It does nothing
+# while the kernel command line blacklists radeon.
+
+echo "==> Installing radeon-prism.conf modprobe defaults ..."
+mkdir -p "$squashfs_root/etc/modprobe.d"
+cat > "$squashfs_root/etc/modprobe.d/radeon-prism.conf" <<'CONF'
+# AGP defaults for ATI cards in an SGI Prism (TIO CA AGP bridge). Without them
+# radeon falls back to PCI mode on these cards, which panics the machine.
+#
+# Safe on every other SGI Altix, so leave this file in place on a machine
+# with a PCI or PCI-E card:
+#  - agpmode is ignored unless the card reports an AGP capability.
+#  - sgi-agp loads and does nothing when there is no TIO CA.
+#  - amdgpu does not read radeon's options.
+softdep radeon pre: agpgart sgi-agp
+options radeon agpmode=8
+CONF
+
 echo
 echo "==> Repacking squashfs ..."
 new_sqf="$workdir/$sqf_name"
