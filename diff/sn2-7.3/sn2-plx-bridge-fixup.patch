@@ -1,0 +1,209 @@
+PLX 8111/8112 bridge prefetchable window fixup, kept for reference.
+
+Not applied to any branch.  Removed from the GPU layer on 2026-11-01 because
+sn2 commit 24d78bf62c12 ("sn2: don't claim bridge windows on a PROM without
+ACPI IO support") fixes the cause on the legacy IO path.  The fixup's original
+commits were 6049f4d4f5be and 30fc2209f2f5.  Their stated reason, that the
+firmware doesn't program the window, was wrong for PROM 4.56: the PROM does
+program it, and a failed window claim made the kernel write it disabled.
+
+Why it might be needed again: a PLX and GPU on a PROM with ACPI IO support
+(DSDT OEM rev >= 0x20101) has never been tested.  If that PROM leaves the
+prefetchable window unprogrammed, this writes it from the raw child BARs.
+
+Limits on that path:
+ - it runs as a FINAL fixup, after the BARs are claimed, so it only corrects
+   the hardware.  The kernel's own view of the window would stay wrong, and
+   the GPU BAR may still fail with "not claimed; can't enable device".
+ - it only handles the prefetchable window, not the non-prefetchable one.
+
+Only tested with PROM 4.56, a PLX 8112 and a 256 MB BAR.  Needs
+CONFIG_SN2_PLX_GPU=y.  Apply with git apply from the top of the kernel tree.
+
+diff --git a/arch/ia64/sn/kernel/Makefile b/arch/ia64/sn/kernel/Makefile
+index 9d5ab9124e3b..add8e48fa6e0 100644
+--- a/arch/ia64/sn/kernel/Makefile
++++ b/arch/ia64/sn/kernel/Makefile
+@@ -16,3 +16,4 @@ obj-y				+= setup.o bte.o bte_error.o irq.o mca.o idle.o \
+ 
+ obj-$(CONFIG_SGI_TIOCX)		+= tiocx.o
+ obj-$(CONFIG_PCI_MSI)		+= msi_sn.o
++obj-$(CONFIG_SN2_PLX_GPU) += plx_bridge_fixup.o
+diff --git a/arch/ia64/sn/kernel/plx_bridge_fixup.c b/arch/ia64/sn/kernel/plx_bridge_fixup.c
+new file mode 100644
+index 000000000000..fc0f857cc1ac
+--- /dev/null
++++ b/arch/ia64/sn/kernel/plx_bridge_fixup.c
+@@ -0,0 +1,155 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * SGI Altix SN2 PCI-to-PCI bridge prefetchable window fixup
++ *
++ * On SN2, CPU-visible BAR addresses (resource->start) include NASID,
++ * widget, and device-register bits that the bridge never sees.  The
++ * PCI bus address -- what the bridge window must match -- lives in
++ * the raw BAR in config space, per SGI Porting Guide 007-4520-007
++ * Example 7-1 on page 65.  Read config space directly.
++ * 
++ * This *should* automatically configure the window, but
++ * has only been tested on GPUs with 256MB VRAM BARs.
++ * It also *should* work for any PCI-e card that needs
++ * windows configured, but again, untested
++ */
++
++#include <linux/pci.h>
++#include <linux/init.h>
++#include <linux/printk.h>
++
++/* Vendor and Device ID are hardcoded for a PLX 8111 PCI 
++to PCI-e bridge. These are the cheap ones available on eBay
++with a full size PCI-e slot. Any other bridges are untested*/
++
++#define PLX_VENDOR_ID   0x10b5
++#define PLX_8111_DEVICE_ID 0x8111
++#define PLX_8112_DEVICE_ID 0x8112
++
++static void sn2_plx_bridge_fixup(struct pci_dev *pdev)
++{
++	struct pci_dev *child;
++	u64 need_start = U64_MAX;
++	u64 need_end = 0;
++	u64 cur_start, cur_end;
++	u16 base16, limit16, new_base, new_limit;
++	bool found = false;
++	int i;
++
++	if (pdev->hdr_type != PCI_HEADER_TYPE_BRIDGE || !pdev->subordinate)
++		return;
++
++	dev_info(&pdev->dev, "SN2 PLX fixup: scanning bus %02x\n",
++		 pdev->subordinate->number);
++
++	list_for_each_entry(child, &pdev->subordinate->devices, bus_list) {
++		for (i = 0; i < PCI_STD_NUM_BARS; i++) {
++			struct resource *r = &child->resource[i];
++			u32 bar_lo, bar_hi = 0;
++			u64 bus_addr, bus_end, size;
++
++			if (!(r->flags & IORESOURCE_MEM))
++				continue;
++			if (!(r->flags & IORESOURCE_PREFETCH))
++				continue;
++			size = resource_size(r);
++			if (!size)
++				continue;
++
++			/* Read raw BAR from config space.  On SN2 this is
++			 * the PCI bus address, unlike resource->start which
++			 * is a CPU-mapped address with NASID/widget bits. */
++			pci_read_config_dword(child,
++				PCI_BASE_ADDRESS_0 + 4 * i, &bar_lo);
++
++			/* Must be a memory BAR. */
++			if (bar_lo & PCI_BASE_ADDRESS_SPACE_IO)
++				continue;
++
++			/* Pull the upper dword for 64-bit BARs. */
++			if ((bar_lo & PCI_BASE_ADDRESS_MEM_TYPE_MASK) ==
++			    PCI_BASE_ADDRESS_MEM_TYPE_64 &&
++			    i + 1 < PCI_STD_NUM_BARS) {
++				pci_read_config_dword(child,
++					PCI_BASE_ADDRESS_0 + 4 * (i + 1),
++					&bar_hi);
++			}
++
++			bus_addr = ((u64)bar_hi << 32) |
++				   (bar_lo & PCI_BASE_ADDRESS_MEM_MASK);
++			bus_end = bus_addr + size - 1;
++
++			dev_info(&pdev->dev,
++				 "  %s BAR%d: cpu %pR  pci-bus 0x%llx-0x%llx\n",
++				 pci_name(child), i, r,
++				 (u64)bus_addr, (u64)bus_end);
++
++			if (!bus_addr) {
++				dev_info(&pdev->dev,
++					 "    (BAR unconfigured, skipping)\n");
++				continue;
++			}
++			if (bus_end >> 32) {
++				dev_info(&pdev->dev,
++					 "    (above 4GB, pref window is 32-bit; skipping)\n");
++				continue;
++			}
++
++			if (bus_addr < need_start)
++				need_start = bus_addr;
++			if (bus_end > need_end)
++				need_end = bus_end;
++			found = true;
++		}
++	}
++
++	if (!found) {
++		dev_info(&pdev->dev,
++			 "SN2 PLX fixup: no usable prefetchable BARs downstream\n");
++		return;
++	}
++
++	pci_read_config_word(pdev, PCI_PREF_MEMORY_BASE,  &base16);
++	pci_read_config_word(pdev, PCI_PREF_MEMORY_LIMIT, &limit16);
++	cur_start = ((u64)(base16  & PCI_PREF_RANGE_MASK)) << 16;
++	cur_end   = (((u64)(limit16 & PCI_PREF_RANGE_MASK)) << 16) | 0xFFFFF;
++
++	dev_info(&pdev->dev,
++		 "SN2 PLX fixup: downstream needs 0x%llx-0x%llx\n",
++		 need_start, need_end);
++	dev_info(&pdev->dev,
++		 "  window before: base=0x%04x limit=0x%04x (0x%llx-0x%llx)\n",
++		 base16, limit16, cur_start, cur_end);
++
++	if ((base16 & PCI_PREF_RANGE_MASK) &&
++	    cur_start <= need_start && cur_end >= need_end) {
++		dev_info(&pdev->dev,
++			 "  window already covers needed range, skipping\n");
++		return;
++	}
++
++	new_base  = (u16)((need_start >> 16) & PCI_PREF_RANGE_MASK);
++	new_limit = (u16)((need_end   >> 16) & PCI_PREF_RANGE_MASK);
++
++	pci_write_config_word(pdev, PCI_PREF_MEMORY_BASE,  new_base);
++	pci_write_config_word(pdev, PCI_PREF_MEMORY_LIMIT, new_limit);
++
++	if ((base16 & PCI_PREF_RANGE_TYPE_MASK) == PCI_PREF_RANGE_TYPE_64) {
++		pci_write_config_dword(pdev, PCI_PREF_BASE_UPPER32,  0);
++		pci_write_config_dword(pdev, PCI_PREF_LIMIT_UPPER32, 0);
++	}
++
++	pci_read_config_word(pdev, PCI_PREF_MEMORY_BASE,  &base16);
++	pci_read_config_word(pdev, PCI_PREF_MEMORY_LIMIT, &limit16);
++	dev_info(&pdev->dev,
++		 "  window after:  base=0x%04x limit=0x%04x\n",
++		 base16, limit16);
++
++	if ((base16 & PCI_PREF_RANGE_MASK) != new_base ||
++	    (limit16 & PCI_PREF_RANGE_MASK) != new_limit)
++		dev_err(&pdev->dev,
++			"SN2 PLX fixup: write-back verification FAILED\n");
++}
++
++DECLARE_PCI_FIXUP_FINAL(PLX_VENDOR_ID, PLX_8111_DEVICE_ID, sn2_plx_bridge_fixup);
++DECLARE_PCI_FIXUP_FINAL(PLX_VENDOR_ID, PLX_8112_DEVICE_ID, sn2_plx_bridge_fixup);
+diff --git a/drivers/sn/Kconfig b/drivers/sn/Kconfig
+index 2224c91c84a0..028df075c315 100644
+--- a/drivers/sn/Kconfig
++++ b/drivers/sn/Kconfig
+@@ -74,4 +74,12 @@ config SERIAL_SGI_IOC4
+ 	  and wish to use the serial ports on this card, say Y.
+ 	  Otherwise, say N.
+ 
++config SN2_PLX_GPU
++	bool "Setup PLX PCI Bridge windows"
++	depends on IA64_SGI_SN2
++	help
++	  Setup PLX Bridge windows prefetable windows address for 
++	  GPU with 256MB BAR. Say yes if you want to use a PCI-E GPU 
++	  in a PLX PCI bridge.
++
+ endmenu
