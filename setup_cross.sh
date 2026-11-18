@@ -5,9 +5,10 @@ echo $_BASE_DIR
 
 
 #CROSS_COMPILER_PATH="$_BASE_DIR/tools/gcc-11.5.0-nolibc/ia64-linux"
-# IA64_GCC_VERSION picks another toolchain in tools/ (e.g. 16.2.0, built by
-# build-cross-gcc.sh with T2's ia64 patches)
-CROSS_COMPILER_PATH="$_BASE_DIR/tools/gcc-${IA64_GCC_VERSION:-14.2.0}-nolibc/ia64-linux"
+# IA64_GCC_VERSION picks a toolchain in tools/.  The default, 16.2.0, is built
+# by build-cross-gcc.sh with T2's ia64 patches; IA64_GCC_VERSION=14.2.0 selects
+# the kernel.org prebuilt one.
+CROSS_COMPILER_PATH="$_BASE_DIR/tools/gcc-${IA64_GCC_VERSION:-16.2.0}-nolibc/ia64-linux"
 export PATH="${CROSS_COMPILER_PATH}/bin:$PATH"
 CROSS_COMPILER=$(basename "${CROSS_COMPILER_PATH}/bin/ia64-linux-gcc")
 CROSS_COMPILER_AND_VERSION=$(${CROSS_COMPILER} --version | head -n1)
