@@ -1,18 +1,3 @@
-<!--
-Draft PR description for linux-ia64, branch sn2-upstream (tip 7e590d8bf8dd,
-32 commits, 2026-11-17).  Testing below was at 97a20e158fbc, which differs
-only in commit 20's message and an iomv.c comment (SHub2 note).  Before submitting:
-  - pople rows re-checked at this tip on 2026-11-17 (mv-combined cold,
-    mv-sn2only by reboot; notes in src/machvec/stage/pople-97a2/).  The HP
-    and bohr rows are from 0796593e51a6, the 29-commit tip, which differs
-    only in commits 20-22 (SN2-only code) and the pcibr fix.  The GPU rows (pople,
-    rx2800) are this tree plus three DRM commits (branch sn2-upstream-gpu,
-    797d21ba170c), retested 2026-11-17; notes in src/machvec/stage/.
-  - Per-commit build check passed at 97a20e158fbc on 2026-11-17 (only
-    dc395x's -Wunused-value warnings; src/machvec/check-series-97a2.log).
-Everything below this comment is the PR text.
--->
-
 # ia64: Restore SGI SN2 (Altix) support, detected at run time
 
 This brings back the SGI SN2 platform (Altix 3000/4000/350/450, Prism),
@@ -49,7 +34,7 @@ one of several thousand I/O accessor call sites.
 
 ## How the series is laid out
 
-32 commits, 122 files, about 30,450 lines, nearly all of it restored code.
+31 commits, 122 files, about 30,450 lines, nearly all of it restored code.
 
 | Commits | What |
 |--|--|
@@ -57,8 +42,8 @@ one of several thousand I/O accessor call sites.
 | 3–12 | The SN2 platform code under `arch/ia64/sn` and `asm/sn`, split by area. Nothing builds it yet. |
 | 13–18 | The hooks in generic ia64 code, already in their run time form |
 | 19 | `IA64_SGI_SN2`, `IA64_SGI_SN2_ONLY` and the Makefiles: SN2 becomes buildable here |
-| 20–22 | New SN2 behaviour: PIO space is never mapped write-combined, and display devices get cache flushes and direct32 coherent memory |
-| 23–32 | Drivers, one commit each |
+| 20–21 | New SN2 behavior: PIO space is never mapped write-combined, and display devices get direct32 coherent memory, flushed from the CPU caches |
+| 22–31 | Drivers, one commit each |
 
 Each restore commit names the commit it reverts and lists what differs
 from the code that was removed, so it can be reviewed as "the 5.3 code
@@ -112,7 +97,7 @@ Not restored:
 - `sgi-xp` (XPC/XPNET, cross-partition messaging). It needs a machine
   partitioned into at least two partitions, each with its own base I/O
   brick, which I can't test, and there's likely no demand for it. The
-  whole driver left mainline in 5.3, so restoring it would mean bringing
+  whole driver left mainline in 7.3, so restoring it would mean bringing
   back all of it, not just an SN2 backend.
 - `sgi_hotplug` (PCI hot-plug). These machines no longer run anything that
   can't be shut down to swap a PCI card.
@@ -130,8 +115,9 @@ are called out in the commit messages.
   a device that misses the SN2 ones silently uses `dma_direct` and hands
   the bridge untranslated addresses.
 - **`MAX_DMA_ADDRESS`** is the top of the PIC bridge's direct-mapped 32-bit
-  window, so that `ZONE_DMA32` means what drivers expect. A PIC has only
-  1024 address translation entries (16 MB).
+  window, so that `ZONE_DMA32` means what drivers expect and 32-bit DMA
+  lands in that window instead of using up the PIC's 1024 address
+  translation entries (16 MB).
 - **Two hooks lost with the machine vector** are back: the timer tick hook
   (SHub 1 lost interrupt workaround) and the PIO write drain when a task
   migrates.
@@ -139,13 +125,13 @@ are called out in the commit messages.
   binds, and no longer uses a list iterator after its loop.
 - **`pcibr_dmamap_ate32()`** applied `SN_DMA_ADDRTYPE()` to the result of
   a comparison, so a physical address passed with any other flag went
-  into the ATE untranslated. No caller did that before commit 22.
+  into the ATE untranslated. No caller did that before commit 21.
 - The SN2 code and drivers build without warnings (about 35
   `-Wmissing-prototypes` and a `-Wformat` in every `readq()` user are gone).
 
 ## New behaviour for PIO mappings and display devices
 
-Commits 20–22 are not restores. They change what SN2 does, and only on
+Commits 20 and 21 are not restores. They change what SN2 does, and only on
 SN2:
 
 - **Write-combined pfn mappings of PIO space become uncached.** SHub 1
@@ -156,15 +142,19 @@ SN2:
   it returns at the `ia64_is_sn2()` test. It applies on SHub2 too but is
   untested there: SHub2 has write-combining request types that SHub1
   lacks, so it may not need it.
-- **Display-class devices get their pages flushed from the CPU caches
-  when DMA-mapped.** Modified lines that a GPU reads by DMA turn into
-  RDEXC interventions, which can overflow the FSB into an MCA.
 - **Display-class devices get coherent memory from the PIC's direct32
   window** instead of from its 1024 ATEs, which TTM's `dma_alloc` path
-  exhausts.
+  exhausts. On SN2, `drm_need_swiotlb()` is true for every GPU driver,
+  so this is where all of a GPU's system-memory buffers come from.
+- **That memory is flushed from the CPU caches after it is zeroed.**
+  Modified lines that a GPU reads by DMA turn into RDEXC interventions,
+  which can overflow the FSB into an MCA.
 
-These are what a GPU needs from the platform. Running one also needs a
-change to `ttm_io_prot()` on SN2, which is not part of this PR.
+These are what a GPU needs from the platform. Running one also needs DRM
+changes that are not part of this PR: TTM maps system-memory buffers
+write-combined on SN2 (`ttm_io_prot()`), and amdgpu zeroes the UVD
+create/destroy messages with `memset_io()`, since they can be in VRAM.
+The Prism's cards also need radeon to put VRAM at MC address 0.
 
 ## Cost on non-SN2 hardware
 
@@ -191,14 +181,19 @@ all of ia64 and the numbers above don't seem to justify it yet.
 
 Compiler: gcc 16.2.0 with binutils 2.47.
 
+The Altix 350 rows are from this series. The HP and Altix 3700 rows are
+from an earlier revision that differs only in commits 20 and 21, which
+are SN2-only, and the `pcibr_dmamap_ate32()` fix. The GPU rows are this series
+plus the DRM changes listed above.
+
 | Machine | Kernel | Result |
 |--|--|--|
 | hp Integrity rx2800 i2 | `IA64_SGI_SN2=y` | boots, "platform generic"; `lspci -vv`, `/proc/iomem`, `/proc/ioports` and all 32 bridge windows match 7.2.8 |
-| same, Radeon RX 550 | `IA64_SGI_SN2=y`, this series plus the `ttm_io_prot()` change | bridge windows and PCI state as the 29-commit revision; amdgpu SDMA move benchmarks and an on-screen glmark2 pass (3594) are the same as on that revision (3582) and on 7.2.8 (3552) |
+| same, Radeon RX 550 | `IA64_SGI_SN2=y` plus the DRM changes | "platform generic"; bridge windows match 7.2.8; amdgpu SDMA move benchmarks and an on-screen glmark2 pass (3594) are the same as on 7.2.8 (3552) |
 | HP Montecito system (hprx) | `IA64_SGI_SN2=y` | boots, "platform generic"; PCI state matches 7.2.8 |
 | Altix 350, 1 C-brick + I/O brick, PROM 4.56 | `IA64_SGI_SN2=y` | boots, "platform SN2"; kernel warnings same as the pre-series tree, PLX bridge window kept, SATA reads 133 MB/s, pata_sgiioc4 finds the DVD, mspec loads |
 | same | `IA64_SGI_SN2_ONLY=y` | same results |
-| Altix 350 as above, Radeon Oland behind a PLX 8112 | `IA64_SGI_SN2=y` plus the `ttm_io_prot()` change | amdgpu loads, UVD IB test passes; three on-screen glmark2 passes (1719, 1606, 1620), 6.5 million gfx fences, no "out of ATEs", no SHub errors. PIC read prefetch was turned off by hand for the GPU's slot; with it on, the GPU can be fed stale ring data and hang (separate work). |
+| Altix 350 as above, Radeon Oland behind a PLX 8112 | `IA64_SGI_SN2=y` plus the DRM changes | amdgpu loads, UVD IB test passes; three on-screen glmark2 passes (1715, 1608, 1621), 6.4 million gfx fences, no "out of ATEs", no SHub errors. PIC read prefetch was turned off by hand for the GPU's slot; with it on, the GPU can be fed stale ring data and hang (separate work). |
 | Altix 3700, IO9, PROM 4.53, 4 CPUs | `IA64_SGI_SN2=y` and `IA64_SGI_SN2_ONLY=y` | boots, "platform SN2"; `qla1280` binds both ISP12160s with the SN2 workarounds, two Ultra160 disks; O_DIRECT read throughput and checksums same as the pre-series kernel |
 
 Not tested:
@@ -207,8 +202,9 @@ Not tested:
   path, so `sn_io_acpi_init()` returns early on it.
 - TIOCA/TIOCE hardware, SHub 2, multi-partition systems.
 - `sgi-agp` and `qla2xxx` were built but not exercised in this run.
-  `qla1280` was tested only with disks on SCSI channel 0, so its
-  channel 1 virtual-channel path (`sn_pci_set_vchan()`) was not exercised. `mbcs` registers on the tiocx bus, but this machine has no TIO FPGA
+- `qla1280` was tested only with disks on SCSI channel 0, so its
+  channel 1 virtual-channel path (`sn_pci_set_vchan()`) was not exercised.
+- `mbcs` registers on the tiocx bus, but this machine has no TIO FPGA
   for it to bind to.
 
 Exercised on the Altix 350 with both kernels: `mspec` (cached, uncached
@@ -217,8 +213,6 @@ concurrent increments from 4 processes), and `snsc`. For `snsc`, a rebuild
 of SGI's `l2cmd` was used: it sent L1 and L2 commands through the
 `/dev/snsc` device and got multi-chunk responses. An L1 `env test warning`
 event was delivered to the kernel log.
-<!-- Nathan: correct this list; I only checked sn_console, IOC4,
-ioc4_serial probing, pata_sgiioc4 and mspec on pople. -->
 
 ## Known leftovers
 
@@ -230,8 +224,6 @@ ioc4_serial probing, pata_sgiioc4 and mspec on pople. -->
   support, so it is no longer inlined into its one generic caller. On an
   earlier revision that was the only code difference in a kernel built
   without SN2 (+169 bytes, a cold path); not re-measured at this tip.
-- The rest of GPU support on Altix is not part of this PR: the
-  `ttm_io_prot()` change mentioned above, and turning off PIC read
-  prefetch for display devices.
-- Commit 21's `dma_map_page()` flush has not carried GPU buffers yet: on
-  the Altix 350 tested, TTM takes its pages from `dma_alloc_coherent()`.
+- The rest of GPU support on Altix is not part of this PR: the DRM
+  changes listed above, and turning off PIC read prefetch for display
+  devices.
